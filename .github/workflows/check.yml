@@ -1,0 +1,38 @@
+name: Prototype checks (not iPhone qualification)
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  javascript:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: bash ../scripts/test-preflight.sh
+  swift-policy:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Foundation-only policy (does not compile Core AI)
+        run: |
+          CHECK_DIR="$(mktemp -d)"
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete \
+            -D ASSIST_POLICY_CHECKS \
+            mobile/ios/Assist/Inference/InferencePolicy.swift \
+            mobile/ios/Assist/Inference/InferencePolicyChecks.swift \
+            -o "$CHECK_DIR/policy-checks"
+          "$CHECK_DIR/policy-checks"

@@ -1,0 +1,14 @@
+.DS_Store
+artifacts/
+models/
+*.aimodel/
+*.mlmodelc/
+*.mlpackage/
+*.safetensors
+*.ipa
+*.p12
+*.mobileprovision
+.env
+.env.*
+!*.example
+__pycache__/
