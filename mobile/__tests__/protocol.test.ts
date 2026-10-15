@@ -21,11 +21,28 @@ test('preserves detected capacity rather than replacing it with 32K target', () 
     parseState('{"phase":"ready","contextCapacity":8192}').contextCapacity,
   ).toBe(8192);
 });
+test('accepts native bundled-model availability without inferring it for older states', () => {
+  expect(
+    parseState(
+      '{"phase":"idle","contextCapacity":0,"bundledModelAvailable":true}',
+    ).bundledModelAvailable,
+  ).toBe(true);
+  expect(
+    parseState(
+      '{"phase":"idle","contextCapacity":0,"bundledModelAvailable":false}',
+    ).bundledModelAvailable,
+  ).toBe(false);
+  expect(
+    parseState('{"phase":"idle","contextCapacity":0}').bundledModelAvailable,
+  ).toBeUndefined();
+});
 test.each([
   'null',
   '[]',
   '{"phase":"ready","contextCapacity":"32768"}',
   '{"phase":"bogus","contextCapacity":0}',
+  '{"phase":"idle","contextCapacity":0,"bundledModelAvailable":"true"}',
+  '{"phase":"idle","contextCapacity":0,"bundledModelAvailable":null}',
 ])('rejects malformed state %s', json => {
   expect(() => parseState(json)).toThrow();
 });

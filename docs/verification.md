@@ -6,7 +6,7 @@ Ce premier prototype est **partiellement vérifié**, pas livré sur iPhone.
 
 - React Native 0.87.1, React 19.2.3 ; dépendances npm verrouillées.
 - `npm run typecheck` et `npm run lint` : succès.
-- `npm test -- --runInBand` : 21 tests de protocole et d’interface avec doublure
+- `npm test -- --runInBand` : 28 tests de protocole et d’interface avec doublure
   du moteur natif. Ne prouve pas l’inférence.
 - `npm run codegen:ios` : succès ; protocole, événements et fournisseur
   `NativeAssist` → `RCTNativeAssist` générés.
@@ -17,16 +17,41 @@ Ce premier prototype est **partiellement vérifié**, pas livré sur iPhone.
   macOS ; sélecteur UIKit type-checké avec le SDK simulateur disponible.
 - Syntaxe du moteur Swift et format du projet Xcode contrôlés. Une analyse
   syntaxique ne vérifie ni les symboles Core AI ni leur édition de liens.
-- Tests de prérequis initiaux : 12 cas contrôlés passaient ; le contrôle EAS
-  corrigé distingue maintenant SDK de compilation et runtime Gemma.
+- Tests de prérequis : 15 cas ; cible app/Pods 27.1 et runtime Gemma 27.2 séparés.
+- Empaquetage : 45 tests Node sur de petits fichiers synthétiques, inventaire
+  exact et SHA-256, confinement, copie/relecture et refus des ressources absentes
+  en mode livraison. Le profil `preview` impose ce dernier contrôle.
+- La garde native iOS 27.2 est exécutée avant toute lecture du modèle ; syntaxe
+  Swift et branche de disponibilité vérifiées, pas le moteur complet.
+
+## Essai EAS et préparation de Gemma
+
+Le projet `@27pm/assist` est créé. Le premier
+[build EAS sans signature](https://expo.dev/accounts/27pm/projects/assist/builds/e51768ff-69cd-480b-a90b-ab50d7819a22)
+sur Xcode 27.1 RC a passé les tests JavaScript et CocoaPods, puis **échoué** :
+le SDK refuse une cible de déploiement 27.2. L’app et les Pods ciblent désormais
+27.1, tandis que le chargeur refuse Gemma avant iOS 27.2. Cette correction ne
+constitue pas encore une compilation native réussie.
+
+Les neuf fichiers source de `google/gemma-4-E2B-it` à la révision documentée
+ont été téléchargés hors Git et vérifiés (10 278 849 571 octets). Le shard
+`model.safetensors` possède le SHA-256
+`2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550`.
+La conversion Core AI sous Linux a été vérifiée sur un Gemma **miniature
+synthétique**, y compris les graphes 8K/32K et leur relecture. Aucun de ces tests
+ne produit ni ne valide l’export du vrai checkpoint.
 
 ## Blocages explicites
 
 Le Mac de vérification dispose de Xcode **26.3**, antérieur au minimum Core AI
 **27.0** du paquet Apple. L’exigence **27.2** de Gemma porte sur l’exécution
 sur iPhone ; l’ancienne formulation imposant aussi le SDK 27.2 était trop forte.
-Le moteur Core AI complet n’a **pas encore été compilé ou exécuté**. Le modèle
-Gemma n’a pas été exporté, téléchargé, chargé ou testé par ce prototype.
+Le moteur Core AI complet n’a **pas encore été compilé ou exécuté**. Les poids
+source sont disponibles, mais le vrai export Gemma n’est pas encore produit,
+embarqué, chargé ou testé par ce prototype. Le bouton de chargement embarqué
+et la phase de copie sont prêts ; aucun faux inventaire ne remplace l’export.
+La signature EAS attend une connexion Apple Developer renouvelée par le
+propriétaire ; aucun certificat ni profil Assist n’a encore été configuré.
 Les 8K/32K, la stabilité, les performances et l’usage matériel de l’ANE restent
 à qualifier. Aucune signature, installation ou modification de monGARS.
 

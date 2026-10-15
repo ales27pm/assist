@@ -22,6 +22,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: bash ../scripts/test-preflight.sh
+      - run: node --test ../scripts/test-bundle-gemma.mjs
   swift-policy:
     runs-on: macos-15
     timeout-minutes: 10

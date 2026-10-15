@@ -1,4 +1,4 @@
-Ce dossier contient le prototype Assist. Les [instructions spécifiques iOS/Core AI](../docs/ios-build.md) et l’[état de vérification](../docs/verification.md) priment sur les instructions génériques du template ci-dessous. Xcode/SDK 27.2 sont requis pour le moteur ; Android n’a pas encore de moteur d’inférence.
+Ce dossier contient le prototype Assist. Les [instructions spécifiques iOS/Core AI](../docs/ios-build.md) et l’[état de vérification](../docs/verification.md) priment sur les instructions génériques du template ci-dessous. L’app cible Xcode/SDK 27.1+, mais son chargeur Gemma exige iOS 27.2+ à l’exécution ; Android n’a pas encore de moteur d’inférence.
 
 This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
 

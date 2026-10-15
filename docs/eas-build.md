@@ -2,8 +2,9 @@
 
 EAS compile cette application React Native **bare**, avec son projet Xcode et
 son vrai TurboModule. Il n’ajoute ni Expo Go, ni repli d’inférence distant, ni
-EAS Update. Le code est envoyé au service de compilation ; les modèles, imports
-et conversations de l’iPhone ne le sont pas.
+EAS Update. Le code est envoyé au service de compilation. La livraison avec
+Gemma embarqué nécessitera aussi l’envoi de cet export public vérifié ; les
+imports privés et conversations de l’iPhone ne sont jamais récupérés ni envoyés.
 
 ## Projet et image
 
@@ -11,12 +12,14 @@ et conversations de l’iPhone ne le sont pas.
 - Identifiant iOS inchangé : `org.27pm.assist`, séparé de monGARS.
 - EAS CLI épinglé : `24.14.0`.
 - Image : `macos-tahoe-26.6-xcode-27.1` (Xcode 27.1 RC).
-- Le minimum iOS de l’app reste **27.2**.
+- Le minimum iOS de l’app est **27.1** ; Gemma reste bloqué avant **27.2**.
 
 Au contrôle du 15 octobre 2026, Expo liste cette image mais pas Xcode 27.2.
 Le paquet Apple accepte Core AI à partir du SDK 27.0, tandis que l’export Gemma
-requiert **iOS 27.2 à l’exécution**. La compilation avec 27.1 reste à vérifier
-réellement ; ce n’est pas une garantie de compatibilité. Le contrôle
+requiert **iOS 27.2 à l’exécution**. Le premier essai EAS a rejeté le minimum
+de déploiement 27.2 avant compilation ; l’app et ses Pods ciblent donc 27.1,
+avec une garde native avant tout chargement Gemma. La compilation complète
+reste à vérifier réellement ; ce n’est pas une garantie de compatibilité. Le contrôle
 `eas-build-pre-install` refuse un environnement sans Core AI. Aucun export de
 poids ni compilation AOT de Gemma ne s’exécute sur EAS.
 
@@ -41,9 +44,11 @@ au dépôt. Si EAS exige une connexion Apple, le propriétaire doit effectuer ce
 Pas de soumission App Store/TestFlight automatique ni changement d’abonnement.
 
 La livraison demandée doit inclure Gemma dans l’application, pas seulement
-proposer un import manuel. Elle reste bloquée tant que l’export Core AI épinglé
-n’est pas produit, vérifié et intégré aux ressources natives. Ne pas présenter
-une build sans poids comme cette livraison complète.
+proposer un import manuel. `preview` impose `ASSIST_REQUIRE_BUNDLED_GEMMA=1` :
+le contrôle initial et la copie Xcode échouent si l’export et son inventaire
+cryptographique revu sont absents. Voir [le contrat d’empaquetage](bundled-gemma.md).
+L’export réel n’est pas encore préparé ; ne pas présenter une build sans poids
+comme cette livraison complète.
 
 Une signature valide et une IPA téléchargeable ne prouvent pas que Gemma
 fonctionne : exécuter ensuite la qualification physique 8K avant 32K.
@@ -63,6 +68,10 @@ installable** et ne remplace pas le profil `preview` demandé pour distribution.
 
 La règle racine `.easignore` n’inclut que `mobile/` et `scripts/` ; elle exclut
 notamment les poids, secrets, certificats, crash reports, caches et artefacts.
+Avant la première livraison embarquée, ajouter une exception limitée au seul
+export approuvé dans `mobile/ios/Assist/BundledModels/Gemma`, puis vérifier que
+l’archive contient exactement l’inventaire approuvé. Cette exception n’est pas
+encore activée tant que le vrai paquet et son lock n’ont pas été revus.
 Inspecter l’archive avant envoi :
 
 ```sh

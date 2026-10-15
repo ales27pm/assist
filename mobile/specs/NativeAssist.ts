@@ -1,5 +1,5 @@
-import type {CodegenTypes, TurboModule} from 'react-native';
-import {TurboModuleRegistry} from 'react-native';
+import type { CodegenTypes, TurboModule } from 'react-native';
+import { TurboModuleRegistry } from 'react-native';
 
 export type ProgressEvent = {
   json: string;
@@ -10,6 +10,7 @@ export interface Spec extends TurboModule {
   getStatus(): Promise<string>;
   selectModel(): Promise<string>;
   loadModel(): Promise<string>;
+  loadBundledModel(): Promise<string>;
   generate(requestJSON: string): Promise<string>;
   cancel(): Promise<string>;
   reset(): Promise<string>;

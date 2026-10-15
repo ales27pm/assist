@@ -157,6 +157,11 @@ private actor AssistInferenceCoordinator {
         afterLoadFootprint = nil
         defer { operationInFlight = false }
         do {
+            // The app can compile/deploy against iOS 27.1, but Apple's Gemma
+            // export requires the 27.2 runtime. Reject before any model IO.
+            guard #available(iOS 27.2, *) else {
+                throw AssistInferenceError.invalid("Gemma nécessite iOS 27.2 ou une version ultérieure. Aucun modèle n’a été chargé.")
+            }
             guard (path as NSString).isAbsolutePath else {
                 throw AssistInferenceError.invalid("Un dossier local sélectionné dans Fichiers est requis.")
             }

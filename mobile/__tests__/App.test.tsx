@@ -19,6 +19,7 @@ jest.mock('../specs/NativeAssist', () => ({
     getStatus: jest.fn(),
     selectModel: jest.fn(),
     loadModel: jest.fn(),
+    loadBundledModel: jest.fn(),
     unloadModel: jest.fn(),
     generate: jest.fn(),
     cancel: jest.fn(),
@@ -28,17 +29,27 @@ jest.mock('../specs/NativeAssist', () => ({
 }));
 const native = jest.mocked(NativeAssist!);
 let phase: string;
+let bundledModelAvailable: boolean;
 beforeEach(() => {
   jest.clearAllMocks();
   phase = 'idle';
+  bundledModelAvailable = false;
   native.getStatus.mockImplementation(async () =>
-    JSON.stringify({ phase, contextCapacity: phase === 'ready' ? 8192 : 0 }),
+    JSON.stringify({
+      phase,
+      contextCapacity: phase === 'ready' ? 8192 : 0,
+      bundledModelAvailable,
+    }),
   );
   native.onProgress.mockReturnValue({ remove: jest.fn() });
   native.selectModel.mockResolvedValue(
     '{"phase":"selected","modelName":"gemma"}',
   );
   native.loadModel.mockImplementation(async () => {
+    phase = 'ready';
+    return '{}';
+  });
+  native.loadBundledModel.mockImplementation(async () => {
     phase = 'ready';
     return '{}';
   });
@@ -55,6 +66,97 @@ beforeEach(() => {
       aneExecution: 'unverified',
     });
   });
+});
+
+test('does not claim Gemma is included when its packaged metadata is absent', async () => {
+  const user = userEvent.setup();
+  await renderAsync(<AssistantScreen />);
+  expect(
+    await screen.findByText('Gemma n’est pas intégré à cette build.'),
+  ).toBeOnTheScreen();
+  const bundledButton = screen.getByRole('button', {
+    name: 'Charger Gemma intégré',
+  });
+  expect(bundledButton).toBeDisabled();
+  await user.press(bundledButton);
+  expect(native.loadBundledModel).not.toHaveBeenCalled();
+});
+
+test('loads packaged Gemma without asking for a folder', async () => {
+  bundledModelAvailable = true;
+  const user = userEvent.setup();
+  await renderAsync(<AssistantScreen />);
+  await user.press(
+    await screen.findByRole('button', {
+      name: 'Charger Gemma intégré',
+      disabled: false,
+    }),
+  );
+  expect(await screen.findByText(/contexte détecté : 8192/)).toBeOnTheScreen();
+  expect(native.loadBundledModel).toHaveBeenCalledTimes(1);
+  expect(native.loadBundledModel).toHaveBeenCalledWith();
+  expect(native.selectModel).not.toHaveBeenCalled();
+  expect(native.loadModel).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole('button', { name: 'Charger Gemma intégré' }),
+  ).toBeDisabled();
+});
+
+test('blocks repeated bundled loads and folder selection while loading', async () => {
+  bundledModelAvailable = true;
+  let finish: (json: string) => void;
+  native.loadBundledModel.mockImplementation(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  const user = userEvent.setup();
+  await renderAsync(<AssistantScreen />);
+  const bundledButton = await screen.findByRole('button', {
+    name: 'Charger Gemma intégré',
+    disabled: false,
+  });
+  await user.press(bundledButton);
+  expect(
+    await screen.findByText('Opération native en cours…'),
+  ).toBeOnTheScreen();
+  expect(
+    screen.getByRole('button', { name: 'Charger Gemma intégré' }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole('button', { name: 'Choisir un dossier exporté' }),
+  ).toBeDisabled();
+  await user.press(bundledButton);
+  expect(native.loadBundledModel).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    phase = 'ready';
+    finish('{}');
+  });
+  expect(await screen.findByText(/contexte détecté : 8192/)).toBeOnTheScreen();
+});
+
+test('failed bundled load is retryable without enabling generation', async () => {
+  bundledModelAvailable = true;
+  native.loadBundledModel.mockRejectedValue(
+    new Error('Gemma intégré invalide'),
+  );
+  const user = userEvent.setup();
+  await renderAsync(<AssistantScreen />);
+  await user.press(
+    await screen.findByRole('button', {
+      name: 'Charger Gemma intégré',
+      disabled: false,
+    }),
+  );
+  expect(await screen.findByText('Gemma intégré invalide')).toBeOnTheScreen();
+  expect(
+    await screen.findByRole('button', {
+      name: 'Charger Gemma intégré',
+      disabled: false,
+    }),
+  ).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Envoyer' })).toBeDisabled();
 });
 
 test('late cancellation acknowledgement restores ready state', async () => {

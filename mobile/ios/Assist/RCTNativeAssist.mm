@@ -14,6 +14,21 @@ static NSError *AssistError(NSString *code, NSString *message) {
                         userInfo:@{ @"code": code, NSLocalizedDescriptionKey: message }];
 }
 
+// The resource location is fixed by the app; JavaScript cannot choose a path.
+// Presence is not a qualification claim: the engine still validates and loads
+// the complete export, tokenizer, and graph contract before becoming ready.
+static NSURL *AssistBundledModelURL(void) {
+  NSURL *root = [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"BundledModels/Gemma"
+                                                               isDirectory:YES];
+  NSURL *metadata = [root URLByAppendingPathComponent:@"metadata.json" isDirectory:NO];
+  NSNumber *regularFile = nil;
+  if (![metadata getResourceValue:&regularFile forKey:NSURLIsRegularFileKey error:nil] ||
+      !regularFile.boolValue || ![NSFileManager.defaultManager isReadableFileAtPath:metadata.path]) {
+    return nil;
+  }
+  return root;
+}
+
 // Engine callbacks may arrive on any executor. Promise settlement and adapter
 // lifecycle bookkeeping are serialized on main; inference remains in Swift.
 static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromiseRejectBlock reject) {
@@ -119,7 +134,22 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)getStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepare:reject]) { return; }
-    [self->_engine status:AssistPromise(resolve, reject)];
+    AssistCompletion completion = AssistPromise(resolve, reject);
+    [self->_engine status:^(NSString *result, NSError *error) {
+      if (error || !result) { completion(result, error); return; }
+      NSData *data = [result dataUsingEncoding:NSUTF8StringEncoding];
+      NSError *serializationError = nil;
+      id value = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers
+                                                 error:&serializationError];
+      if (![value isKindOfClass:NSMutableDictionary.class]) {
+        completion(nil, serializationError ?: AssistError(@"E_NATIVE_RESULT", @"État natif invalide."));
+        return;
+      }
+      value[@"bundledModelAvailable"] = @(AssistBundledModelURL() != nil);
+      NSData *augmented = [NSJSONSerialization dataWithJSONObject:value options:0 error:&serializationError];
+      completion(augmented ? [[NSString alloc] initWithData:augmented encoding:NSUTF8StringEncoding] : nil,
+                 serializationError);
+    }];
   });
 }
 
@@ -163,6 +193,30 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
       if (error || !path) { completion(nil, error); return; }
       [self->_engine load:path completion:completion];
     }];
+  });
+}
+
+- (void)loadBundledModel:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    if (self->_loaded) {
+      AssistReject(reject, AssistError(@"E_MODEL_LOADED", @"Le modèle est déjà chargé."));
+      return;
+    }
+    NSString *operation = [self beginOperation:reject];
+    if (!operation) { return; }
+    AssistCompletion completion = [self completionForOperation:operation resolve:resolve reject:reject
+                                                     cleanup:^(BOOL succeeded) {
+      self->_loaded = succeeded;
+      if (!succeeded) { [self->_picker releaseAccess]; }
+    }];
+    NSURL *modelURL = AssistBundledModelURL();
+    if (!modelURL) {
+      completion(nil, AssistError(@"E_BUNDLED_MODEL_MISSING", @"Gemma n’est pas intégré à cette build."));
+      return;
+    }
+    [self->_picker releaseAccess];
+    [self->_engine load:modelURL.path completion:completion];
   });
 }
 

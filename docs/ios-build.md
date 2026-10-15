@@ -3,7 +3,7 @@
 ## Environnement requis
 
 - Mac Apple Silicon pour la préparation/qualification de ce prototype Gemma.
-- Installation complète de Xcode 27.0+ et SDK iPhoneOS 27.0+ sélectionnés
+- Installation complète de Xcode 27.1+ et SDK iPhoneOS 27.1+ sélectionnés
   pour tenter la compilation du moteur Core AI.
 - iPhone physique sous iOS 27.2+ pour le moteur Gemma ; le simulateur ne valide
   pas le Neural Engine ni la mémoire disponible sur l’iPhone.
@@ -16,12 +16,13 @@ Il faut distinguer **SDK de compilation** et **version d’exécution du modèle
 Le paquet Apple épinglé annonce Xcode 27.0+ et une plateforme iOS 27.0 ; sa
 recette Gemma exige iOS **27.2+ sur l’appareil**. Cette dernière exigence ne
 prouve pas à elle seule qu’il faut le SDK 27.2 pour compiler l’application.
-Le minimum de déploiement du projet reste **27.2**, sans modification.
+Le minimum de déploiement de l’app et des Pods est **27.1**. Une garde native
+refuse tout chargement Gemma avant **27.2**, avant même la lecture du paquet.
 
-Une compilation avec Xcode 27.1 est donc un essai pertinent, pas une réussite
-déjà démontrée. Le contrôle de prérequis admet cette tentative ; seul le vrai
-build vérifiera les API, les dépendances et l’acceptation de la cible 27.2 par
-le SDK choisi. L’export du modèle et sa spécialisation sur iPhone restent des
+Le premier essai EAS a confirmé que Xcode 27.1 rejette une cible de déploiement
+27.2. La séparation ci-dessus corrige ce blocage, sans promettre que les autres
+étapes compilent : seul le vrai build vérifiera les API et les dépendances.
+L’export du modèle et sa spécialisation sur iPhone restent des
 étapes séparées. Voir le [parcours EAS](eas-build.md).
 
 Un Mac Intel exécutant Xcode 26.3 ne satisfait toujours pas les prérequis de

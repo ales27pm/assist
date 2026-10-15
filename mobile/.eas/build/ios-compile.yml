@@ -13,7 +13,10 @@ build:
         command: npm ci
     - run:
         name: Verify JavaScript and TurboModule Codegen
-        command: npm run check
+        command: |
+          npm run check
+          bash ../scripts/test-preflight.sh
+          node --test ../scripts/test-bundle-gemma.mjs
     - run:
         name: Install CocoaPods dependencies
         command: |
@@ -35,4 +38,5 @@ build:
         if: ${ always() }
         inputs:
           type: build-artifact
-          path: .eas-output
+          # Artifact lookup is relative to the repository checkout, not mobile/.
+          path: mobile/.eas-output

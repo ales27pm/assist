@@ -53,7 +53,11 @@ export function AssistantScreen() {
       ) {
         const state = parseState(json);
         statusVersion.current += 1;
-        setEngine(state);
+        setEngine(previous => ({
+          ...state,
+          bundledModelAvailable:
+            state.bundledModelAvailable ?? previous.bundledModelAvailable,
+        }));
       }
     } catch (e) {
       if (mounted.current) {
@@ -230,6 +234,33 @@ export function AssistantScreen() {
               Le pic mémoire de chargement n’est pas mesuré.
             </Text>
           )}
+          <Text style={styles.muted}>
+            {engine.bundledModelAvailable === true
+              ? 'Gemma intégré détecté. Chargement entièrement sur l’appareil.'
+              : engine.bundledModelAvailable === false
+              ? 'Gemma n’est pas intégré à cette build.'
+              : 'Disponibilité du modèle intégré non confirmée.'}
+          </Text>
+          <Action
+            label="Charger Gemma intégré"
+            disabled={
+              busy || ready || !engine.bundledModelAvailable || !NativeAssist
+            }
+            onPress={() =>
+              perform(async () => {
+                await NativeAssist!.loadBundledModel();
+                if (mounted.current) {
+                  setSelected(false);
+                  setMessages([]);
+                  setProgress(null);
+                  setReport(null);
+                }
+              })
+            }
+          />
+          <Text style={styles.muted}>
+            Option avancée : sélectionner un export local compatible.
+          </Text>
           <Action
             label="Choisir un dossier exporté"
             disabled={busy || ready || !NativeAssist}
