@@ -24,6 +24,7 @@ async function fixture(t) {
     'gemma.ple': 'tiny-test-ple',
     'tokenizer/tokenizer.json': '{"test":true}',
     'tokenizer/tokenizer_config.json': '{"test":true}',
+    'tokenizer/chat_template.jinja': '{{ bos_token }}test-only-template',
   };
   const lock = {schemaVersion: 1, model: {...SOURCE_MODEL}, export: {...EXPORTER, contextLength: 8192}, files: []};
   for (const [name, content] of Object.entries(contents)) {
@@ -54,7 +55,7 @@ async function fixture(t) {
 test('valid pinned exact inventory verifies', async t => {
   const f = await fixture(t);
   const result = await verifyBundle(f.root);
-  assert.equal(result.records.size, 5);
+  assert.equal(result.records.size, 6);
   assert.equal(result.lock.export.contextLength, 8192);
 });
 
@@ -186,6 +187,14 @@ test('rejects a missing required tokenizer even with a matching inventory', asyn
   await assert.rejects(verifyBundle(f.root), /Required nonempty bundle file/);
 });
 
+test('rejects the omitted standalone Gemma chat template even with a matching inventory', async t => {
+  const f = await fixture(t);
+  await fs.unlink(path.join(f.source, 'tokenizer/chat_template.jinja'));
+  f.lock.files = f.lock.files.filter(record => record.path !== 'tokenizer/chat_template.jinja');
+  await f.saveLock();
+  await assert.rejects(verifyBundle(f.root), /Required nonempty bundle file missing: tokenizer\/chat_template\.jinja/);
+});
+
 test('rejects an empty PLE even when its hash and size match', async t => {
   const f = await fixture(t);
   await fs.writeFile(path.join(f.source, 'gemma.ple'), '');
@@ -208,7 +217,7 @@ test('strict verification fails absent resources; optional prototype can skip on
 
 test('copy verifies every destination byte and is safely repeatable', async t => {
   const f = await fixture(t);
-  assert.equal((await copyBundle(f.root, f.env)).files, 5);
+  assert.equal((await copyBundle(f.root, f.env)).files, 6);
   for (const record of f.lock.files) {
     assert.deepEqual(await fs.readFile(path.join(f.target, record.path)), await fs.readFile(path.join(f.source, record.path)));
   }

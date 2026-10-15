@@ -18,12 +18,19 @@ mobile/ios/Assist/BundledModels/Gemma/
   <sidecar-PLE>
   tokenizer/tokenizer.json
   tokenizer/tokenizer_config.json
+  tokenizer/chat_template.jinja
   …tous les autres fichiers du bundle vérifié
 ```
 
 Le chemin `.aimodel` et le sidecar PLE sont lus depuis `metadata.json` ; leurs
 noms ne sont pas devinés. Il faut le modèle complet, pas les poids Hugging Face
 bruts. Une ressource iCloud non téléchargée n’est pas suffisante.
+
+Le checkpoint Gemma épinglé fournit son template de conversation dans
+`chat_template.jinja`, pas dans `tokenizer_config.json`. Conserver ce sidecar
+dans le dossier `tokenizer/` de l’export : le chargeur Swift local le lit et
+l’associe à la configuration. Son absence est bloquée avant l’empaquetage,
+même si le reste de l’inventaire et ses empreintes sont cohérents.
 
 Une fois l’export réel vérifié, créer et revoir séparément
 `mobile/gemma-bundle.lock.json` avec ce schéma :

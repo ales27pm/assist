@@ -20,8 +20,9 @@ Le minimum de déploiement de l’app et des Pods est **27.1**. Une garde native
 refuse tout chargement Gemma avant **27.2**, avant même la lecture du paquet.
 
 Le premier essai EAS a confirmé que Xcode 27.1 rejette une cible de déploiement
-27.2. La séparation ci-dessus corrige ce blocage, sans promettre que les autres
-étapes compilent : seul le vrai build vérifiera les API et les dépendances.
+27.2. Après cette correction et celle d’un import de header React Native,
+la compilation complète ARM64 a réussi sur EAS avec Xcode 27.1 RC : voir
+[les preuves](verification.md). Cela ne prouve ni signature ni inférence.
 L’export du modèle et sa spécialisation sur iPhone restent des
 étapes séparées. Voir le [parcours EAS](eas-build.md).
 

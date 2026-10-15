@@ -158,7 +158,7 @@ function validateMetadata(metadata, lock, records) {
   const main = relativePath(metadata.assets.main);
   const ple = relativePath(metadata.auxiliary_assets.per_layer_embeddings);
   requireCondition(main.endsWith('.aimodel'), 'Expected an uncompiled .aimodel asset');
-  for (const required of ['metadata.json', 'tokenizer/tokenizer.json', 'tokenizer/tokenizer_config.json']) {
+  for (const required of ['metadata.json', 'tokenizer/tokenizer.json', 'tokenizer/tokenizer_config.json', 'tokenizer/chat_template.jinja']) {
     requireCondition(records.get(required)?.bytes > 0, `Required nonempty bundle file missing: ${required}`);
   }
   for (const asset of [main, ple]) {

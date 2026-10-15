@@ -18,11 +18,11 @@ Ce premier prototype est **partiellement vérifié**, pas livré sur iPhone.
 - Syntaxe du moteur Swift et format du projet Xcode contrôlés. Une analyse
   syntaxique ne vérifie ni les symboles Core AI ni leur édition de liens.
 - Tests de prérequis : 15 cas ; cible app/Pods 27.1 et runtime Gemma 27.2 séparés.
-- Empaquetage : 45 tests Node sur de petits fichiers synthétiques, inventaire
+- Empaquetage : 46 tests Node sur de petits fichiers synthétiques, inventaire
   exact et SHA-256, confinement, copie/relecture et refus des ressources absentes
   en mode livraison. Le profil `preview` impose ce dernier contrôle.
 - La garde native iOS 27.2 est exécutée avant toute lecture du modèle ; syntaxe
-  Swift et branche de disponibilité vérifiées, pas le moteur complet.
+  Swift et branche de disponibilité vérifiées, puis compilation complète sur EAS.
 
 ## Essai EAS et préparation de Gemma
 
@@ -30,14 +30,19 @@ Le projet `@27pm/assist` est créé. Le premier
 [build EAS sans signature](https://expo.dev/accounts/27pm/projects/assist/builds/e51768ff-69cd-480b-a90b-ab50d7819a22)
 sur Xcode 27.1 RC a passé les tests JavaScript et CocoaPods, puis **échoué** :
 le SDK refuse une cible de déploiement 27.2. L’app et les Pods ciblent désormais
-27.1, tandis que le chargeur refuse Gemma avant iOS 27.2. Cette correction ne
-constitue pas encore une compilation native réussie.
+27.1, tandis que le chargeur refuse Gemma avant iOS 27.2.
 
 Le [deuxième essai EAS](https://expo.dev/accounts/27pm/projects/assist/builds/554adb9b-05db-4c0d-a257-c0080c293e72)
 a franchi ce blocage et atteint les sources natives, puis échoué à l’import du
 header Swift généré : la superclasse React Native de l’AppDelegate n’était pas
 déclarée dans l’unité Objective-C++. L’import explicite de son header est ajouté
-avant `Assist-Swift.h` ; une nouvelle compilation réelle doit confirmer ce correctif.
+avant `Assist-Swift.h`.
+
+Le [troisième essai EAS](https://expo.dev/accounts/27pm/projects/assist/builds/9000a844-455c-43b8-bd09-158483a065a9),
+sur le commit `f3ed738`, est **réussi** le 15 octobre à 05:37:56 UTC :
+compilation ARM64 du moteur Core AI et du TurboModule, édition de liens et bundle
+React Native terminés (`BUILD SUCCEEDED`). Les journaux sont archivés. Il s’agit
+du profil **sans signature et sans modèle** : aucune IPA installable n’en découle.
 
 Les neuf fichiers source de `google/gemma-4-E2B-it` à la révision documentée
 ont été téléchargés hors Git et vérifiés (10 278 849 571 octets). Le shard
@@ -52,7 +57,7 @@ ne produit ni ne valide l’export du vrai checkpoint.
 Le Mac de vérification dispose de Xcode **26.3**, antérieur au minimum Core AI
 **27.0** du paquet Apple. L’exigence **27.2** de Gemma porte sur l’exécution
 sur iPhone ; l’ancienne formulation imposant aussi le SDK 27.2 était trop forte.
-Le moteur Core AI complet n’a **pas encore été compilé ou exécuté**. Les poids
+Le moteur Core AI complet est **compilé**, mais **pas exécuté sur iPhone**. Les poids
 source sont disponibles, mais le vrai export Gemma n’est pas encore produit,
 embarqué, chargé ou testé par ce prototype. Le bouton de chargement embarqué
 et la phase de copie sont prêts ; aucun faux inventaire ne remplace l’export.

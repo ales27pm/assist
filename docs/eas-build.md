@@ -18,8 +18,9 @@ Au contrôle du 15 octobre 2026, Expo liste cette image mais pas Xcode 27.2.
 Le paquet Apple accepte Core AI à partir du SDK 27.0, tandis que l’export Gemma
 requiert **iOS 27.2 à l’exécution**. Le premier essai EAS a rejeté le minimum
 de déploiement 27.2 avant compilation ; l’app et ses Pods ciblent donc 27.1,
-avec une garde native avant tout chargement Gemma. La compilation complète
-reste à vérifier réellement ; ce n’est pas une garantie de compatibilité. Le contrôle
+avec une garde native avant tout chargement Gemma. La compilation ARM64 complète
+a réussi au [troisième essai](https://expo.dev/accounts/27pm/projects/assist/builds/9000a844-455c-43b8-bd09-158483a065a9),
+sans signature ni poids ; l’exécution Gemma reste non vérifiée. Le contrôle
 `eas-build-pre-install` refuse un environnement sans Core AI. Aucun export de
 poids ni compilation AOT de Gemma ne s’exécute sur EAS.
 
