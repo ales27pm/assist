@@ -338,6 +338,8 @@ async function main() {
     'Gemma absent: unsigned/prototype build only; no model included.');
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// macOS temporary paths may reach the same script through /var -> /private/var.
+const entryPoint = process.argv[1] && await fs.realpath(process.argv[1]).catch(() => null);
+if (entryPoint && entryPoint === await fs.realpath(fileURLToPath(import.meta.url))) {
   main().catch(error => { console.error(`Gemma bundling failed: ${error.message}`); process.exitCode = 1; });
 }

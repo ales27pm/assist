@@ -439,15 +439,18 @@ test('incremental state cannot bless a destination mutation after its final hash
     .catch(error => error.code), 'ENOENT');
 });
 
-test('Xcode shell entry point reuses the verified copy on a second build', async t => {
+for (const linked of [false, true]) {
+test(`Xcode shell entry point reuses the verified copy${linked ? ' through a symlinked project path' : ''}`, async t => {
   const f = await incrementalFixture(t);
   await fs.mkdir(path.join(f.root, 'scripts'));
   for (const name of ['bundle-gemma.mjs', 'bundle-gemma-xcode.sh']) {
     await fs.copyFile(new URL(`./${name}`, import.meta.url), path.join(f.root, 'scripts', name));
   }
-  const command = path.join(f.root, 'scripts/bundle-gemma-xcode.sh');
+  const entryRoot = linked ? path.join(f.root, 'project-link') : f.root;
+  if (linked) await fs.symlink(f.root, entryRoot);
+  const command = path.join(entryRoot, 'scripts/bundle-gemma-xcode.sh');
   const invoke = () => spawnSync('bash', [command], {
-    env: {...process.env, ...f.env, NODE_BINARY: process.execPath}, encoding: 'utf8',
+    env: {...process.env, ...f.env, SRCROOT: path.join(entryRoot, 'mobile/ios'), NODE_BINARY: process.execPath}, encoding: 'utf8',
   });
   const first = invoke();
   assert.equal(first.status, 0, first.stderr);
@@ -456,6 +459,7 @@ test('Xcode shell entry point reuses the verified copy on a second build', async
   assert.equal(second.status, 0, second.stderr);
   assert.match(second.stdout, /unchanged; verified copy reused/);
 });
+}
 
 test('incremental cache path cannot create directories through a symlink into the source', async t => {
   const f = await incrementalFixture(t);

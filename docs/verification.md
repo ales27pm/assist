@@ -18,7 +18,7 @@ Ce premier prototype est **partiellement vérifié**, pas livré sur iPhone.
 - Syntaxe du moteur Swift et format du projet Xcode contrôlés. Une analyse
   syntaxique ne vérifie ni les symboles Core AI ni leur édition de liens.
 - Tests de prérequis : 15 cas ; cible app/Pods 27.1 et runtime Gemma 27.2 séparés.
-- Empaquetage : 63 tests Node sur de petits fichiers synthétiques, inventaire
+- Empaquetage : 64 tests Node sur de petits fichiers synthétiques, inventaire
   exact et SHA-256, confinement, copie/relecture et refus des ressources absentes
   en mode livraison. Le profil `preview` impose ce dernier contrôle.
 - La garde native iOS 27.2 est exécutée avant toute lecture du modèle ; syntaxe
