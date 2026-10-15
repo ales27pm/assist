@@ -33,6 +33,12 @@ le SDK refuse une cible de déploiement 27.2. L’app et les Pods ciblent désor
 27.1, tandis que le chargeur refuse Gemma avant iOS 27.2. Cette correction ne
 constitue pas encore une compilation native réussie.
 
+Le [deuxième essai EAS](https://expo.dev/accounts/27pm/projects/assist/builds/554adb9b-05db-4c0d-a257-c0080c293e72)
+a franchi ce blocage et atteint les sources natives, puis échoué à l’import du
+header Swift généré : la superclasse React Native de l’AppDelegate n’était pas
+déclarée dans l’unité Objective-C++. L’import explicite de son header est ajouté
+avant `Assist-Swift.h` ; une nouvelle compilation réelle doit confirmer ce correctif.
+
 Les neuf fichiers source de `google/gemma-4-E2B-it` à la révision documentée
 ont été téléchargés hors Git et vérifiés (10 278 849 571 octets). Le shard
 `model.safetensors` possède le SHA-256

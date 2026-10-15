@@ -1,4 +1,7 @@
 #import "RCTNativeAssist.h"
+// Assist-Swift.h also exports ReactNativeDelegate; its superclass must be known
+// when this Objective-C++ translation unit imports the generated Swift header.
+#import <React-RCTAppDelegate/RCTDefaultReactNativeFactoryDelegate.h>
 #import "Assist-Swift.h"
 
 typedef void (^AssistCompletion)(NSString *_Nullable, NSError *_Nullable);
