@@ -3,7 +3,8 @@
 ## Environnement requis
 
 - Mac Apple Silicon pour la préparation/qualification de ce prototype Gemma.
-- Installation complète de Xcode 27.2+ et SDK iPhoneOS 27.2+ sélectionnés.
+- Installation complète de Xcode 27.0+ et SDK iPhoneOS 27.0+ sélectionnés
+  pour tenter la compilation du moteur Core AI.
 - iPhone physique sous iOS 27.2+ pour le moteur Gemma ; le simulateur ne valide
   pas le Neural Engine ni la mémoire disponible sur l’iPhone.
 - Node conforme à `mobile/package.json`, gestionnaire npm, Ruby/Bundler et
@@ -11,13 +12,25 @@
 - Pour une installation physique ultérieure : équipe Apple et provisionnement
   appropriés, configurés par le propriétaire. Aucun certificat n’est fourni.
 
-Le minimum générique du paquet Apple ne remplace pas le minimum **Gemma iOS
-27.2**. Un Xcode plus ancien ne devient pas compatible en changeant simplement
-`IPHONEOS_DEPLOYMENT_TARGET`. Un Mac Intel exécutant Xcode 26.3 ne satisfait pas
-les prérequis de ce prototype. Le contrôle ne change pas `xcode-select`, ne met
-pas macOS à jour et ne redémarre aucune VM.
+Il faut distinguer **SDK de compilation** et **version d’exécution du modèle**.
+Le paquet Apple épinglé annonce Xcode 27.0+ et une plateforme iOS 27.0 ; sa
+recette Gemma exige iOS **27.2+ sur l’appareil**. Cette dernière exigence ne
+prouve pas à elle seule qu’il faut le SDK 27.2 pour compiler l’application.
+Le minimum de déploiement du projet reste **27.2**, sans modification.
 
-Source : [matrice Gemma officielle](https://github.com/apple/coreai-models/blob/9db747612f972001279f02adb04d3ef982310d0e/models/gemma4/README.md).
+Une compilation avec Xcode 27.1 est donc un essai pertinent, pas une réussite
+déjà démontrée. Le contrôle de prérequis admet cette tentative ; seul le vrai
+build vérifiera les API, les dépendances et l’acceptation de la cible 27.2 par
+le SDK choisi. L’export du modèle et sa spécialisation sur iPhone restent des
+étapes séparées. Voir le [parcours EAS](eas-build.md).
+
+Un Mac Intel exécutant Xcode 26.3 ne satisfait toujours pas les prérequis de
+ce prototype. Le contrôle ne change pas `xcode-select`, ne met pas macOS à
+jour et ne redémarre aucune VM.
+
+Sources : [prérequis Core AI](https://github.com/apple/coreai-models/blob/9db747612f972001279f02adb04d3ef982310d0e/README.md#requirements-running-and-app-integration),
+[plateformes du paquet](https://github.com/apple/coreai-models/blob/9db747612f972001279f02adb04d3ef982310d0e/Package.swift),
+[matrice Gemma officielle](https://github.com/apple/coreai-models/blob/9db747612f972001279f02adb04d3ef982310d0e/models/gemma4/README.md).
 
 ## Contrôles reproductibles
 

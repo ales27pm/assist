@@ -1,0 +1,38 @@
+build:
+  name: Assist native compilation only (unsigned, no model)
+  steps:
+    - eas/checkout
+    - run:
+        name: Check the actual Apple toolchain
+        command: |
+          set -euo pipefail
+          mkdir -p .eas-output
+          bash ../scripts/preflight-ios.sh 2>&1 | tee .eas-output/toolchain.log
+    - run:
+        name: Install locked JavaScript dependencies
+        command: npm ci
+    - run:
+        name: Verify JavaScript and TurboModule Codegen
+        command: npm run check
+    - run:
+        name: Install CocoaPods dependencies
+        command: |
+          set -euo pipefail
+          bundle install
+          cd ios
+          bundle exec pod install
+    - run:
+        name: Compile the real iOS app without signing
+        command: |
+          set -euo pipefail
+          xcodebuild -workspace ios/Assist.xcworkspace \
+            -scheme Assist -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath ios/build/eas-compile \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee .eas-output/xcodebuild.log
+    - eas/upload_artifact:
+        name: Preserve compilation evidence (not an installable IPA)
+        if: ${ always() }
+        inputs:
+          type: build-artifact
+          path: .eas-output

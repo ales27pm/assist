@@ -13,6 +13,7 @@ sortie se partagent le contexte disponible.
 ## Démarrer
 
 - [Prérequis et compilation iOS](docs/ios-build.md)
+- [Compilation distante et signature EAS](docs/eas-build.md)
 - [Préparer les exports Gemma 8K / 32K](docs/gemma-export.md)
 - [Protocole de qualification sur iPhone](docs/qualification.md)
 - [Architecture et limites du prototype](docs/architecture.md)
@@ -26,8 +27,10 @@ bash scripts/preflight-ios.sh
 ```
 
 Le second contrôle est volontairement bloquant sans Mac Apple Silicon, Xcode
-27.2+ et SDK iPhoneOS 27.2+. Il ne modifie ni Xcode, ni les appareils, ni les
-certificats. Un succès ne démontre pas que l’app compile ou que le modèle tourne.
+27.0+ et SDK iPhoneOS 27.0+. Gemma reste réservé à iOS 27.2+ sur l’appareil ;
+ce minimum d’exécution n’établit pas à lui seul un minimum de SDK de compilation.
+Le contrôle ne modifie ni Xcode, ni les appareils, ni les certificats.
+Un succès ne démontre pas que l’app compile ou que le modèle tourne.
 
 ## Entièrement local, pas entièrement déconnecté à l’installation
 

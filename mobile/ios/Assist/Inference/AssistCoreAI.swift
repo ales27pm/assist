@@ -4,7 +4,7 @@ import Foundation
 import Tokenizers
 
 /// Objective-C boundary only. All mutable inference state belongs to the actor below.
-/// Requires CoreAILM at 9db747612f972001279f02adb04d3ef982310d0e and the iOS 27.2 SDK.
+/// Requires pinned CoreAILM and Core AI SDK APIs; Gemma execution requires iOS 27.2+.
 @objc(AssistCoreAI)
 final class AssistCoreAI: NSObject {
     private let coordinator = AssistInferenceCoordinator()

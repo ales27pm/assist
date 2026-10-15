@@ -24,7 +24,7 @@ xcrun() {
 }
 export -f uname xcodebuild xcrun
 export TEST_HOST_OS=Darwin TEST_HOST_ARCH=arm64
-export TEST_XCODE_VERSION=27.2 TEST_SDK_VERSION=27.2
+export TEST_XCODE_VERSION=27.0 TEST_SDK_VERSION=27.0
 export TEST_XCODE_FAIL=0 TEST_SDK_FAIL=0
 
 cases=0
@@ -43,16 +43,17 @@ run_case() {
   printf 'PASS: %s\n' "$label"
 }
 
-run_case 'supported baseline' 0 'Prerequisites passed'
+run_case 'Core AI compiler baseline' 0 'Build prerequisites passed'
+TEST_XCODE_VERSION=27.1 TEST_SDK_VERSION=27.1 run_case 'EAS compiler candidate is admitted' 0 'Build prerequisites passed'
+run_case 'host gate preserves Gemma runtime requirement' 0 'Gemma inference still requires iOS 27.2+'
 TEST_HOST_OS=Linux run_case 'Linux is not an iOS build host' 1 'macOS required'
 TEST_HOST_ARCH=x86_64 run_case 'Intel is not the export baseline' 1 'Apple Silicon required'
-TEST_XCODE_VERSION=26.3 run_case 'old Xcode is rejected' 1 'Xcode 27.2+'
-TEST_XCODE_VERSION=27.1 run_case 'old minor Xcode is rejected' 1 'Xcode 27.2+'
-TEST_SDK_VERSION=27.1 run_case 'old selected iPhoneOS SDK is rejected' 1 'iPhoneOS SDK 27.2+'
-TEST_XCODE_VERSION=invalid run_case 'unknown Xcode is rejected' 1 'Xcode 27.2+'
-TEST_SDK_VERSION=invalid run_case 'unknown SDK is rejected' 1 'iPhoneOS SDK 27.2+'
+TEST_XCODE_VERSION=26.3 run_case 'old Xcode is rejected' 1 'Xcode 27.0+'
+TEST_SDK_VERSION=26.3 run_case 'old selected iPhoneOS SDK is rejected' 1 'iPhoneOS SDK 27.0+'
+TEST_XCODE_VERSION=invalid run_case 'unknown Xcode is rejected' 1 'Xcode 27.0+'
+TEST_SDK_VERSION=invalid run_case 'unknown SDK is rejected' 1 'iPhoneOS SDK 27.0+'
 TEST_XCODE_FAIL=1 run_case 'unavailable Xcode fails clearly' 1 'Cannot query Xcode'
 TEST_SDK_FAIL=1 run_case 'unavailable SDK fails clearly' 1 'Cannot query iPhoneOS SDK'
-TEST_XCODE_VERSION=27.2.1 TEST_SDK_VERSION=27.2.0 run_case 'patch versions are accepted' 0 'Prerequisites passed'
-TEST_XCODE_VERSION=28.0 TEST_SDK_VERSION=28.0 run_case 'new major versions are accepted' 0 'Prerequisites passed'
+TEST_XCODE_VERSION=27.2.1 TEST_SDK_VERSION=27.2.0 run_case 'patch versions are accepted' 0 'Build prerequisites passed'
+TEST_XCODE_VERSION=28.0 TEST_SDK_VERSION=28.0 run_case 'new major versions are accepted' 0 'Build prerequisites passed'
 printf '%s preflight tests passed. Tool fixtures do not prove an iOS build.\n' "$cases"

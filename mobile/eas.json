@@ -1,0 +1,33 @@
+{
+  "cli": {
+    "version": "24.14.0",
+    "requireCommit": true,
+    "appVersionSource": "local"
+  },
+  "build": {
+    "preview": {
+      "node": "22.22.1",
+      "environment": "preview",
+      "distribution": "internal",
+      "ios": {
+        "image": "macos-tahoe-26.6-xcode-27.1",
+        "resourceClass": "medium",
+        "scheme": "Assist",
+        "buildConfiguration": "Release",
+        "credentialsSource": "remote"
+      }
+    },
+    "ios-compile": {
+      "node": "22.22.1",
+      "environment": "preview",
+      "withoutCredentials": true,
+      "ios": {
+        "config": "ios-compile.yml",
+        "image": "macos-tahoe-26.6-xcode-27.1",
+        "resourceClass": "medium",
+        "scheme": "Assist",
+        "buildConfiguration": "Release"
+      }
+    }
+  }
+}

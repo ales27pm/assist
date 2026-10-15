@@ -17,12 +17,15 @@ Ce premier prototype est **partiellement vérifié**, pas livré sur iPhone.
   macOS ; sélecteur UIKit type-checké avec le SDK simulateur disponible.
 - Syntaxe du moteur Swift et format du projet Xcode contrôlés. Une analyse
   syntaxique ne vérifie ni les symboles Core AI ni leur édition de liens.
-- Tests de prérequis : 12 cas contrôlés passent.
+- Tests de prérequis initiaux : 12 cas contrôlés passaient ; le contrôle EAS
+  corrigé distingue maintenant SDK de compilation et runtime Gemma.
 
 ## Blocages explicites
 
-Le Mac de vérification dispose de Xcode **26.3**, et non du SDK **27.2** requis.
-Le moteur Core AI complet n’a donc **pas été compilé ou exécuté**. Le modèle
+Le Mac de vérification dispose de Xcode **26.3**, antérieur au minimum Core AI
+**27.0** du paquet Apple. L’exigence **27.2** de Gemma porte sur l’exécution
+sur iPhone ; l’ancienne formulation imposant aussi le SDK 27.2 était trop forte.
+Le moteur Core AI complet n’a **pas encore été compilé ou exécuté**. Le modèle
 Gemma n’a pas été exporté, téléchargé, chargé ou testé par ce prototype.
 Les 8K/32K, la stabilité, les performances et l’usage matériel de l’ANE restent
 à qualifier. Aucune signature, installation ou modification de monGARS.

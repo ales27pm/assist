@@ -1,6 +1,9 @@
 # OSX
 #
 .DS_Store
+.expo/
+.eas-output/
+credentials.json
 
 # Xcode
 #
@@ -73,3 +76,6 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# EAS custom workflows are source, not generated build output.
+!.eas/build/
