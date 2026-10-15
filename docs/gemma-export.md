@@ -1,10 +1,14 @@
 # Préparer Gemma 4 E2B pour iOS
 
-Les commandes ci-dessous sont une procédure de préparation, **pas un export déjà
-exécuté et validé**. Ne pas lancer de conversion lourde sur l’iPhone. Utiliser un
-Mac Apple Silicon avec l’environnement Core AI compatible, suffisamment de RAM
-et d’espace libre pour les poids, les tenseurs temporaires, les deux exports et
-leurs caches. Les fichiers ne doivent pas entrer dans le dépôt `assist`.
+Un export réel 32K a été préparé et contrôlé le 15 octobre 2026 ; son
+[rapport de préparation](gemma-32k-export-2026-10-15.md) distingue les contrôles
+réussis des tests iPhone restant à effectuer. Les commandes ci-dessous décrivent
+la préparation, sans constituer une qualification sur appareil.
+Ne pas lancer de conversion lourde sur l’iPhone. Pour le parcours macOS ci-dessous,
+utiliser un Mac Apple Silicon avec l’environnement Core AI compatible,
+suffisamment de RAM et d’espace libre pour les poids, les tenseurs temporaires,
+l’export et ses caches. L’essai CPU Linux et ses adaptations mémoire sont
+décrits dans le rapport. Les fichiers ne doivent pas entrer dans le dépôt `assist`.
 
 ## Sources et accès
 
@@ -56,24 +60,13 @@ L’inventaire local détecte une modification ultérieure ; à lui seul, il ne
 prouve pas l’authenticité de la source. Conserver aussi la révision téléchargée
 et les informations de provenance du téléchargement.
 
-## Deux exports, sans écraser le premier
+## Export 32K, sans écraser un essai précédent
 
 Définir explicitement le contexte : le défaut amont est plus grand que notre
 cible et ne doit pas être utilisé implicitement. L’export est FP16 avec la
 recette de palettisation mixte 4 bits fournie ; les embeddings/PLE sont des
 ressources supplémentaires. Les options hors ligne empêchent une résolution
 silencieuse de fichiers manquants depuis une autre révision.
-
-```sh
-HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --offline export.py \
-  --model google/gemma-4-E2B-it \
-  --max-context-length 8192 \
-  --output-dir ../../exports/gemma8k \
-  --output-name gemma4-e2b-8k
-shasum -a 256 -c ../../gemma-source.sha256
-```
-
-Puis, seulement après avoir inspecté le premier export :
 
 ```sh
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --offline export.py \
@@ -91,15 +84,19 @@ ressources partielles : la présence d’un dossier n’est pas une réussite.
 ## Bundle à transférer
 
 Transférer le **dossier complet** produit, par exemple
-`exports/gemma8k/gemma4-e2b-8k/`, avec `metadata.json`, l’asset `.aimodel`, le
+`exports/gemma32k/gemma4-e2b-32k/`, avec `metadata.json`, l’asset `.aimodel`, le
 dossier `tokenizer/` et le sidecar PLE. Ne pas transférer seulement `.aimodel`.
 Rendre tous les fichiers disponibles localement dans Fichiers avant l’import ;
-un placeholder iCloud n’est pas une ressource hors ligne.
+un placeholder iCloud n’est pas une ressource hors ligne. Pour ce prototype,
+extraire le ZIP dans **Sur mon iPhone** : le sélecteur refuse les emplacements
+iCloud, même téléchargés. Dans Assist, sélectionner le dossier qui contient
+`metadata.json`, puis toucher **Charger le modèle** et garder l’app au premier
+plan pendant le premier chargement.
 
 Le prototype attend actuellement :
 
-- tokenizer déclaré `google/gemma-4-E2B-it`, embarqué avec `tokenizer.json` et
-  `tokenizer_config.json` ;
+- tokenizer déclaré `google/gemma-4-E2B-it`, embarqué avec `tokenizer.json`,
+  `tokenizer_config.json` et `chat_template.jinja` ;
 - contexte déclaré de 8 192 ou 32 768 ;
 - asset principal `main`, sidecar `per_layer_embeddings`, sans variante vision ;
 - graphe cohérent avec les fonctions Gemma : `load_embeddings`, décodage
