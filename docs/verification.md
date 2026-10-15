@@ -2,7 +2,10 @@
 
 Le correctif **1.0.0 (3)** est signé et traité par TestFlight. La capture
 utilisateur du 15 octobre à 02:49 EDT confirme l’affichage de l’interface initiale
-sur l’iPhone après sa livraison. L’import du modèle et l’inférence restent
+sur l’iPhone après sa livraison. Un
+[premier rapport physique](gemma-32k-export-2026-10-15.md#premier-rapport-physique)
+confirme ensuite le chargement du modèle 32K et une génération courte achevée
+normalement. Le contexte long, la stabilité répétée et l’usage ANE restent
 non vérifiés.
 
 ## Crash de lancement TestFlight
@@ -94,19 +97,26 @@ Il n’existe **aucun `.aimodel` final validé** de cet essai. Les sources, le s
 partiel et les journaux sont conservés hors Git, sans nouvel essai automatique.
 Ce résultat concerne la préparation sur l’hôte, pas l’inférence iPhone ni l’ANE.
 
-## Blocages explicites
+Un nouvel export 32K a ensuite abouti grâce aux adaptations mémoire décrites dans
+le [rapport de préparation](gemma-32k-export-2026-10-15.md). Le vrai paquet et son
+archive ont été relus et contrôlés. Le rapport physique utilisateur confirme
+ensuite un chargement et une génération de 251 jetons, pour 42 jetons d’entrée,
+avec le build 3 sous iOS 27.2.
 
-Le Mac de vérification dispose de Xcode **26.3**, antérieur au minimum Core AI
+## Limites explicites
+
+Le Mac utilisé pour les premiers contrôles disposait de Xcode **26.3**, antérieur au minimum Core AI
 **27.0** du paquet Apple. L’exigence **27.2** de Gemma porte sur l’exécution
 sur iPhone ; l’ancienne formulation imposant aussi le SDK 27.2 était trop forte.
-Le moteur Core AI complet est **compilé**, mais **pas exécuté sur iPhone**. Les poids
-source sont disponibles, mais le vrai export Gemma n’est pas encore produit,
-embarqué, chargé ou testé par ce prototype. Le bouton de chargement embarqué
-et la phase de copie sont prêts ; aucun faux inventaire ne remplace l’export.
-La signature de distribution et le profil Assist sont configurés ; le build 2
-a été reçu et traité par Apple. Son crash de lancement est décrit ci-dessus.
-Les 8K/32K, la stabilité, les performances et l’usage matériel de l’ANE restent
-à qualifier. Aucune signature, installation ou modification de monGARS.
+Le moteur Core AI complet est compilé ; le vrai export Gemma 32K est préparé et
+une génération physique courte est confirmée par le rapport utilisateur. Le
+modèle a été importé manuellement : `bundledModelAvailable` reste `false`.
+La signature de distribution et le profil Assist sont configurés ; le build 3
+est traité par TestFlight et son interface est affichée sur l’iPhone. Le crash
+du build 2 est décrit ci-dessus. Les essais à longueur réelle 8K/16K/32K, la
+stabilité répétée, les performances soutenues, le fonctionnement hors réseau et
+l’attribution matérielle ANE restent à qualifier. Aucune signature,
+installation ou modification de monGARS.
 
 Le sélecteur n’effectue pas de copie durable : le dossier doit rester disponible
 sur l’iPhone, et doit être sélectionné à nouveau après fermeture de l’app.

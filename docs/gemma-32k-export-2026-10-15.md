@@ -1,8 +1,9 @@
 # Export Gemma 4 E2B 32K — 15 octobre 2026
 
 Un véritable export texte **32 768 jetons** est préparé pour l’import manuel dans
-Assist TestFlight. Le paquet a été rouvert et vérifié ; le chargement et la
-génération sur iPhone ne sont pas encore qualifiés.
+Assist TestFlight. Le paquet a été rouvert et vérifié. Un premier rapport
+physique confirme ensuite un chargement et une génération courte réussis ; le
+contexte long, la stabilité répétée et l’usage ANE restent à qualifier.
 
 ## Provenance et conversion
 
@@ -38,7 +39,8 @@ compactages. Ces mesures concernent l’ordinateur de conversion, pas l’iPhone
 - Identité du tokenizer et du template avec la source ; comportement des champs
   de configuration contrôlé, y compris les défauts utilisés par Swift.
 - Rendu Python de deux conversations, avec accents et emoji : mêmes jetons avec
-  le tokenizer source et le tokenizer exporté. Le rendu Swift n’a pas été exécuté.
+  le tokenizer source et le tokenizer exporté. Aucune comparaison des jetons
+  rendus par Swift et Python n’a été mesurée.
 - Vérification indépendante par `scripts/bundle-gemma.mjs` dans un dossier isolé
   contenant les vrais fichiers et leur inventaire SHA-256.
 - Relecture complète du ZIP : chacun des neuf fichiers correspond à cet
@@ -57,6 +59,41 @@ Extraire tout le dossier `gemma4-e2b-32k` dans **Sur mon iPhone**, puis le chois
 dans Assist. Prévoir l’espace pour l’archive, le dossier extrait et la
 spécialisation. Aucun nouveau build TestFlight n’est nécessaire pour cet import.
 
-Ces résultats ne prouvent ni une génération correcte sur iPhone, ni la capacité
-32K réelle en conversation, ni les performances ou l’exécution ANE. Le
-[protocole physique](qualification.md) reste à exécuter sur le paquet livré.
+Ces contrôles de préparation ne prouvent pas à eux seuls une génération correcte
+sur iPhone. Le premier résultat physique reçu est décrit ci-dessous ; le
+[protocole physique](qualification.md) complet reste à exécuter.
+
+## Premier rapport physique
+
+Le rapport utilisateur reçu le 15 octobre 2026 déclare le build natif **3**,
+iOS **27.2 (24B5110a)** et le modèle `gemma4-e2b-32k`. Sa cohérence a été
+contrôlée contre l’instrumentation native. Le rapport original est conservé hors
+Git ; la conversation et l’identifiant de requête ne sont pas publiés.
+Son SHA-256 est
+`29e8b0bfa5c1f678c15c899ac2e28fd9aa8ed8f099dfca829839287a486ab98f`.
+
+| Mesure rapportée | Résultat |
+| --- | --- |
+| Capacité déclarée du moteur | 32 768 jetons |
+| Chargement, warmup compris | 94,74 s |
+| Premier jeton, depuis le début de la requête native | 0,921 s |
+| Entrée formatée / sortie générée | 42 / 251 jetons |
+| Durée totale de génération | 7,362 s |
+| Débit moyen de cet essai, délai initial inclus | 34,09 jetons/s |
+| Empreinte physique de l’app après chargement | 1,586 Go |
+| Maximum d’empreinte échantillonné pendant la génération | 1,660 Go |
+| Fin de génération / état final | `eos` / `ready` |
+
+Le modèle a produit une réponse française non vide et le moteur est revenu à
+l’état prêt. Le débit inclut la préparation, le délai initial et la finalisation
+de la requête ; il ne constitue pas une mesure isolée du décodage. Le rapport
+ne sépare pas la spécialisation du chargement et ne renseigne pas l’état de son
+cache. Les instantanés avant/après ne mesurent pas le pic du chargement, et les
+échantillons de génération peuvent manquer des pics transitoires.
+
+Cet essai utilise **293 jetons** au total. Le budget disponible de 32 726 jetons
+ne signifie pas qu’ils ont été générés : la sortie s’est arrêtée à l’EOS après
+251 jetons. La capacité déclarée de 32K ne prouve donc pas encore la qualité à
+8K, 16K ou près de 32K. L’exécution ANE reste explicitement `unverified`.
+Le rapport ne fournit ni empreinte du bundle installé, ni type d’iPhone, ni
+preuve hors réseau ou de répétabilité.
