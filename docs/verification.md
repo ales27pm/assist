@@ -1,9 +1,14 @@
 # État de vérification — 15 octobre 2026
 
-Le prototype **1.0.0 (2)** a été signé et reçu par TestFlight, puis a échoué
-au premier lancement sur l’iPhone sous iOS 27.2. L’inférence reste non qualifiée.
+Le correctif **1.0.0 (3)** est signé et traité par TestFlight. La capture
+utilisateur du 15 octobre à 02:49 EDT confirme l’affichage de l’interface initiale
+sur l’iPhone après sa livraison. L’import du modèle et l’inférence restent
+non vérifiés.
 
 ## Crash de lancement TestFlight
+
+Le prototype **1.0.0 (2)** avait échoué au premier lancement sur l’iPhone
+sous iOS 27.2.
 
 Le rapport du 15 octobre à 02:32 EDT désigne l’assertion UIKit
 `UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`. Son UUID binaire
@@ -15,8 +20,12 @@ Le correctif du build **1.0.0 (3)** déclare une scène unique et crée sa fenê
 dans `SceneDelegate`. Le moteur React Native reste conservé par `AppDelegate`.
 Deux contrôles de configuration échouent sur le build précédent et passent
 après correction ; ils sont exécutés avant les builds EAS et dans la CI.
-Ils ne lancent pas l’application. Le démarrage à froid, la réouverture et le
-retour d’arrière-plan restent à vérifier sur iPhone après installation du build 3.
+Ils ne lancent pas l’application. Le build 3 a ensuite été compilé et signé ;
+son IPA contient le manifeste de scène et la classe `Assist.SceneDelegate`.
+Apple l’a traité avec les états `VALID` et `IN_BETA_TESTING`. La capture
+utilisateur montre l’app ouverte depuis TestFlight, en état `idle`, sans modèle
+embarqué, conformément au prototype avec import manuel choisi. La répétition des
+démarrages à froid, la réouverture et le retour d’arrière-plan restent à vérifier.
 
 ## Contrôles locaux exécutés
 
