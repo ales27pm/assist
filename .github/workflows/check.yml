@@ -23,6 +23,7 @@ jobs:
           cache-dependency-path: mobile/package-lock.json
       - run: npm ci
       - run: npm run check
+      - run: python3 ../scripts/test-ios-launch.py
       - run: bash ../scripts/test-preflight.sh
       - run: node --test ../scripts/test-bundle-gemma.mjs
   swift-policy:

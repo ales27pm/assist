@@ -21,7 +21,8 @@ de déploiement 27.2 avant compilation ; l’app et ses Pods ciblent donc 27.1,
 avec une garde native avant tout chargement Gemma. La compilation ARM64 complète
 a réussi au [troisième essai](https://expo.dev/accounts/27pm/projects/assist/builds/9000a844-455c-43b8-bd09-158483a065a9),
 sans signature ni poids ; l’exécution Gemma reste non vérifiée. Le contrôle
-`eas-build-pre-install` vérifie le paquet Gemma s’il est présent (et l’exige pour
+`eas-build-pre-install` contrôle la configuration de scène UIKit, puis vérifie
+le paquet Gemma s’il est présent (et l’exige pour
 `preview`), puis valide l’hôte Apple Silicon et les versions Xcode/SDK. Il ne teste
 ni l’import du framework Core AI, ni sa compilation, ni son exécution. Aucun
 export de poids ni compilation AOT de Gemma ne s’exécute sur EAS.
@@ -35,7 +36,7 @@ Sources : [images Expo](https://docs.expo.dev/build-reference/infrastructure/),
 
 ### Prototype TestFlight avec import manuel
 
-Le profil `testflight` produit la version **1.0.0 (2)** pour App Store Connect.
+Le profil `testflight` produit la version **1.0.0 (3)** pour App Store Connect.
 Ce prototype autorise l’absence de Gemma embarqué et demande son import local
 depuis l’app ; le chargement Gemma reste réservé à iOS 27.2+. Le profil `preview`
 conserve son exigence de modèle embarqué. Une build TestFlight ne constitue pas

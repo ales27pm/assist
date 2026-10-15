@@ -1,6 +1,22 @@
 # État de vérification — 15 octobre 2026
 
-Ce premier prototype est **partiellement vérifié**, pas livré sur iPhone.
+Le prototype **1.0.0 (2)** a été signé et reçu par TestFlight, puis a échoué
+au premier lancement sur l’iPhone sous iOS 27.2. L’inférence reste non qualifiée.
+
+## Crash de lancement TestFlight
+
+Le rapport du 15 octobre à 02:32 EDT désigne l’assertion UIKit
+`UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`. Son UUID binaire
+correspond à l’IPA du build 2 : son `Info.plist` compilé ne contient aucun
+`UIApplicationSceneManifest`. Cette adoption est
+[obligatoire avec le SDK iOS 27](https://developer.apple.com/documentation/uikit/transitioning-to-the-uikit-scene-based-life-cycle).
+
+Le correctif du build **1.0.0 (3)** déclare une scène unique et crée sa fenêtre
+dans `SceneDelegate`. Le moteur React Native reste conservé par `AppDelegate`.
+Deux contrôles de configuration échouent sur le build précédent et passent
+après correction ; ils sont exécutés avant les builds EAS et dans la CI.
+Ils ne lancent pas l’application. Le démarrage à froid, la réouverture et le
+retour d’arrière-plan restent à vérifier sur iPhone après installation du build 3.
 
 ## Contrôles locaux exécutés
 
@@ -78,8 +94,8 @@ Le moteur Core AI complet est **compilé**, mais **pas exécuté sur iPhone**. L
 source sont disponibles, mais le vrai export Gemma n’est pas encore produit,
 embarqué, chargé ou testé par ce prototype. Le bouton de chargement embarqué
 et la phase de copie sont prêts ; aucun faux inventaire ne remplace l’export.
-La signature EAS attend une connexion Apple Developer renouvelée par le
-propriétaire ; aucun certificat ni profil Assist n’a encore été configuré.
+La signature de distribution et le profil Assist sont configurés ; le build 2
+a été reçu et traité par Apple. Son crash de lancement est décrit ci-dessus.
 Les 8K/32K, la stabilité, les performances et l’usage matériel de l’ANE restent
 à qualifier. Aucune signature, installation ou modification de monGARS.
 
