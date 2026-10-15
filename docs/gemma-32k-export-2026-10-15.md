@@ -146,9 +146,14 @@ Les deux contrôles CPU ont terminé sans OOM ni déclenchement de leur garde de
 réserve hôte. Ils ne constituent pas une mesure de performance iPhone ni une
 preuve de parité numérique entre les implémentations. La conversion BF16→FP16
 seule ne reproduit pas l’erreur sur ce cas. Il reste à isoler la palettisation,
-la recette Core AI et le pipeline iOS. Le prochain contrôle discriminant est
-la comparaison des 33 identifiants produits par Swift et Python, puis du
-décodage des deux réponses numériques.
+la recette Core AI et le pipeline iOS dans cette première série.
+
+Le [diagnostic suivant](gemma-numeric-fidelity.md) a comparé les 33 identifiants
+Swift/Python et le décodage numérique : ils concordent. Une référence HF FP16
+utilisant uniquement les 275 poids palettisés de cet export reproduit exactement
+`1,2,3,4,5`, tandis que les seuls embeddings INT8 conservent la réponse correcte.
+La palettisation suffit donc à reproduire cette régression, indépendamment du
+runtime iOS. Ce résultat ne qualifie pas les autres calculs du graphe compilé.
 
 ### Hors réseau, annulation et chargement
 

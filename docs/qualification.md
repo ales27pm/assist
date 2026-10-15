@@ -5,6 +5,12 @@ JavaScript, des tests avec mocks ou un simulateur ne qualifient ni Core AI, ni l
 mémoire d’un iPhone, ni son ANE. Conserver les résultats privés jusqu’à retrait
 des conversations, chemins personnels, noms d’appareil et identifiants.
 
+Avant de transférer une nouvelle recette de compression, comparer le checkpoint
+source et les poids compressés avec le
+[jeu de régression numérique](gemma-numeric-fidelity.md#contrôle-de-qualité-avant-transfert).
+Le premier export 32K passe les contrôles de structure mais échoue au calcul des
+carrés ; un inventaire et un graphe valides ne suffisent pas à valider ses réponses.
+
 ## Conditions et identité
 
 Pour chaque série, consigner la version de l’app, la révision Git, la version iOS,

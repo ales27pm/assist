@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "purpose": "Fixed short diagnostic controls, frozen before baseline/candidate inference",
+  "scoring": "Exact after removing Unicode whitespace only; no punctuation, case, number, or semantic normalization",
+  "sampling": {
+    "do_sample": false,
+    "temperature": 0,
+    "max_new_tokens": 64
+  },
+  "case_count": 8,
+  "cases": [
+    {
+      "id": "reported-french-squares",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Réponds uniquement avec les cinq carrés des nombres de 1 à 5, séparés par des virgules."
+        }
+      ],
+      "expected": "1,4,9,16,25",
+      "oracle": "[n*n for n in range(1,6)]"
+    },
+    {
+      "id": "integer-products",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Calcule 7 × 8, 6 × 9 et 12 × 4. Réponds uniquement avec les trois résultats dans cet ordre, séparés par des virgules."
+        }
+      ],
+      "expected": "56,54,48",
+      "oracle": "[7*8,6*9,12*4]"
+    },
+    {
+      "id": "integer-sums",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Calcule 19 + 23, 125 + 75 et 8 + 17 + 5. Réponds uniquement avec les trois résultats dans cet ordre, séparés par des virgules."
+        }
+      ],
+      "expected": "42,200,30",
+      "oracle": "[19+23,125+75,8+17+5]"
+    },
+    {
+      "id": "integer-cubes",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Réponds uniquement avec les quatre cubes des nombres de 1 à 4, séparés par des virgules."
+        }
+      ],
+      "expected": "1,8,27,64",
+      "oracle": "[n**3 for n in range(1,5)]"
+    },
+    {
+      "id": "descending-sort",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Trie les nombres 12, 3, 27, 8, 19 par ordre décroissant. Réponds uniquement avec les nombres triés, séparés par des virgules."
+        }
+      ],
+      "expected": "27,19,12,8,3",
+      "oracle": "sorted([12,3,27,8,19],reverse=True)"
+    },
+    {
+      "id": "copy-json",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Recopie exactement cet objet JSON, sans explication et sans balises de code :\n{\"ok\":true,\"code\":\"NACRE-32\",\"valeurs\":[2,7,11]}"
+        }
+      ],
+      "expected": "{\"ok\":true,\"code\":\"NACRE-32\",\"valeurs\":[2,7,11]}",
+      "oracle": "Exact provided JSON literal, constructed by json.dumps with compact separators"
+    },
+    {
+      "id": "copy-python-line",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Recopie uniquement cette ligne de code, sans balises et sans la modifier :\nresult = [n*n for n in range(1, 6)]"
+        }
+      ],
+      "expected": "result = [n*n for n in range(1, 6)]",
+      "oracle": "Exact provided source-code literal"
+    },
+    {
+      "id": "arithmetic-progression",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Un compteur part de 14 et avance de 3 à chaque étape. Donne uniquement ses cinq valeurs successives, valeur de départ incluse, séparées par des virgules."
+        }
+      ],
+      "expected": "14,17,20,23,26",
+      "oracle": "[14+3*i for i in range(5)]"
+    }
+  ]
+}

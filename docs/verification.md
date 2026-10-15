@@ -8,6 +8,12 @@ confirment ensuite le chargement, une annulation et des générations jusqu’à
 32 256 jetons d’entrée. Les cas synthétiques 8K et 16K sont exacts ; près de 32K, une clé de
 réponse est incorrecte. Deux essais courts échouent au calcul des carrés, alors
 que les contrôles CPU BF16 source et FP16 intermédiaire répondent correctement.
+Le [diagnostic numérique](gemma-numeric-fidelity.md) reproduit ensuite exactement
+l’erreur avec les seuls poids palettisés, dans la référence HF. Le tokenizer
+Swift épinglé, exécuté sous Linux, produit les mêmes 33 identifiants que Python.
+Le nouvel export 32K à groupes de 8 réussit 8/8 contrôles CPU figés, contre 5/8
+pour l’export initial avec le même script. Ses graphes, son inventaire et son
+archive sont vérifiés ; sa réimportation et sa génération iPhone restent à tester.
 Un seul essai est confirmé hors réseau par l’utilisateur. La qualification
 reste partielle ; la stabilité répétée et l’usage ANE sont non vérifiés.
 

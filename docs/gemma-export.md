@@ -2,7 +2,10 @@
 
 Un export réel 32K a été préparé et contrôlé le 15 octobre 2026 ; son
 [rapport de préparation](gemma-32k-export-2026-10-15.md) distingue les contrôles
-réussis des tests iPhone restant à effectuer. Les commandes ci-dessous décrivent
+réussis des tests iPhone restant à effectuer. Une
+[régression numérique de la compression initiale](gemma-numeric-fidelity.md)
+a ensuite été reproduite : utiliser la recette à groupes de 8 ci-dessous et
+contrôler les réponses avant transfert. Les commandes ci-dessous décrivent
 la préparation, sans constituer une qualification sur appareil.
 Ne pas lancer de conversion lourde sur l’iPhone. Pour le parcours macOS ci-dessous,
 utiliser un Mac Apple Silicon avec l’environnement Core AI compatible,
@@ -35,6 +38,8 @@ déjà, inspecter son contenu et choisir un autre dossier ; ne rien écraser.
 
 ```sh
 bash scripts/preflight-ios.sh
+ASSIST_EXPORT_RECIPE="$PWD/config/4bit_palettized_group8.yaml"
+ASSIST_EXPORT_WRAPPER="$PWD/scripts/export-gemma-with-palettes.py"
 git clone https://github.com/apple/coreai-models.git ../assist-coreai-export
 cd ../assist-coreai-export
 git checkout --detach 9db747612f972001279f02adb04d3ef982310d0e
@@ -64,16 +69,21 @@ et les informations de provenance du téléchargement.
 
 Définir explicitement le contexte : le défaut amont est plus grand que notre
 cible et ne doit pas être utilisé implicitement. L’export est FP16 avec la
-recette de palettisation mixte 4 bits fournie ; les embeddings/PLE sont des
-ressources supplémentaires. Les options hors ligne empêchent une résolution
+recette de palettisation mixte 4 bits d’Assist, à groupes de 8 canaux au lieu de
+32 ; les exceptions de précision et les embeddings/PLE sont conservés.
+Le contexte reste **32 768 jetons**. Les options hors ligne empêchent une résolution
 silencieuse de fichiers manquants depuis une autre révision.
 
 ```sh
-HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --offline export.py \
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --offline python \
+  "$ASSIST_EXPORT_WRAPPER" \
+  --exporter "$PWD/export.py" \
+  --palettes ../../exports/gemma32k-group8/finalized-weights -- \
   --model google/gemma-4-E2B-it \
   --max-context-length 32768 \
-  --output-dir ../../exports/gemma32k \
-  --output-name gemma4-e2b-32k
+  --compression-config "$ASSIST_EXPORT_RECIPE" \
+  --output-dir ../../exports/gemma32k-group8 \
+  --output-name gemma4-e2b-32k-group8
 shasum -a 256 -c ../../gemma-source.sha256
 ```
 
@@ -81,10 +91,16 @@ Ne pas ajouter `--overwrite` pour contourner un échec. Préserver le journal et
 utiliser un nouveau nom d’export après diagnostic. L’exporteur peut laisser des
 ressources partielles : la présence d’un dossier n’est pas une réussite.
 
+Le wrapper conserve les LUT/indices via l’argument `mmap_dir` de l’API Core AI
+et utilise un seul worker de clustering. Le répertoire `finalized-weights`
+reste séparé du bundle à transférer. L’exporteur Apple seul ne conserve pas ces
+fichiers, nécessaires au contrôle CPU. Ce wrapper ne reprend pas les adaptations
+mémoire de l’essai Linux documenté ; prévoir les ressources de l’exporteur amont.
+
 ## Bundle à transférer
 
 Transférer le **dossier complet** produit, par exemple
-`exports/gemma32k/gemma4-e2b-32k/`, avec `metadata.json`, l’asset `.aimodel`, le
+`exports/gemma32k-group8/gemma4-e2b-32k-group8/`, avec `metadata.json`, l’asset `.aimodel`, le
 dossier `tokenizer/` et le sidecar PLE. Ne pas transférer seulement `.aimodel`.
 Rendre tous les fichiers disponibles localement dans Fichiers avant l’import ;
 un placeholder iCloud n’est pas une ressource hors ligne. Pour ce prototype,
