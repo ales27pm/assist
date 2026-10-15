@@ -52,6 +52,23 @@ La conversion Core AI sous Linux a été vérifiée sur un Gemma **miniature
 synthétique**, y compris les graphes 8K/32K et leur relecture. Aucun de ces tests
 ne produit ni ne valide l’export du vrai checkpoint.
 
+Une première conversion du **vrai checkpoint à 32K** a ensuite été tentée dans
+un environnement isolé : staging FP16 vérifié de 2 011 tenseurs, prétraitement
+par blocs et palettisation avec un seul worker. Ces adaptations locales de la
+recette Apple ont passé 34 tests ciblés ; elles ne constituent pas une preuve de
+parité numérique de bout en bout. Le checkpoint BF16 original a été conservé.
+
+Cette tentative a **échoué à terminer** dans son budget de préparation : arrêt
+systemd `Result=timeout` à 20 minutes, le 15 octobre vers 05:55 UTC. Les limites
+étaient 8 Gio de seuil de récupération mémoire, 10 Gio de maximum, aucun swap
+et deux cœurs CPU au maximum. La palettisation des 275 modules et le traçage des
+huit programmes ont terminé, mais pas leur conversion finale Core AI. Les
+derniers relevés montrent un fort trafic de relecture disque et de récupération
+mémoire, sans OOM ; ils ne démontrent pas une progression utile de la conversion.
+Il n’existe **aucun `.aimodel` final validé** de cet essai. Les sources, le sidecar
+partiel et les journaux sont conservés hors Git, sans nouvel essai automatique.
+Ce résultat concerne la préparation sur l’hôte, pas l’inférence iPhone ni l’ANE.
+
 ## Blocages explicites
 
 Le Mac de vérification dispose de Xcode **26.3**, antérieur au minimum Core AI
