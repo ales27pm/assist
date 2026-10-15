@@ -69,6 +69,17 @@ struct InferencePolicyChecks {
         ))
         try request.validate()
         try expect(request.maxTokens == nil, "JSON null preserved as remaining context")
+        var zeroBudgetMessage = ""
+        do {
+            try AssistGenerationRequest(
+                requestId: "1", messages: [.init(role: "user", content: "x")], temperature: 0, maxTokens: 0
+            ).validate()
+        } catch { zeroBudgetMessage = error.localizedDescription }
+        try expect(zeroBudgetMessage.contains("nil"), "zero is rejected and the error identifies nil as remaining context")
+        try AssistGenerationRequest(
+            requestId: "1", messages: [.init(role: "user", content: "x")], temperature: 0, maxTokens: 1
+        ).validate()
+        checks += 1
         try reject("invalid role") {
             try AssistGenerationRequest(requestId: "1", messages: [.init(role: "tool", content: "x")], temperature: 0, maxTokens: nil).validate()
         }
@@ -80,6 +91,57 @@ struct InferencePolicyChecks {
         try expect(confined.path.hasSuffix("assist-policy-fixture/tokenizer/tokenizer.json"), "local child accepted")
         try reject("parent escape") { _ = try AssistInferencePolicy.confinedURL("../outside", root: root) }
         try reject("absolute escape") { _ = try AssistInferencePolicy.confinedURL("/tmp/outside", root: root) }
+
+        let package = root.appendingPathComponent("main.mlmodelc", isDirectory: true)
+        let weights = package.appendingPathComponent("weights.bin")
+        let hidden = root.appendingPathComponent(".provider-placeholder")
+        let tree = [root: [package, hidden], package: [weights]]
+        typealias Entry = AssistModelDirectoryPolicy.Entry
+        let directory = Entry(isDirectory: true, isSymbolicLink: false, isReadable: true, isUbiquitous: false, isDownloaded: true)
+        let file = Entry(isDirectory: false, isSymbolicLink: false, isReadable: true, isUbiquitous: false, isDownloaded: true)
+        var overrides: [URL: Entry] = [:]
+        var visited = Set<URL>()
+        var listed = Set<URL>()
+        func validateDirectoryFixture() throws {
+            visited = []
+            listed = []
+            try AssistModelDirectoryPolicy.validate(root, entry: { url in
+                visited.insert(url)
+                return overrides[url] ?? (tree[url] == nil ? file : directory)
+            }, children: { url in
+                listed.insert(url)
+                return tree[url] ?? []
+            })
+        }
+        try validateDirectoryFixture()
+        try expect(visited == [root, package, weights, hidden], "local model packages and hidden entries are all checked")
+        overrides = [root: Entry(isDirectory: true, isSymbolicLink: false, isReadable: true, isUbiquitous: true, isDownloaded: true)]
+        try reject("downloaded iCloud root") { try validateDirectoryFixture() }
+        try expect(listed.isEmpty, "iCloud folder is rejected before listing its contents")
+        overrides = [package: Entry(isDirectory: true, isSymbolicLink: false, isReadable: true, isUbiquitous: true, isDownloaded: true)]
+        try reject("nested iCloud folder") { try validateDirectoryFixture() }
+        try expect(!listed.contains(package), "rejected nested cloud folder is never enumerated")
+        overrides = [weights: Entry(isDirectory: false, isSymbolicLink: false, isReadable: true, isUbiquitous: false, isDownloaded: false)]
+        try reject("readable nested File Provider placeholder") { try validateDirectoryFixture() }
+        overrides = [hidden: Entry(isDirectory: false, isSymbolicLink: false, isReadable: true, isUbiquitous: false, isDownloaded: false)]
+        try reject("hidden undownloaded entry") { try validateDirectoryFixture() }
+        overrides = [weights: Entry(isDirectory: false, isSymbolicLink: true, isReadable: true, isUbiquitous: false, isDownloaded: true)]
+        try reject("nested symbolic link") { try validateDirectoryFixture() }
+        overrides = [weights: Entry(isDirectory: false, isSymbolicLink: false, isReadable: false, isUbiquitous: false, isDownloaded: true)]
+        try reject("unreadable nested entry") { try validateDirectoryFixture() }
+        overrides = [root: file]
+        try reject("file selected as directory") { try validateDirectoryFixture() }
+        try reject("metadata unavailable") {
+            try AssistModelDirectoryPolicy.validate(root, entry: { _ in
+                throw AssistInferenceError.invalid("metadata unavailable")
+            }, children: { _ in [] })
+        }
+        try reject("directory listing unavailable") {
+            try AssistModelDirectoryPolicy.validate(root, entry: { _ in directory }, children: { _ in
+                throw AssistInferenceError.invalid("listing unavailable")
+            })
+        }
+
         var output = AssistOutputBuffer()
         let bytes: [Int: [UInt8]] = [0: [0xF0, 0x9F], 1: [0x98, 0x80], 2: [0x41], 3: [0x42]]
         let decode: ([Int]) -> String = { ids in
@@ -94,6 +156,45 @@ struct InferencePolicyChecks {
         output.append(3)
         try expect(output.snapshot(decode: decode) == "😀AB", "snapshot neither freezes nor duplicates text")
         try expect(output.count == 4, "raw token count is not decoded character count")
+
+        var longOutput = AssistOutputBuffer()
+        var decodedTokens = 0
+        var decodeCalls = 0
+        let countingDecode: ([Int]) -> String = { ids in
+            decodedTokens += ids.count
+            decodeCalls += 1
+            return String(ids.count)
+        }
+        for id in 0..<32768 {
+            longOutput.append(id)
+            _ = longOutput.progressSnapshot(decode: countingDecode)
+        }
+        try expect(decodedTokens <= 65 * 32768, "32K progress decoding has linear bounded work even with an update per token")
+        try expect(decodeCalls < 500, "32K progress does not decode every token prefix")
+        try expect(longOutput.snapshot(decode: countingDecode) == "32768", "final snapshot includes all 32K tokens")
+        try expect(decodedTokens <= 66 * 32768, "mandatory final decode preserves the linear bound")
+
+        var cancelledOutput = AssistOutputBuffer()
+        for _ in 0..<65 {
+            cancelledOutput.append(2)
+            _ = cancelledOutput.progressSnapshot(decode: decode)
+        }
+        cancelledOutput.append(0)
+        let cached = cancelledOutput.progressSnapshot(decode: decode)
+        try expect(cached == String(repeating: "A", count: 65), "progress text is retained between decode milestones")
+        try expect(cancelledOutput.snapshot(decode: decode) == String(repeating: "A", count: 65) + "�", "cancellation includes tokens after the latest progress snapshot")
+        cancelledOutput.append(1)
+        try expect(cancelledOutput.snapshot(decode: decode) == String(repeating: "A", count: 65) + "😀", "final decode repairs a UTF-8 boundary after a cached snapshot")
+        var emptyOutput = AssistOutputBuffer()
+        try expect(emptyOutput.snapshot(decode: decode).isEmpty, "EOS before text has an exact empty final snapshot")
+        var normalizedOutput = AssistOutputBuffer()
+        normalizedOutput.append(0)
+        let normalize: ([Int]) -> String = { ids in
+            ids.map { $0 == 0 ? "Bonjour " : "." }.joined().replacingOccurrences(of: " .", with: ".")
+        }
+        try expect(normalizedOutput.progressSnapshot(decode: normalize) == "Bonjour ", "initial tokenizer normalization is retained")
+        normalizedOutput.append(1)
+        try expect(normalizedOutput.snapshot(decode: normalize) == "Bonjour.", "full-prefix final decoding can normalize earlier text")
         print("PASS: \(checks) independent inference policy checks")
     }
 }

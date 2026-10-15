@@ -306,10 +306,8 @@ private actor AssistInferenceCoordinator {
                 if let footprint = Self.physicalFootprint() { peak = max(peak ?? 0, footprint) }
                 // Coalesce bridge traffic; never label an event or character count as tokens.
                 if generated.count == 1 || Self.milliseconds(lastProgress.duration(to: clock.now)) >= 100 {
-                    // Full snapshots preserve byte-fallback UTF-8 and tokenizer normalization.
-                    // This correctness-first prototype still has cumulative O(n²) decoding
-                    // cost; coalescing reduces work but is not a performance qualification.
-                    text = generated.snapshot { tokenizer.decode(tokens: $0) }
+                    // Counts remain live while text snapshots use bounded decode work.
+                    text = generated.progressSnapshot { tokenizer.decode(tokens: $0) }
                     onProgress(try AssistJSON.encode(AssistProgress(
                         requestId: request.requestId, text: text, generatedTokens: generated.count,
                         promptTokens: prompt.count, elapsedMs: Self.milliseconds(started.duration(to: clock.now))

@@ -34,6 +34,13 @@ npm run android
 yarn android
 ```
 
+Une build Android Release exige un keystore privé fourni par la CI et les
+variables `ASSIST_RELEASE_STORE_FILE`, `ASSIST_RELEASE_STORE_PASSWORD`,
+`ASSIST_RELEASE_KEY_ALIAS` et `ASSIST_RELEASE_KEY_PASSWORD`. Utiliser un chemin
+absolu pour le fichier secret ; une configuration absente ou le keystore de
+débogage du dépôt fait échouer la build Release. Les builds Debug se lancent
+sans ces variables.
+
 ### iOS
 
 For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
@@ -44,10 +51,13 @@ The first time you create a new project, run the Ruby bundler to install CocoaPo
 bundle install
 ```
 
+`Gemfile.lock` fixe les versions des gems. Le mettre à jour et le
+versionner avec tout changement volontaire du bundle.
+
 Then, and every time you update your native dependencies, run:
 
 ```sh
-bundle exec pod install
+(cd ios && bundle exec pod install)
 ```
 
 For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).

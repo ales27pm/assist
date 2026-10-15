@@ -33,7 +33,7 @@ struct AssistGenerationRequest: Decodable, Sendable {
             throw AssistInferenceError.invalid("La température doit être comprise entre 0 et 2.")
         }
         guard maxTokens == nil || maxTokens! > 0 else {
-            throw AssistInferenceError.invalid("Le budget de sortie doit être positif ou nul (contexte restant).")
+            throw AssistInferenceError.invalid("Le budget de sortie doit être positif ou absent (nil : contexte restant).")
         }
         guard !messages.isEmpty, messages.last?.role == "user",
             messages.allSatisfy({ ["user", "assistant"].contains($0.role) && !$0.content.isEmpty })
@@ -125,6 +125,40 @@ enum AssistInferencePolicy {
     }
 }
 
+/// Inspect every entry before listing a directory; metadata checks never read file contents.
+enum AssistModelDirectoryPolicy {
+    struct Entry {
+        let isDirectory: Bool
+        let isSymbolicLink: Bool
+        let isReadable: Bool
+        let isUbiquitous: Bool
+        let isDownloaded: Bool
+    }
+
+    static func validate(
+        _ root: URL,
+        entry: (URL) throws -> Entry,
+        children: (URL) throws -> [URL]
+    ) throws {
+        var pending = [root]
+        while let url = pending.popLast() {
+            let metadata = try entry(url)
+            guard (url != root || metadata.isDirectory), !metadata.isSymbolicLink,
+                metadata.isReadable, !metadata.isUbiquitous, metadata.isDownloaded
+            else {
+                throw NSError(
+                    domain: "Assist.ModelDirectoryPicker", code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Le modèle doit être entièrement téléchargé dans un dossier local, lisible et sans lien symbolique.",
+                        "code": "E_MODEL_DIRECTORY"
+                    ]
+                )
+            }
+            if metadata.isDirectory { pending.append(contentsOf: try children(url)) }
+        }
+    }
+}
+
 enum AssistJSON {
     static func encode<T: Encodable>(_ value: T) throws -> String {
         let encoder = JSONEncoder()
@@ -133,11 +167,24 @@ enum AssistJSON {
     }
 }
 
-/// Full-prefix snapshots avoid assuming that a BPE token ends at a UTF-8 boundary.
-/// The native stream coalesces calls to snapshot; this buffer never discards context.
+/// Full-prefix snapshots preserve byte-fallback UTF-8 and tokenizer normalization.
+/// Progress snapshots grow at least 1/64 beyond the last one, bounding cumulative
+/// decoded tokens to 65 times output length; the final snapshot adds one more pass.
 struct AssistOutputBuffer {
     private var ids: [Int] = []
+    private var text = ""
+    private var nextProgressSnapshot = 1
     var count: Int { ids.count }
     mutating func append(_ id: Int) { ids.append(id) }
-    func snapshot(decode: ([Int]) -> String) -> String { decode(ids) }
+
+    mutating func progressSnapshot(decode: ([Int]) -> String) -> String {
+        guard count >= nextProgressSnapshot else { return text }
+        return snapshot(decode: decode)
+    }
+
+    mutating func snapshot(decode: ([Int]) -> String) -> String {
+        text = decode(ids)
+        nextProgressSnapshot = count + max(1, (count + 63) / 64)
+        return text
+    }
 }

@@ -1,4 +1,6 @@
 import Foundation
+import Darwin
+import FileProvider
 import UIKit
 import UniformTypeIdentifiers
 
@@ -100,11 +102,37 @@ final class ModelDirectoryPicker: NSObject, UIDocumentPickerDelegate {
   }
 
   private static func validateDirectory(_ url: URL) throws {
-    let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-    guard values.isDirectory == true, values.isSymbolicLink != true,
-          FileManager.default.isReadableFile(atPath: url.path) else {
-      throw error("E_MODEL_DIRECTORY", "Le dossier doit être local, lisible et ne pas être un lien symbolique.")
-    }
+    let manager = FileManager.default
+    try AssistModelDirectoryPolicy.validate(url, entry: { candidate in
+      // lstat and URL resource values inspect metadata without materializing files.
+      var status = stat()
+      guard candidate.withUnsafeFileSystemRepresentation({ path in
+        path.map { lstat($0, &status) } ?? -1
+      }) == 0 else {
+        throw error("E_MODEL_DIRECTORY", "Impossible de vérifier les fichiers du modèle local.")
+      }
+      let values = try candidate.resourceValues(forKeys: [
+        .isDirectoryKey, .isSymbolicLinkKey, .isUbiquitousItemKey,
+        .ubiquitousItemDownloadingStatusKey, .ubiquitousItemIsDownloadingKey
+      ])
+      // SF_DATALESS also covers replicated File Provider placeholders outside iCloud.
+      // Nonreplicated providers use a separate placeholder URL.
+      let placeholder = NSFileProviderManager.placeholderURL(for: candidate)
+      let downloadStatus = values.ubiquitousItemDownloadingStatus
+      return AssistModelDirectoryPolicy.Entry(
+        isDirectory: values.isDirectory == true,
+        isSymbolicLink: values.isSymbolicLink != false,
+        isReadable: manager.isReadableFile(atPath: candidate.path),
+        isUbiquitous: values.isUbiquitousItem == true,
+        isDownloaded: status.st_flags & UInt32(SF_DATALESS) == 0
+          && !manager.fileExists(atPath: placeholder.path)
+          && values.ubiquitousItemIsDownloading != true
+          && (downloadStatus == nil || downloadStatus == .current || downloadStatus == .downloaded)
+      )
+    }, children: { directory in
+      // Include packages and hidden entries; a placeholder may be nested anywhere.
+      try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+    })
   }
 
   private static func error(_ code: String, _ message: String) -> NSError {

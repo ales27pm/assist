@@ -8,6 +8,7 @@ import {
 } from '@testing-library/react-native';
 import { AssistantScreen } from '../App';
 import NativeAssist from '../specs/NativeAssist';
+import { Share } from 'react-native';
 
 jest.mock(
   'react-native-safe-area-context',
@@ -232,6 +233,74 @@ test('requires local model load, then sends remaining-context budget', async () 
     temperature: 0,
     messages: [{ role: 'user', content: 'Bonjour' }],
   });
+});
+
+test('unloading clears the response from the shareable report', async () => {
+  const share = jest.spyOn(Share, 'share').mockResolvedValue({
+    action: Share.sharedAction,
+    activityType: undefined,
+  });
+  native.getStatus.mockImplementation(async () =>
+    JSON.stringify({
+      phase,
+      contextCapacity: phase === 'ready' ? 8192 : 0,
+      loadElapsedMs: 100,
+    }),
+  );
+  native.unloadModel.mockImplementationOnce(async () => {
+    phase = 'idle';
+    return '{}';
+  });
+  try {
+    const user = await load();
+    await user.type(screen.getByLabelText('Message'), 'Bonjour');
+    await user.press(screen.getByRole('button', { name: 'Envoyer' }));
+    await screen.findByText('Bonjour.');
+    await user.press(screen.getByRole('button', { name: 'Décharger' }));
+    expect(screen.queryByText('Bonjour.')).not.toBeOnTheScreen();
+    await user.press(
+      screen.getByRole('button', { name: 'Partager le rapport' }),
+    );
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(share.mock.calls[0][0].message!)).toMatchObject({
+      generation: null,
+      engine: { loadElapsedMs: 100 },
+    });
+  } finally {
+    share.mockRestore();
+  }
+});
+
+test('an empty EOS result remains retryable without an empty assistant turn', async () => {
+  native.generate.mockImplementation(async raw => {
+    const request = JSON.parse(raw);
+    if (
+      request.messages.some((message: { content: string }) => !message.content)
+    ) {
+      throw new Error('Conversation invalide');
+    }
+    const text =
+      native.generate.mock.calls.length === 1 ? '' : 'Réponse suivante';
+    return JSON.stringify({
+      requestId: request.requestId,
+      text,
+      generatedTokens: text ? 2 : 0,
+      promptTokens: 50,
+      elapsedMs: 200,
+      finishReason: 'eos',
+      aneExecution: 'unverified',
+    });
+  });
+  const user = await load();
+  await user.type(screen.getByLabelText('Message'), 'Bonjour');
+  await user.press(screen.getByRole('button', { name: 'Envoyer' }));
+  expect(screen.queryByText('ASSIST')).not.toBeOnTheScreen();
+  expect(screen.getByLabelText('Message')).toHaveDisplayValue('Bonjour');
+  await user.press(screen.getByRole('button', { name: 'Envoyer' }));
+  expect(await screen.findByText('Réponse suivante')).toBeOnTheScreen();
+  expect(JSON.parse(native.generate.mock.calls[1][0]).messages).toEqual([
+    { role: 'user', content: 'Bonjour' },
+  ]);
 });
 
 test('forwards budgets above 32 unchanged', async () => {

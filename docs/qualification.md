@@ -28,7 +28,10 @@ un essai froid.
 2. **8K, contexte long** : remplir progressivement le contexte avec des textes
    de test publics ou synthétiques. Compter les vrais jetons après application
    du template, avec instructions et historique. Réserver explicitement la
-   place de la sortie ; tester une demande au-delà de la limite et son rejet.
+   place de la sortie ; vérifier qu’un budget demandé supérieur au contexte
+   restant est ramené à ce reste. Un budget absent (`nil`) utilise aussi ce
+   reste ; zéro et les valeurs négatives sont refusés. Vérifier séparément le
+   rejet d’une entrée formatée qui remplit ou dépasse toute la capacité.
 3. **32K** : uniquement avec l’export 32K, répéter les cas courts puis tester des
    longueurs réelles autour de 8K, 16K et près de 32K. Le total entrée formatée +
    sortie doit rester dans la capacité effective. Ne jamais annoncer « testé à
@@ -54,6 +57,12 @@ Si le prototype ne fournit pas encore une mesure, noter **non instrumenté** et
 la relever avec un outil approprié. Ne pas inventer la valeur ou déduire le pic
 intermédiaire de deux photographies mémoire avant/après.
 
+Pour limiter le coût du décodage pendant les sorties longues, le texte affiché
+avance par instantanés espacés d’environ 1/64 de la longueur déjà produite.
+Les compteurs restent actualisés entre ces instantanés ; la fin de génération
+et l’annulation restituent le préfixe complet. Ce contrôle du coût ne constitue
+pas une mesure de performance Core AI sur iPhone.
+
 ## Qualité du contexte, pas seulement capacité
 
 Utiliser des faits synthétiques vérifiables placés à environ 5 %, 25 %, 50 %,
@@ -70,11 +79,17 @@ fonctionne dans l’app.
 
 ## Annulation et récupération
 
-Tester l’annulation pendant chargement, préremplissage et décodage ; le retour
-à l’écran d’accueil pendant chaque phase ; le retour actif ; puis un nouvel
-essai. Vérifier absence de résultat périmé, opérations concurrentes refusées,
-état UI cohérent et déchargement effectif. Une pression mémoire ne se déduit pas
-d’un bouton grisé ; contrôler les mesures et les rapports système.
+Tester l’annulation d’une génération pendant le préremplissage et le décodage ;
+le retour à l’écran d’accueil pendant ces deux phases (qui demande aussi
+l’annulation), le retour actif, puis un nouvel essai. Vérifier absence de
+résultat périmé, opérations concurrentes refusées, état UI cohérent et
+déchargement effectif après la fin de l’opération.
+
+L’annulation du chargement et sa gestion lors du passage en arrière-plan ne
+sont pas prises en charge par ce prototype. Attendre la fin du chargement en
+gardant l’app active ; ne pas présenter ces deux scénarios comme des cas de
+récupération qualifiés. Une pression mémoire ne se déduit pas d’un bouton
+grisé ; contrôler les mesures et les rapports système.
 
 Tester hors réseau **après** transfert complet des ressources, en build Release
 avec JavaScript embarqué : Metro en mode Debug est une dépendance de

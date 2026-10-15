@@ -18,7 +18,7 @@ Ce premier prototype est **partiellement vérifié**, pas livré sur iPhone.
 - Syntaxe du moteur Swift et format du projet Xcode contrôlés. Une analyse
   syntaxique ne vérifie ni les symboles Core AI ni leur édition de liens.
 - Tests de prérequis : 15 cas ; cible app/Pods 27.1 et runtime Gemma 27.2 séparés.
-- Empaquetage : 46 tests Node sur de petits fichiers synthétiques, inventaire
+- Empaquetage : 63 tests Node sur de petits fichiers synthétiques, inventaire
   exact et SHA-256, confinement, copie/relecture et refus des ressources absentes
   en mode livraison. Le profil `preview` impose ce dernier contrôle.
 - La garde native iOS 27.2 est exécutée avant toute lecture du modèle ; syntaxe
@@ -34,7 +34,7 @@ le SDK refuse une cible de déploiement 27.2. L’app et les Pods ciblent désor
 
 Le [deuxième essai EAS](https://expo.dev/accounts/27pm/projects/assist/builds/554adb9b-05db-4c0d-a257-c0080c293e72)
 a franchi ce blocage et atteint les sources natives, puis échoué à l’import du
-header Swift généré : la superclasse React Native de l’AppDelegate n’était pas
+header Swift généré : la superclasse React Native de `ReactNativeDelegate` n’était pas
 déclarée dans l’unité Objective-C++. L’import explicite de son header est ajouté
 avant `Assist-Swift.h`.
 

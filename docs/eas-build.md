@@ -21,8 +21,10 @@ de déploiement 27.2 avant compilation ; l’app et ses Pods ciblent donc 27.1,
 avec une garde native avant tout chargement Gemma. La compilation ARM64 complète
 a réussi au [troisième essai](https://expo.dev/accounts/27pm/projects/assist/builds/9000a844-455c-43b8-bd09-158483a065a9),
 sans signature ni poids ; l’exécution Gemma reste non vérifiée. Le contrôle
-`eas-build-pre-install` refuse un environnement sans Core AI. Aucun export de
-poids ni compilation AOT de Gemma ne s’exécute sur EAS.
+`eas-build-pre-install` vérifie le paquet Gemma s’il est présent (et l’exige pour
+`preview`), puis valide l’hôte Apple Silicon et les versions Xcode/SDK. Il ne teste
+ni l’import du framework Core AI, ni sa compilation, ni son exécution. Aucun
+export de poids ni compilation AOT de Gemma ne s’exécute sur EAS.
 
 Sources : [images Expo](https://docs.expo.dev/build-reference/infrastructure/),
 [projets React Native existants](https://docs.expo.dev/build-reference/build-configuration/),
@@ -30,6 +32,26 @@ Sources : [images Expo](https://docs.expo.dev/build-reference/infrastructure/),
 [runtime Gemma](https://github.com/apple/coreai-models/blob/9db747612f972001279f02adb04d3ef982310d0e/models/gemma4/README.md).
 
 ## IPA signée pour l’iPhone
+
+### Prototype TestFlight avec import manuel
+
+Le profil `testflight` produit la version **1.0.0 (2)** pour App Store Connect.
+Ce prototype autorise l’absence de Gemma embarqué et demande son import local
+depuis l’app ; le chargement Gemma reste réservé à iOS 27.2+. Le profil `preview`
+conserve son exigence de modèle embarqué. Une build TestFlight ne constitue pas
+une qualification de l’inférence, des 32K ou de l’ANE.
+
+```sh
+npx --yes eas-cli@24.14.0 build --platform ios --profile testflight
+npx --yes eas-cli@24.14.0 submit --platform ios --profile testflight --id <build-id>
+```
+
+La soumission nécessite une signature de distribution App Store et l’accès à
+la fiche `org.27pm.assist` dans App Store Connect. Elle ne publie pas l’app sur
+l’App Store public. Vérifier séparément la compilation, la signature, la réception
+Apple et le traitement TestFlight ; ne pas soumettre une build ad hoc ou sans signature.
+
+### Livraison privée avec Gemma embarqué
 
 Depuis `mobile/`, après revue et commit des changements :
 

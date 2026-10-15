@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {fstatSync} from 'node:fs';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import {spawnSync} from 'node:child_process';
 import test from 'node:test';
 import {copyBundle, verifyBundle, SOURCE_MODEL, EXPORTER} from './bundle-gemma.mjs';
 
@@ -57,6 +59,61 @@ test('valid pinned exact inventory verifies', async t => {
   const result = await verifyBundle(f.root);
   assert.equal(result.records.size, 6);
   assert.equal(result.lock.export.contextLength, 8192);
+});
+
+test('rejects a nonempty .aimodel file instead of a model directory', async t => {
+  const f = await fixture(t);
+  const record = f.lock.files.find(entry => entry.path === 'gemma.aimodel/weights.bin');
+  const contents = await fs.readFile(path.join(f.source, record.path));
+  await fs.rm(path.join(f.source, 'gemma.aimodel'), {recursive: true});
+  await fs.writeFile(path.join(f.source, 'gemma.aimodel'), contents);
+  record.path = 'gemma.aimodel';
+  await f.saveLock();
+  await assert.rejects(verifyBundle(f.root), /nonempty Core AI/);
+});
+
+test('rejects a model directory whose inventory contains only empty files', async t => {
+  const f = await fixture(t);
+  const record = f.lock.files.find(entry => entry.path === 'gemma.aimodel/weights.bin');
+  await fs.writeFile(path.join(f.source, record.path), '');
+  Object.assign(record, {bytes: 0, sha256: createHash('sha256').update('').digest('hex')});
+  await f.saveLock();
+  await assert.rejects(verifyBundle(f.root), /nonempty Core AI/);
+});
+
+for (const ple of ['gemma.aimodel', 'gemma.aimodel/weights.bin']) {
+  test(`rejects overlapping PLE ${ple} even when main supplies nonempty bytes`, async t => {
+    const f = await fixture(t);
+    await fs.unlink(path.join(f.source, 'gemma.ple'));
+    f.lock.files = f.lock.files.filter(record => record.path !== 'gemma.ple');
+    await f.changeMetadata(metadata => { metadata.auxiliary_assets.per_layer_embeddings = ple; });
+    await assert.rejects(verifyBundle(f.root), /overlap/);
+  });
+}
+
+test('rejects a PLE directory that contains the main asset', async t => {
+  const f = await fixture(t);
+  await fs.mkdir(path.join(f.source, 'assets'));
+  await fs.rename(path.join(f.source, 'gemma.aimodel'), path.join(f.source, 'assets/gemma.aimodel'));
+  f.lock.files.find(record => record.path === 'gemma.aimodel/weights.bin').path = 'assets/gemma.aimodel/weights.bin';
+  await fs.unlink(path.join(f.source, 'gemma.ple'));
+  f.lock.files = f.lock.files.filter(record => record.path !== 'gemma.ple');
+  await f.changeMetadata(metadata => {
+    metadata.assets.main = 'assets/gemma.aimodel';
+    metadata.auxiliary_assets.per_layer_embeddings = 'assets';
+  });
+  await assert.rejects(verifyBundle(f.root), /overlap/);
+});
+
+test('accepts a distinct PLE directory with a shared filename prefix', async t => {
+  const f = await fixture(t);
+  const ple = 'gemma.aimodel-ple';
+  await fs.mkdir(path.join(f.source, ple));
+  const record = f.lock.files.find(entry => entry.path === 'gemma.ple');
+  await fs.rename(path.join(f.source, record.path), path.join(f.source, ple, 'embeddings.bin'));
+  record.path = `${ple}/embeddings.bin`;
+  await f.changeMetadata(metadata => { metadata.auxiliary_assets.per_layer_embeddings = ple; });
+  assert.equal((await verifyBundle(f.root)).records.size, 6);
 });
 
 test('32K metadata must match its pinned export context', async t => {
@@ -270,4 +327,149 @@ test('optional copy cannot accidentally ship an old model when current inputs ar
   await fs.rm(f.source, {recursive: true});
   await fs.unlink(f.lockPath);
   await assert.rejects(copyBundle(f.root, {...f.env, ASSIST_REQUIRE_BUNDLED_GEMMA: '0'}), /Stale bundled Gemma/);
+});
+
+async function incrementalFixture(t) {
+  const f = await fixture(t);
+  f.env.DERIVED_FILE_DIR = path.join(f.buildRoot, 'DerivedFiles');
+  await fs.mkdir(f.env.DERIVED_FILE_DIR);
+  f.copy = () => copyBundle(f.root, f.env, {incremental: true});
+  return f;
+}
+
+test('unchanged incremental copy does not reread model payloads', async t => {
+  const f = await incrementalFixture(t);
+  await f.copy();
+  const payload = await fs.open(path.join(f.source, 'gemma.aimodel/weights.bin'));
+  const identities = [await payload.stat(), await fs.stat(path.join(f.target, 'gemma.aimodel/weights.bin'))];
+  const prototype = Object.getPrototypeOf(payload);
+  const original = prototype.createReadStream;
+  t.mock.method(prototype, 'createReadStream', function(...args) {
+    const info = fstatSync(this.fd);
+    assert.ok(identities.every(identity => info.dev !== identity.dev || info.ino !== identity.ino),
+      'unchanged source and copied weights must not be read');
+    return original.apply(this, args);
+  });
+  await payload.close();
+  assert.equal((await f.copy()).cacheHit, true);
+});
+
+for (const location of ['source', 'target']) {
+  test(`incremental copy rejects a same-size ${location} mutation with restored mtime`, async t => {
+    const f = await incrementalFixture(t);
+    await f.copy();
+    const file = path.join(f[location], 'gemma.ple');
+    const info = await fs.stat(file);
+    await fs.writeFile(file, 'x'.repeat(info.size));
+    await fs.utimes(file, info.atime, info.mtime);
+    await assert.rejects(f.copy(), /integrity failed|Existing resource differs/);
+  });
+}
+
+test('incremental copy detects added resources and missing destination files', async t => {
+  const f = await incrementalFixture(t);
+  await f.copy();
+  const extra = path.join(f.target, 'unexpected');
+  await fs.writeFile(extra, 'keep me');
+  await assert.rejects(f.copy(), /Unlisted files/);
+  assert.equal(await fs.readFile(extra, 'utf8'), 'keep me');
+  await fs.unlink(extra);
+  await fs.unlink(path.join(f.target, 'gemma.ple'));
+  assert.equal((await f.copy()).cacheHit, false);
+  assert.equal(await fs.readFile(path.join(f.target, 'gemma.ple'), 'utf8'), 'tiny-test-ple');
+});
+
+test('incremental copy invalidates on lock or Node environment changes', async t => {
+  const f = await incrementalFixture(t);
+  await f.copy();
+  const configuration = path.join(f.env.SRCROOT, '.xcode.env');
+  await fs.writeFile(configuration, '# updated Node configuration\n');
+  assert.equal((await f.copy()).cacheHit, false);
+  assert.equal((await f.copy()).cacheHit, true);
+  f.lock.files.find(record => record.path === 'gemma.ple').sha256 = '0'.repeat(64);
+  await f.saveLock();
+  await assert.rejects(f.copy(), /integrity failed/);
+});
+
+test('incremental absence cannot bypass required mode or retain stale resources', async t => {
+  const f = await incrementalFixture(t);
+  await fs.rm(f.source, {recursive: true});
+  await fs.unlink(f.lockPath);
+  f.env.ASSIST_REQUIRE_BUNDLED_GEMMA = '0';
+  assert.equal(await f.copy(), null);
+  f.env.ASSIST_REQUIRE_BUNDLED_GEMMA = '1';
+  await assert.rejects(f.copy(), /required/);
+  f.env.ASSIST_REQUIRE_BUNDLED_GEMMA = '0';
+  await fs.mkdir(f.target, {recursive: true});
+  await assert.rejects(f.copy(), /Stale bundled Gemma/);
+});
+
+test('corrupt incremental state triggers full verification and never caches a failure', async t => {
+  const f = await incrementalFixture(t);
+  await f.copy();
+  const marker = path.join(f.env.DERIVED_FILE_DIR, 'assist-gemma-verified.json');
+  await fs.writeFile(marker, '{');
+  assert.equal((await f.copy()).cacheHit, false);
+  await fs.writeFile(path.join(f.source, 'gemma.ple'), 'changed');
+  await assert.rejects(f.copy(), /integrity failed/);
+  assert.equal(await fs.stat(marker).catch(error => error.code), 'ENOENT');
+});
+
+test('incremental state cannot bless a destination mutation after its final hash', async t => {
+  const f = await incrementalFixture(t);
+  const payload = await fs.open(path.join(f.source, 'gemma.ple'));
+  const prototype = Object.getPrototypeOf(payload);
+  const original = prototype.stat;
+  await payload.close();
+  const destination = path.join(f.target, 'gemma.ple');
+  let destinationStats = 0;
+  t.mock.method(prototype, 'stat', async function(...args) {
+    const verifiedStat = await original.apply(this, args);
+    const current = await fs.stat(destination, {bigint: true}).catch(error => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (current && current.dev === verifiedStat.dev && current.ino === verifiedStat.ino && ++destinationStats === 2) {
+      await fs.writeFile(destination, 'x'.repeat(Number(current.size)));
+    }
+    return verifiedStat;
+  });
+  await assert.rejects(f.copy(), /changed during verification/);
+  assert.equal(await fs.stat(path.join(f.env.DERIVED_FILE_DIR, 'assist-gemma-verified.json'))
+    .catch(error => error.code), 'ENOENT');
+});
+
+test('Xcode shell entry point reuses the verified copy on a second build', async t => {
+  const f = await incrementalFixture(t);
+  await fs.mkdir(path.join(f.root, 'scripts'));
+  for (const name of ['bundle-gemma.mjs', 'bundle-gemma-xcode.sh']) {
+    await fs.copyFile(new URL(`./${name}`, import.meta.url), path.join(f.root, 'scripts', name));
+  }
+  const command = path.join(f.root, 'scripts/bundle-gemma-xcode.sh');
+  const invoke = () => spawnSync('bash', [command], {
+    env: {...process.env, ...f.env, NODE_BINARY: process.execPath}, encoding: 'utf8',
+  });
+  const first = invoke();
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /copied and verified/);
+  const second = invoke();
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /unchanged; verified copy reused/);
+});
+
+test('incremental cache path cannot create directories through a symlink into the source', async t => {
+  const f = await incrementalFixture(t);
+  const alias = path.join(f.root, 'derived-alias');
+  await fs.symlink(f.source, alias);
+  f.env.DERIVED_FILE_DIR = path.join(alias, 'new-derived-files');
+  await assert.rejects(f.copy(), /outside model resources/);
+  assert.equal(await fs.stat(path.join(f.source, 'new-derived-files')).catch(error => error.code), 'ENOENT');
+});
+
+test('incremental cache stays outside the entire app bundle', async t => {
+  const f = await incrementalFixture(t);
+  const app = path.join(f.buildRoot, f.env.UNLOCALIZED_RESOURCES_FOLDER_PATH);
+  f.env.DERIVED_FILE_DIR = path.join(app, 'DerivedFiles');
+  await assert.rejects(f.copy(), /outside model resources/);
+  assert.equal(await fs.stat(app).catch(error => error.code), 'ENOENT');
 });

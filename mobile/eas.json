@@ -5,6 +5,14 @@
     "appVersionSource": "local"
   },
   "build": {
+    "testflight": {
+      "extends": "preview",
+      "distribution": "store",
+      "environment": "production",
+      "env": {
+        "ASSIST_REQUIRE_BUNDLED_GEMMA": "0"
+      }
+    },
     "preview": {
       "node": "22.22.1",
       "environment": "preview",
@@ -31,6 +39,11 @@
         "scheme": "Assist",
         "buildConfiguration": "Release"
       }
+    }
+  },
+  "submit": {
+    "testflight": {
+      "ios": {}
     }
   }
 }

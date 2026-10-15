@@ -103,7 +103,7 @@ une IPA qui ne satisferait pas la demande.
 La phase de construction Xcode exécute, depuis `mobile/ios` :
 
 ```sh
-node ../../scripts/bundle-gemma.mjs --copy
+node ../../scripts/bundle-gemma.mjs --copy --if-present --incremental
 ```
 
 Elle utilise les variables Xcode `SRCROOT`, `TARGET_BUILD_DIR` et
@@ -111,6 +111,16 @@ Elle utilise les variables Xcode `SRCROOT`, `TARGET_BUILD_DIR` et
 approuvés dans `Assist.app/BundledModels/Gemma`, puis **recalcule les empreintes
 des octets copiés**. La source doit être ce projet iOS et la destination doit
 rester à l’intérieur du dossier `.app` dérivé de ces variables.
+
+Le contrôle léger reste exécuté à chaque build. Avec `--incremental`, un témoin
+dans `DERIVED_FILE_DIR`, hors de l’app, permet de réutiliser une copie déjà
+vérifiée lorsque l’inventaire exact et les attributs des fichiers source et
+destination sont inchangés (identité, taille, dates de modification et de
+changement). Le verrou, les scripts, la configuration Node et le mode imposant
+Gemma font aussi partie de cette décision. Tout écart relance la vérification
+complète ; le témoin n’est écrit qu’après validation des octets copiés et de
+leurs attributs. Supprimer ce témoin ou utiliser `--copy` sans `--incremental`
+impose une nouvelle vérification complète. Un build neuf conserve ce contrôle.
 
 Un fichier destination déjà présent n’est réutilisé que si son empreinte est
 correcte. Les fichiers divergents ou supplémentaires font échouer la phase ;

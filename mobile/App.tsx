@@ -176,7 +176,7 @@ export function AssistantScreen() {
           setProgress(result);
           setReport(result);
           // Incomplete text is visible but never silently saved as a completed turn.
-          if (result.finishReason === 'eos') {
+          if (result.finishReason === 'eos' && result.text.length > 0) {
             setMessages([
               ...conversation,
               { role: 'assistant', content: result.text },
@@ -293,6 +293,7 @@ export function AssistantScreen() {
                 await NativeAssist!.unloadModel();
                 setMessages([]);
                 setProgress(null);
+                setReport(null);
               })
             }
           />

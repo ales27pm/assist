@@ -10,4 +10,4 @@ if [[ -f "$SRCROOT/.xcode.env.local" ]]; then
   source "$SRCROOT/.xcode.env.local"
 fi
 : "${NODE_BINARY:=$(command -v node)}"
-exec "$NODE_BINARY" "$SRCROOT/../../scripts/bundle-gemma.mjs" --copy --if-present
+exec "$NODE_BINARY" "$SRCROOT/../../scripts/bundle-gemma.mjs" --copy --if-present --incremental
