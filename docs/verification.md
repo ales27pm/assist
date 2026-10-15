@@ -2,11 +2,14 @@
 
 Le correctif **1.0.0 (3)** est signé et traité par TestFlight. La capture
 utilisateur du 15 octobre à 02:49 EDT confirme l’affichage de l’interface initiale
-sur l’iPhone après sa livraison. Un
-[premier rapport physique](gemma-32k-export-2026-10-15.md#premier-rapport-physique)
-confirme ensuite le chargement du modèle 32K et une génération courte achevée
-normalement. Le contexte long, la stabilité répétée et l’usage ANE restent
-non vérifiés.
+sur l’iPhone après sa livraison. Les
+[rapports physiques](gemma-32k-export-2026-10-15.md#rapports-2-à-8)
+confirment ensuite le chargement, une annulation et des générations jusqu’à
+32 256 jetons d’entrée. Les cas synthétiques 8K et 16K sont exacts ; près de 32K, une clé de
+réponse est incorrecte. Deux essais courts échouent au calcul des carrés, alors
+que les contrôles CPU BF16 source et FP16 intermédiaire répondent correctement.
+Un seul essai est confirmé hors réseau par l’utilisateur. La qualification
+reste partielle ; la stabilité répétée et l’usage ANE sont non vérifiés.
 
 ## Crash de lancement TestFlight
 
@@ -113,9 +116,10 @@ une génération physique courte est confirmée par le rapport utilisateur. Le
 modèle a été importé manuellement : `bundledModelAvailable` reste `false`.
 La signature de distribution et le profil Assist sont configurés ; le build 3
 est traité par TestFlight et son interface est affichée sur l’iPhone. Le crash
-du build 2 est décrit ci-dessus. Les essais à longueur réelle 8K/16K/32K, la
-stabilité répétée, les performances soutenues, le fonctionnement hors réseau et
-l’attribution matérielle ANE restent à qualifier. Aucune signature,
+du build 2 est décrit ci-dessus. Des essais à longueur réelle 8K/16K/près de 32K
+et un essai hors réseau sont documentés, avec leurs échecs de qualité. La
+stabilité répétée, les performances soutenues, la récupération sans rechargement
+et l’attribution matérielle ANE restent à qualifier. Aucune signature,
 installation ou modification de monGARS.
 
 Le sélecteur n’effectue pas de copie durable : le dossier doit rester disponible

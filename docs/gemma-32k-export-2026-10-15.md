@@ -2,8 +2,9 @@
 
 Un véritable export texte **32 768 jetons** est préparé pour l’import manuel dans
 Assist TestFlight. Le paquet a été rouvert et vérifié. Un premier rapport
-physique confirme ensuite un chargement et une génération courte réussis ; le
-contexte long, la stabilité répétée et l’usage ANE restent à qualifier.
+physique confirme ensuite un chargement et une génération courte réussis. Les
+rapports suivants exercent jusqu’à 32 256 jetons d’entrée, avec des résultats
+partiels de qualité ; la stabilité répétée et l’usage ANE restent à qualifier.
 
 ## Provenance et conversion
 
@@ -97,3 +98,82 @@ ne signifie pas qu’ils ont été générés : la sortie s’est arrêtée à l
 8K, 16K ou près de 32K. L’exécution ANE reste explicitement `unverified`.
 Le rapport ne fournit ni empreinte du bundle installé, ni type d’iPhone, ni
 preuve hors réseau ou de répétabilité.
+
+## Rapports 2 à 8
+
+Les sept rapports reçus sont cohérents avec les compteurs et la politique de
+budget natifs. Leurs originaux, empreintes SHA-256 et analyse structurée restent
+hors Git. Les trois tests longs sont comparés au corrigé synthétique préparé,
+sans modifier les textes ni les réponses attendues après réception.
+
+| Rapport / entrée réelle | Lignes exactement correctes | Premier jeton | Durée totale | Maximum mémoire observé |
+| --- | --- | --- | --- | --- |
+| 5 / 8 188 jetons | 6/6 | 3,138 s | 6,980 s | 2,015 Go |
+| 6 / 16 372 jetons | 6/6 | 8,065 s | 11,736 s | 2,082 Go |
+| 7 / 32 256 jetons | 5/6 | 19,692 s | 23,381 s | 2,192 Go |
+
+Les cinq codes et la réponse d’absence sont présents dans le bon ordre au
+rapport 7, mais la première clé est `IDENTIFIANT` au lieu de `NACRE-32`.
+Cette ligne reste incorrecte pour un consommateur de paires identifiant/code.
+La sortie compte 87 jetons : **32 343 jetons** au total ont été comptés pour cet
+essai. Il s’agit d’un premier cas réel près de 32K, avec un défaut de format,
+pas d’une qualification générale de cette longueur.
+
+### Erreur de calcul confirmée
+
+L’utilisateur confirme avoir demandé les cinq carrés des nombres de 1 à 5 dans
+les rapports 2 et 8. Ils répondent tous deux `1,2,3,4,5` au lieu de
+`1,4,9,16,25`. La sortie termine normalement à l’EOS après neuf jetons ; le
+budget disponible est respectivement de 32 735 et 128 jetons. Il ne s’agit pas
+d’une réponse tronquée par la limite de sortie.
+
+Le tokenizer Python du paquet produit 33 jetons pour la consigne confirmée,
+comme les compteurs natifs de ces deux rapports. L’inspection du chemin
+JavaScript → pont natif → tokenizer ne montre pas de réécriture de la consigne.
+L’égalité des comptes ne prouve toutefois pas celle des identifiants de jetons.
+
+Deux contrôles CPU hors réseau ont ensuite été exécutés sur cette même consigne
+avec `Gemma4ForConditionalGeneration`, Transformers 5.12.1, attention `eager`,
+génération gloutonne et au plus 64 nouveaux jetons :
+
+| Parcours | Réponse observée |
+| --- | --- |
+| Checkpoint BF16 original, SHA-256 source revérifié | `1,4,9,16,25` |
+| Checkpoint FP16 intermédiaire, SHA-256 dérivé revérifié | `1,4,9,16,25` |
+| Export Core AI sur iPhone, rapports 2 et 8 | `1,2,3,4,5` |
+
+Les deux contrôles CPU ont terminé sans OOM ni déclenchement de leur garde de
+réserve hôte. Ils ne constituent pas une mesure de performance iPhone ni une
+preuve de parité numérique entre les implémentations. La conversion BF16→FP16
+seule ne reproduit pas l’erreur sur ce cas. Il reste à isoler la palettisation,
+la recette Core AI et le pipeline iOS. Le prochain contrôle discriminant est
+la comparaison des 33 identifiants produits par Swift et Python, puis du
+décodage des deux réponses numériques.
+
+### Hors réseau, annulation et chargement
+
+- L’utilisateur confirme **uniquement le rapport 2** en mode avion avec Wi-Fi
+  coupé. Une génération locale achevée est donc observée dans ces conditions,
+  avec une réponse mathématique incorrecte. Le rapport ne mesure pas lui-même
+  l’état réseau ; les autres essais n’ont pas cette confirmation.
+- Le rapport 3 enregistre une annulation après 23 jetons et un retour à `ready`.
+  Une génération ultérieure termine normalement au rapport 4. Les mesures du
+  dernier chargement diffèrent entre ces deux rapports : la reprise sur le
+  même modèle résident, sans rechargement, n’est pas encore établie.
+- Le rapport 4 abrège l’énumération de 1 à 5000 avec des points de suspension ;
+  il ne démontre pas une énumération exhaustive.
+- Quatre ensembles de mesures de chargement distincts apparaissent, entre
+  **2,038 et 2,725 s**. Les rapports 4 à 7 répètent le même ensemble : ce ne
+  sont pas quatre chargements indépendants. L’état du cache de spécialisation
+  reste inconnu.
+
+Les trois essais longs n’enregistrent aucun budget explicite : ils utilisent le
+contexte restant, soit 24 580, 16 396 et 512 jetons, puis s’arrêtent à l’EOS.
+Ils ne reproduisent donc pas exactement le budget de 256 prévu par le protocole.
+Les comptes d’entrée correspondent aux estimations Python des trois fichiers,
+sans comparaison directe des identifiants Swift/Python.
+
+Le maximum mémoire reste échantillonné et le pic du chargement non mesuré.
+L’attribution ANE, la répétition des cas longs, les sorties longues et la
+récupération sans rechargement restent à qualifier. Le verdict de cette série
+est **partiel**, avec deux échecs de calcul et un défaut de format conservés.
