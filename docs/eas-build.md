@@ -73,6 +73,13 @@ Avant la première livraison embarquée, ajouter une exception limitée au seul
 export approuvé dans `mobile/ios/Assist/BundledModels/Gemma`, puis vérifier que
 l’archive contient exactement l’inventaire approuvé. Cette exception n’est pas
 encore activée tant que le vrai paquet et son lock n’ont pas été revus.
+EAS CLI 24.14.0 limite l’archive source compressée à **2 Gio**
+(`MAX_ALLOWED_PROJECT_TARBALL_SIZE` dans `build/utils/repository.js`). Mesurer
+l’archive complète, modèle compris, avant l’envoi. Si elle dépasse cette limite,
+la livraison nécessite une autre voie de transfert vérifiée à la construction ;
+ne pas omettre Gemma ni publier les poids sur un nouvel hébergement pour contourner
+silencieusement le blocage. Cette limite concerne l’upload des sources, pas une
+mesure de la mémoire nécessaire à l’inférence.
 Inspecter l’archive avant envoi :
 
 ```sh
