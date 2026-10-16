@@ -1,0 +1,39 @@
+name: Prototype checks (not iPhone qualification)
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  javascript:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: python3 ../scripts/test-ios-launch.py
+      - run: python3 ../scripts/test-export-contracts.py
+      - run: bash ../scripts/test-preflight.sh
+      - run: node --test ../scripts/test-bundle-gemma.mjs
+      - run: node --test ../scripts/test-eas-archive.mjs
+  swift-policy:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Foundation and CryptoKit contracts (does not compile Core AI)
+        run: bash scripts/check-swift.sh

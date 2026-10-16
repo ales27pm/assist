@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "kind": "assistRMSNormFixtureProvenance",
+  "generator": "scripts/export-rmsnorm-probe.py",
+  "generatorSHA256": "49345988e2b01f0a5e624270cfa41cc6ca0563237f33384f014a5f80d8dd3ec0",
+  "versions": {
+    "torch": "2.9.0+cpu",
+    "coreai-core": "1.0.0b3",
+    "coreai-torch": "0.4.3",
+    "numpy": "2.4.6"
+  },
+  "sourceSHA256": {
+    "coreai_torch.converter.TorchConverter": "ef5f86c11cd46f821252d9957d258e9fccf77bf717853f0e440ed90ebe41f73c",
+    "coreai_torch.externalize.ExternalizeSpec": "e624712a7f3b1b6cef839affaa52b64ebf7e8e608ccf5f8251f96a24da6dcfe5",
+    "coreai_torch.composite_ops._rms_norm.RMSNormImpl": "1699970c93cf117555c651d1defa82a37365117a18d52586d6e5653f430a33f5"
+  },
+  "epsilon": 1e-06,
+  "rowPatterns": [
+    "signed_zero",
+    "overflow_1733",
+    "epsilon_sensitive",
+    "typical",
+    "small_and_subnormal",
+    "sparse_1733",
+    "mixed_magnitudes",
+    "nonuniform"
+  ],
+  "scaleStorage": "float16-le; promoted exactly to float32 at the call site",
+  "scales": [
+    {
+      "file": "scale_256.f16",
+      "width": 256,
+      "sha256": "ffc12fcd1f77898f372eb8dbe350580afd3a8de70626ea6329c230443f05a760"
+    },
+    {
+      "file": "scale_512.f16",
+      "width": 512,
+      "sha256": "2c1f2642dcd83c95bd1b0e7bd491bbd14577e0ae6959e375406bb6780e186964"
+    },
+    {
+      "file": "scale_1536.f16",
+      "width": 1536,
+      "sha256": "9fc1de0ccaad71f132c35f4d716ce20759ee0ed6bb54646e0dc4d75b87dd2336"
+    }
+  ],
+  "eagerChecks": [
+    {
+      "id": "rms_q8_256_8_weighted",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 2040,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_256_8_ones",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 2048,
+      "prematureHalfEpsilonMaxULP": 10
+    },
+    {
+      "id": "rms_q8_256_1_weighted",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 255,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_256_1_ones",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 256,
+      "prematureHalfEpsilonMaxULP": 10
+    },
+    {
+      "id": "rms_q8_512_8_weighted",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 4088,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_512_8_ones",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 4096,
+      "prematureHalfEpsilonMaxULP": 10
+    },
+    {
+      "id": "rms_q8_512_1_weighted",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 511,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_512_1_ones",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 512,
+      "prematureHalfEpsilonMaxULP": 10
+    },
+    {
+      "id": "rms_q8_1536_1_weighted",
+      "maxF16ULP": 1,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 1535,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_1536_1_ones",
+      "maxF16ULP": 1,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 1536,
+      "prematureHalfEpsilonMaxULP": 10
+    },
+    {
+      "id": "rms_q8_256_35_weighted",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 8925,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_256_35_ones",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 8960,
+      "prematureHalfEpsilonMaxULP": 10
+    }
+  ],
+  "modelWeightsLoaded": false,
+  "runtimeOrSpecializationInvoked": false,
+  "nativeCorrectnessVerified": false,
+  "aneExecutionVerified": false
+}
