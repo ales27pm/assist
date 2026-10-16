@@ -1,5 +1,11 @@
 # État de vérification — 15 octobre 2026
 
+Le build de diagnostic **1.0.0 (4)** est désormais signé et disponible en test
+interne TestFlight (`VALID`, `IN_BETA_TESTING`). Il ajoute les
+[observations numériques bornées](gemma-numeric-fidelity.md#diagnostic-de-lécart-restant)
+nécessaires à l’analyse de l’erreur des cubes. La correction de cette erreur et
+l’exécution de ces nouveaux diagnostics sur iPhone restent à vérifier.
+
 Le correctif **1.0.0 (3)** est signé et traité par TestFlight. La capture
 utilisateur du 15 octobre à 02:49 EDT confirme l’affichage de l’interface initiale
 sur l’iPhone après sa livraison. Les
@@ -22,6 +28,31 @@ budget de 256, en conservant le modèle 32K. Un seul essai de l’ancienne séri
 est confirmé hors réseau par l’utilisateur ; celui de la nouvelle série n’est
 pas établi. La qualification reste partielle ; l’écart numérique natif, la
 stabilité répétée et l’usage ANE restent à vérifier.
+
+## Livraison du diagnostic 4
+
+Le [build EAS](https://expo.dev/accounts/27pm/projects/assist/builds/6d215087-9160-46b1-a1e0-33108fa6e078)
+compile et signe le commit `0cb24b2` avec le SDK iPhoneOS 27.1. Son journal
+Xcode confirme `ARCHIVE SUCCEEDED`. La
+[soumission](https://expo.dev/accounts/27pm/projects/assist/submissions/f6ea4397-929e-46e4-8401-82406656bc45)
+est terminée ; la lecture App Store Connect confirme le build 4, version 1.0.0,
+`VALID` et `IN_BETA_TESTING`. Le statut externe reste
+`READY_FOR_BETA_SUBMISSION` ; aucune disponibilité publique n’est revendiquée.
+
+L’IPA de **11 608 126 octets**, SHA-256
+`88678833b1bb5981cdd974fd2df222deae63bd00e84dfd170423b0739af271bb`,
+contient le manifeste de scène, le manifeste de confidentialité, le JavaScript
+embarqué et les nouveaux champs de diagnostic dans le binaire. L’import du
+modèle reste manuel. Les vérifications locales passent : 30 tests JavaScript,
+typecheck, lint, codegen, 91 contrôles Foundation sous Swift 6 strict, 64 tests
+d’empaquetage, 17 cas de prérequis et deux contrôles de lancement. Les contrôles
+Foundation seuls ne compilent pas Core AI ; l’archive EAS le fait.
+
+La première programmation automatique des notes de test a été refusée par EAS
+(champ `changelog` réservé à l’offre Entreprise), après création du build. L’état
+du build et l’absence de nouvelle soumission ont été vérifiés avant de
+programmer **ce même build**, sans ce champ. Un seul build 4 a été créé.
+Les consignes de reprise restent dans le diagnostic lié ci-dessus.
 
 ## Crash de lancement TestFlight
 
