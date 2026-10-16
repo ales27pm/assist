@@ -379,6 +379,16 @@ exécution ; la marge est revérifiée après les lectures d’intégrité. Cett
 ne lance ni nouvel essai automatique après échec, ni publication. Un export
 réussi nécessitera encore une validation indépendante et un essai iPhone.
 
+À la demande de l’utilisateur, cette file sans swap est ensuite arrêtée avant
+tout chargement et remplacée par un profil **3 Gio de RAM et 8 Gio de swap**.
+Les réserves de l’hôte restent à 3 Gio de RAM et 2 Gio de swap ; la durée du
+worker est bornée à une heure. Le swap existant de 8 Gio étant plein, un
+nouveau fichier de 16 Gio est préparé sur le second SSD ext4, sans toucher au
+swap existant ni aux partitions. Son activation et la libération des caches
+propres attendent une authentification `sudo` dans le terminal du propriétaire.
+Les limites de cgroup et les refus en cas de RAM, swap ou disque insuffisant
+sont vérifiés ; cela ne prouve pas encore un export avec swap réussi.
+
 Le vérificateur indépendant est aussi renforcé : il lie la provenance aux
 quatre empreintes approuvées des outils, puis compare les métadonnées et types
 d’entrée/sortie complets des neuf fonctions avec le group8 de référence. Le
