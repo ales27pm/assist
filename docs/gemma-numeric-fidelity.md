@@ -208,6 +208,57 @@ Le rapport 20 fournit cette empreinte et les scores natifs décrits ci-dessus.
 L’étape suivante consiste à isoler la différence de calcul, puis à vérifier un
 correctif sur cette même consigne, sans changer le corrigé ni la fenêtre 32K.
 
+## Essai séparé avec normalisations HF32
+
+Un candidat **expérimental**, `gemma4-e2b-32k-group8-hf32norm`, reprend les
+**275 mêmes fichiers de palettes**, le même tokenizer et le même sidecar PLE.
+Il conserve le modèle E2B entier et ses graphes 1 024, 8 192 et 32 768. Les
+normalisations ordinaires et V sans poids demandent explicitement le calcul HF
+en FP32 : carré, moyenne, epsilon non arrondi en FP16, inverse RMS et produit
+par le poids, puis retour au dtype FP16 de l’entrée. Les valeurs FP16 des poids
+de normalisation sont conservées et promues exactement en FP32.
+
+Le petit contrôle indépendant `[1000, -2000]` expose une divergence des
+primitives eager : les versions FP16 renvoient zéro, tandis que la référence
+FP64 arrondie en FP16 et la variante HF32 donnent
+`[0.63232421875, -1.2646484375]`. Quatre fixtures CPU/meta, avec palettes 4 et
+8 bits, vérifient les sorties exactes, les buffers INT8 inchangés et les types
+du véritable petit asset sauvegardé. Ce défaut eager ne reproduit pas la réponse
+native des cubes et n’identifie pas son opérateur responsable.
+
+La réutilisation des palettes passe par un adaptateur privé des modules de
+finalisation de `coreai-opt 0.3.0` et `coreai-torch 0.4.3`, sans relancer KMeans ;
+ces versions n’exposent pas d’API publique de restauration du cache finalisé.
+Les 263 tenseurs source restants et les sept tables/scalaires sont chargés avec
+un mapping strict. La table INT8 principale est régénérée par la recette
+déterministe vérifiée ; ses octets ne sont pas comparés indépendamment à la
+constante interne de l’ancien asset. Les empreintes des palettes et des autres
+entrées sont vérifiées avant et après l’export.
+
+L’export complet et ses contrôles internes terminent en **242 s**, sous une
+limite de 8 Gio, sans OOM ni arrêt de garde, avec un maximum de cgroup de
+7 516 717 056 octets. La lecture indépendante de l’asset trouve **1 074 moyennes
+FP32**, aucune moyenne FP16, et les mêmes neuf signatures publiques, états et
+contraintes des arguments que la référence. Le vérificateur Node indépendant
+valide les neuf fichiers, soit **3 764 076 770 octets**. Le contrôle HF CPU des
+mêmes huit consignes figées réussit encore **8/8**, dont `1, 8, 27, 64`.
+
+L’archive distincte `Assist-Gemma-4-E2B-32K-group8-hf32norm.zip` contient
+**2 784 796 452 octets**, avec le SHA-256
+`cb63e75bf260be1227fa51e069a8945cc51e7cdd68dfd0beef1b676f09d25eca`.
+Les neuf fichiers archivés ont été relus et comparés à l’inventaire. Le corps
+HTTP complet donne aussi cette empreinte ; ce contrôle ne mesure pas la
+réception ni l’exécution sur l’iPhone.
+
+Ces contrôles portent sur l’export source et la référence CPU. Le candidat doit
+encore être compilé et exécuté sur iPhone : réponse des cubes, placement matériel,
+temps et mémoire restent inconnus. La préférence Neural Engine du parcours
+statique de l’app est conservée ; les opérations FP32 peuvent modifier le
+placement et les performances. Ce paquet ne constitue donc pas un correctif
+natif confirmé. Il s’importe comme dossier distinct dans le build TestFlight 4.
+Le premier essai demandé reste la même consigne des cubes, en premier après
+chargement, nouvelle conversation et budget 64, avec partage du rapport.
+
 ## Intégrité du paquet transféré
 
 Le paquet final comporte neuf fichiers, soit **3 763 087 387 octets**. Ses neuf

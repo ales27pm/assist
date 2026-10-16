@@ -12,6 +12,11 @@ glouton. Les trois textes longs, repris avec un budget de 256, donnent chacun
 six lignes exactes sur six, jusqu’à 32 256 jetons d’entrée et 89 de sortie.
 Il s’agit d’un passage par cas ; la répétabilité et l’usage ANE restent à qualifier.
 
+Un [essai 32K distinct avec normalisations HF32](gemma-numeric-fidelity.md#essai-séparé-avec-normalisations-hf32)
+est préparé avec les mêmes palettes group8. L’export, ses neuf signatures,
+l’inventaire et le ZIP sont vérifiés ; la référence CPU donne 8/8. Sa correction
+des cubes et ses performances natives restent à tester dans le build 4 existant.
+
 Le correctif **1.0.0 (3)** est signé et traité par TestFlight. La capture
 utilisateur du 15 octobre à 02:49 EDT confirme l’affichage de l’interface initiale
 sur l’iPhone après sa livraison. Les

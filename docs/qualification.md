@@ -49,7 +49,9 @@ un essai froid.
    s’arrêtent à 64 et ne qualifient donc pas la réponse complète. Les
    [rapports 21 à 23](gemma-numeric-fidelity.md#rapports-20-à-23--diagnostic-natif-et-récupération-longue)
    reprennent ensuite ces trois textes avec 256 : six lignes exactes sur six,
-   89 jetons et EOS à chaque palier, sur un seul passage par cas.
+   89 jetons et EOS à chaque palier, sur un seul passage par cas. Ces résultats
+   concernent le dossier `group8` ; l’[essai HF32 distinct](gemma-numeric-fidelity.md#essai-séparé-avec-normalisations-hf32)
+   doit encore être qualifié sur iPhone.
 4. **Répétabilité** : au moins trois répétitions par scénario pertinent,
    démarrage et réutilisation séparés. Conserver les échecs, pas seulement le
    meilleur passage. Réduire la charge si l’appareil chauffe ou devient instable.
