@@ -44,8 +44,12 @@ struct ModelAssetProbeChecks {
         check(try store.readJSON() == "null", "A fresh store has no saved identity report.")
         check(Probe.expectedFiles.map(\.role) == [.bundleMetadata, .assetMetadata, .storedMainHash, .mainBytecode],
               "Exactly four pinned F16 files are allowed.")
-        check(Probe.expectedFiles.last?.bytes == 1_381_786_497 && Probe.expectedFiles.last?.sha256
-              == "bd71bc0793677c4c4789b78109426b96afa2af7fc4df332f0c88695a43967362", "Pinned source identity drifted.")
+        check(Probe.expectedFiles.map { "\($0.role.rawValue)|\($0.relativePath)|\($0.bytes)|\($0.sha256)" } == [
+            "bundle_metadata|metadata.json|1091|2771755c5042bc9b400ff99c320b8689b32aa2751351fa5fa137df72208fa801",
+            "asset_metadata|gemma4-e2b-32k-group8-rmscomposite.aimodel/metadata.json|406|68bc28f74571f1617d9b888841d33351ebdb2f72be77294c255f520957ef92db",
+            "stored_main_hash|gemma4-e2b-32k-group8-rmscomposite.aimodel/main.hash|32|abbf299e92e76280e6e5ce0bde11b9cabc5ad75c6a5f94d979299d07d3b2cece",
+            "main_bytecode|gemma4-e2b-32k-group8-rmscomposite.aimodel/main.mlirb|1381786497|bd71bc0793677c4c4789b78109426b96afa2af7fc4df332f0c88695a43967362"
+        ], "Pinned source identity drifted.")
         check(try Probe.identity(named: Probe.modelName).files.map(\.relativePath) == Probe.expectedFiles.map(\.relativePath),
               "The original v1 identity remains pinned.")
         rejected(.corruptReport) { _ = try Probe.identity(named: "unreviewed-model") }

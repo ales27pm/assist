@@ -49,6 +49,11 @@ REFERENCE = "float64_rmsnorm_then_float16"
 ROW_LABELS = ("signed_zero", "overflow_1733", "epsilon_sensitive", "typical",
               "small_and_subnormal", "sparse_1733", "mixed_magnitudes", "nonuniform")
 PINS = {"torch": "2.9.0+cpu", "coreai-core": "1.0.0b3", "coreai-torch": "0.4.3"}
+# Historical resources remain immutable. Their old generator did not record
+# metadata.json, so its exact reviewed metadata bytes are pinned here instead.
+LEGACY_GENERATOR_SHA256 = "49345988e2b01f0a5e624270cfa41cc6ca0563237f33384f014a5f80d8dd3ec0"
+LEGACY_METADATA_SHA256 = "c3e05d4071e43d95ed140a9095a94714477cf1b6f121a199ff75842416c9c773"
+SCALE_STORAGE = "float16-le; promoted exactly to float32 at the call site"
 
 
 def require(condition, message):
@@ -65,6 +70,44 @@ def write_json(path, value):
     with path.open("x", encoding="utf-8") as stream:
         json.dump(value, stream, indent=2, allow_nan=False)
         stream.write("\n")
+
+
+def verify_metadata(path, expected_digest):
+    require(sha(path) == expected_digest, "Asset metadata SHA256 mismatch")
+    metadata = json.loads(path.read_text())
+    require(set(metadata) == {"assetVersion", "producer", "creationDate"}
+            and metadata["assetVersion"] == "2.0"
+            and metadata["producer"] == "coreai-core " + PINS["coreai-core"]
+            and isinstance(metadata["creationDate"], str)
+            and re.fullmatch(r"\d{8}T\d{6}Z", metadata["creationDate"]) is not None,
+            "Unexpected asset metadata contract")
+
+
+def verify_provenance(provenance, output, checks):
+    fixed = {"schemaVersion": 1, "kind": "assistRMSNormFixtureProvenance",
+             "generator": "scripts/export-rmsnorm-probe.py", "epsilon": EPS,
+             "rowPatterns": list(ROW_LABELS), "scaleStorage": SCALE_STORAGE,
+             "modelWeightsLoaded": False, "runtimeOrSpecializationInvoked": False,
+             "nativeCorrectnessVerified": False, "aneExecutionVerified": False}
+    require(all(type(provenance.get(key)) is type(value) and provenance[key] == value
+                for key, value in fixed.items()), "Fixed generator provenance changed")
+    require(provenance["generatorSHA256"] in {sha(Path(__file__)), LEGACY_GENERATOR_SHA256},
+            "Generator changed since fixture creation")
+    metadata_digest = provenance.get("assetMetadataSHA256")
+    legacy = provenance["generatorSHA256"] == LEGACY_GENERATOR_SHA256
+    require(metadata_digest is not None or legacy, "Missing asset metadata provenance")
+    require(not legacy or metadata_digest in (None, LEGACY_METADATA_SHA256), "Historical asset metadata provenance changed")
+    verify_metadata(output / ASSET / "metadata.json", metadata_digest if metadata_digest is not None else LEGACY_METADATA_SHA256)
+    require(json.dumps(provenance["eagerChecks"], sort_keys=True, allow_nan=False)
+            == json.dumps(checks, sort_keys=True, allow_nan=False), "Recorded eager checks differ from recomputed results")
+    expected_scales = [{"file": f"scale_{width}.f16", "width": width,
+                        "sha256": sha(output / f"scale_{width}.f16")}
+                       for width in sorted({width for width, _ in SHAPES})]
+    require(provenance["scales"] == expected_scales, "Scale provenance mismatch")
+    allowed = set(fixed) | {"generatorSHA256", "versions", "sourceSHA256", "scales", "eagerChecks"}
+    if metadata_digest is not None:
+        allowed.add("assetMetadataSHA256")
+    require(set(provenance) == allowed, "Unexpected generator provenance fields")
 
 
 def write_f16(path, array):
@@ -224,11 +267,12 @@ def export(output):
     write_json(output / "manifest.json", manifest)
     provenance = {"schemaVersion": 1, "kind": "assistRMSNormFixtureProvenance",
                   "generator": "scripts/export-rmsnorm-probe.py", "generatorSHA256": sha(Path(__file__)),
+                  "assetMetadataSHA256": sha(output / ASSET / "metadata.json"),
                   "versions": {name: version(name) for name in (*PINS, "numpy")},
                   "sourceSHA256": {f"{obj.__module__}.{obj.__name__}": sha(Path(inspect.getfile(obj)))
                                    for obj in (TorchConverter, ExternalizeSpec, RMSNormImpl)},
                   "epsilon": EPS, "rowPatterns": list(ROW_LABELS),
-                  "scaleStorage": "float16-le; promoted exactly to float32 at the call site",
+                  "scaleStorage": SCALE_STORAGE,
                   "scales": [{"file": f"scale_{width}.f16", "width": width,
                               "sha256": sha(output / f"scale_{width}.f16")} for width in scales],
                   "eagerChecks": checks, "modelWeightsLoaded": False,
@@ -371,15 +415,11 @@ def verify(output):
         checks.append({"id": name, **eager_check(module, x, scale, expected_output)})
         expected[name] = (shape, scale)
     provenance = json.loads((output / "generator-provenance.json").read_text())
-    require(provenance["generatorSHA256"] == sha(Path(__file__)), "Generator changed since fixture creation")
+    verify_provenance(provenance, output, checks)
     require(provenance["versions"] == {name: version(name) for name in (*PINS, "numpy")}
             and provenance["sourceSHA256"] == {
                 f"{obj.__module__}.{obj.__name__}": sha(Path(inspect.getfile(obj)))
                 for obj in (TorchConverter, ExternalizeSpec, RMSNormImpl)}, "Export environment changed")
-    for row in provenance["scales"]:
-        require(row["file"] == f"scale_{row['width']}.f16"
-                and row["width"] in {width for width, _ in SHAPES}
-                and row["sha256"] == sha(output / row["file"]), "Scale provenance mismatch")
     contract = inspect_asset(output / ASSET, expected)
     allowed |= {f"{ASSET}/main.hash", f"{ASSET}/main.mlirb", f"{ASSET}/metadata.json"}
     files = sorted(path for path in output.rglob("*") if path.is_file())
@@ -389,7 +429,8 @@ def verify(output):
     return {"status": "passed", "scope": "Synthetic CPU eager, independent Float64 oracle and saved source only",
             "assetSHA256": manifest["assetSHA256"], "manifestSHA256": sha(output / "manifest.json"),
             "fixtureCount": len(expected), "resourceFiles": len(files), "resourceBytes": total,
-            "allFixtureHashesReread": True, "assetMainHashVerified": True, "contract": contract,
+            "allFixtureHashesReread": True, "assetMainHashVerified": True, "assetMetadataHashVerified": True,
+            "assetMetadataSHA256": sha(output / ASSET / "metadata.json"), "contract": contract,
             "eagerChecks": checks, "modelWeightsLoaded": False, "runtimeOrSpecializationInvoked": False,
             "nativeCorrectnessVerified": False, "aneExecutionVerified": False}
 
@@ -398,15 +439,28 @@ def resource_limits(required):
     if sys.platform != "linux":
         require(not required, "Linux cgroup limits were required")
         return None
-    group = next(line.split(":", 2)[2] for line in Path("/proc/self/cgroup").read_text().splitlines()
-                 if line.startswith("0::"))
-    root = Path("/sys/fs/cgroup") / group.lstrip("/")
-    actual = {key: (root / key).read_text().strip()
-              for key in ("memory.max", "memory.swap.max", "cpu.max", "pids.max")}
+    try:
+        group = next((line.split(":", 2)[2] for line in Path("/proc/self/cgroup").read_text().splitlines()
+                      if line.startswith("0::")), None)
+        if group is None:
+            require(not required, "Required cgroup v2 resource limits unavailable")
+            return None
+        root = Path("/sys/fs/cgroup") / group.lstrip("/")
+        actual = {key: (root / key).read_text().strip()
+                  for key in ("memory.max", "memory.swap.max", "cpu.max", "pids.max")}
+    except OSError as exc:
+        require(not required, f"Required cgroup v2 resource limits unavailable: {exc}")
+        return None
     if required:
         require(actual == {"memory.max": str(2 * 1024**3), "memory.swap.max": "0",
                            "cpu.max": "200000 100000", "pids.max": "128"}, "Requested resource limits absent")
     return actual
+
+
+def max_rss_bytes():
+    # getrusage reports bytes on macOS and KiB on Linux.
+    value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return value if sys.platform == "darwin" else value * 1024
 
 
 def main():
@@ -434,10 +488,10 @@ def main():
         raise
     finally:
         result["elapsedSeconds"] = time.monotonic() - started
-        result["maxRSSBytesLinux"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+        result["maxRSSBytes"] = max_rss_bytes()
         if args.report:
             write_json(args.report, result)
-        print(json.dumps({key: result[key] for key in ("status", "elapsedSeconds", "maxRSSBytesLinux")}), flush=True)
+        print(json.dumps({key: result[key] for key in ("status", "elapsedSeconds", "maxRSSBytes")}), flush=True)
 
 
 if __name__ == "__main__":

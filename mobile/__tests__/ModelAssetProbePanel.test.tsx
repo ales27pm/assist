@@ -310,6 +310,122 @@ test('prevents an older restoration request from replacing the manual result', a
   expect(screen.queryByText(/Dernière étape enregistrée/)).toBeNull();
 });
 
+test('hides a restored success when a folder is selected and does not restore it again', async () => {
+  native.getLastModelAssetProbe.mockResolvedValue(JSON.stringify(completed));
+  await renderAsync(
+    <ModelAssetProbePanel
+      selected={false}
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  expect(
+    screen.getByText(/Les quatre fichiers correspondent/),
+  ).toBeOnTheScreen();
+  await screen.rerenderAsync(
+    <ModelAssetProbePanel
+      selected
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  expect(screen.queryByText(/Les quatre fichiers correspondent/)).toBeNull();
+  expect(screen.queryByRole('button', { name: shareLabel })).toBeNull();
+  expect(native.getLastModelAssetProbe).toHaveBeenCalledTimes(1);
+});
+
+test('hides the old report when another folder replaces the current selection', async () => {
+  native.getLastModelAssetProbe.mockResolvedValue(JSON.stringify(completed));
+  await renderAsync(
+    <ModelAssetProbePanel
+      selected
+      selectionVersion={1}
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  expect(
+    screen.getByText(/Les quatre fichiers correspondent/),
+  ).toBeOnTheScreen();
+  await screen.rerenderAsync(
+    <ModelAssetProbePanel
+      selected
+      selectionVersion={2}
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  expect(screen.queryByText(/Les quatre fichiers correspondent/)).toBeNull();
+  expect(screen.queryByRole('button', { name: shareLabel })).toBeNull();
+});
+
+test('ignores a restoration that finishes after the folder selection changes', async () => {
+  let restore!: (value: string) => void;
+  native.getLastModelAssetProbe.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        restore = resolve;
+      }),
+  );
+  await renderAsync(
+    <ModelAssetProbePanel
+      selected={false}
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  await screen.rerenderAsync(
+    <ModelAssetProbePanel
+      selected
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  await act(async () => restore(JSON.stringify(completed)));
+  expect(screen.queryByText(/Les quatre fichiers correspondent/)).toBeNull();
+  expect(screen.queryByRole('button', { name: shareLabel })).toBeNull();
+});
+
+test('ignores an in-flight result and its saved fallback after the folder selection changes', async () => {
+  let finish!: (value: string) => void;
+  native.runModelAssetProbe.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  const user = userEvent.setup();
+  await renderAsync(
+    <ModelAssetProbePanel
+      selected
+      selectionVersion={1}
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  await user.press(screen.getByRole('button', { name: runLabel }));
+  await screen.rerenderAsync(
+    <ModelAssetProbePanel
+      selected
+      selectionVersion={2}
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  native.getLastModelAssetProbe.mockResolvedValue(JSON.stringify(completed));
+  await act(async () => finish(JSON.stringify(completed)));
+  expect(screen.queryByText(/Les quatre fichiers correspondent/)).toBeNull();
+  expect(screen.queryByRole('button', { name: shareLabel })).toBeNull();
+});
+
 test('blocks sharing during another operation and reports share failures locally', async () => {
   native.getLastModelAssetProbe.mockResolvedValue(JSON.stringify(failed));
   const share = jest

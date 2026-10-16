@@ -50,6 +50,7 @@ export function AssistantScreen() {
     contextCapacity: 0,
   });
   const [selected, setSelected] = useState(false);
+  const [selectionVersion, setSelectionVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -197,7 +198,7 @@ export function AssistantScreen() {
           setProgress(result);
           setReport(result);
           // Incomplete text is visible but never silently saved as a completed turn.
-          if (result.finishReason === 'eos' && result.text.length > 0) {
+          if (result.finishReason === 'eos' && result.text.trim().length > 0) {
             setMessages([
               ...conversation,
               { role: 'assistant', content: result.text },
@@ -272,6 +273,7 @@ export function AssistantScreen() {
                 await NativeAssist!.loadBundledModel();
                 if (mounted.current) {
                   setSelected(false);
+                  setSelectionVersion(value => value + 1);
                   setMessages([]);
                   setProgress(null);
                   setReport(null);
@@ -290,6 +292,7 @@ export function AssistantScreen() {
                 await NativeAssist!.selectModel();
                 if (mounted.current) {
                   setSelected(true);
+                  setSelectionVersion(value => value + 1);
                   setMessages([]);
                   setProgress(null);
                   setReport(null);
@@ -322,6 +325,7 @@ export function AssistantScreen() {
         <MonitoringPanel />
         <ModelAssetProbePanel
           selected={selected}
+          selectionVersion={selectionVersion}
           busy={busy}
           modelLoaded={ready}
           perform={perform}

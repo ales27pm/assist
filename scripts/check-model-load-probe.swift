@@ -87,6 +87,23 @@ struct ModelLoadProbeChecks {
         let temporary = manager.temporaryDirectory.appendingPathComponent("AssistLoadProbeChecks-" + UUID().uuidString)
         try manager.createDirectory(at: temporary, withIntermediateDirectories: false)
         defer { try? manager.removeItem(at: temporary) }
+        let realRoot = temporary.appendingPathComponent("real", isDirectory: true)
+        let linkedRoot = temporary.appendingPathComponent("linked", isDirectory: true)
+        try manager.createDirectory(at: realRoot, withIntermediateDirectories: false)
+        try manager.createSymbolicLink(at: linkedRoot, withDestinationURL: realRoot)
+        rejected(.invalidBundle) {
+            _ = try Probe.validatedRoot(linkedRoot.path) { selected in
+                let values = try selected.resourceValues(forKeys: [.isSymbolicLinkKey])
+                if values.isSymbolicLink == true { throw Probe.Failure.invalidBundle }
+            }
+        }
+        let validated = try Probe.validatedRoot(realRoot.path) { selected in
+            check(selected.path == realRoot.path, "Validate the original selected entry.")
+        }
+        check(validated == realRoot.resolvingSymlinksInPath().standardizedFileURL, "Canonicalize only validated roots.")
+        rejected(.invalidBundle) {
+            _ = try Probe.validatedRoot("relative/path") { _ in preconditionFailure("Reject relative paths before traversal.") }
+        }
         let store = Probe.Store(directory: temporary.appendingPathComponent("saved"))
         check(try store.readJSON() == "null", "A fresh install has no saved diagnostic.")
         check(Probe.functionNames == Set(["extend_1024_8", "extend_32768_8", "extend_8192_8",
@@ -167,6 +184,7 @@ struct ModelLoadProbeChecks {
         check(!redacted.contains("/private/model/path") && !redacted.contains("secret prompt"), "Unknown disk fields must not be exported.")
         var legacy = cleanObject
         legacy["schemaVersion"] = 1
+        legacy["nativeBuild"] = "8"
         legacy.removeValue(forKey: "attempt")
         var legacyMethods = legacy["measurementMethods"] as! [String: String]
         legacyMethods.removeValue(forKey: "attempt")
@@ -244,7 +262,8 @@ struct ModelLoadProbeChecks {
               "Prepare and inspect once, then load only one function.")
         check(counters.get("prepared") == 0 && counters.get("loaded") == 0, "Release model and function after final persistence.")
         check(try store.readJSON() == successfulJSON, "Saved completion matches the returned report.")
-        check(try object(successfulJSON)["attempt"] as? NSDictionary != attempt as NSDictionary?,
+        let successfulAttempt = try object(successfulJSON)["attempt"] as! [String: Any]
+        check(successfulAttempt["id"] as? String != attempt?["id"] as? String,
               "Each manual attempt receives a fresh identifier.")
 
         let completeObject = try object(successfulJSON)

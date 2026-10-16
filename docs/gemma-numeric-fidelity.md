@@ -18,7 +18,7 @@ conversation neuve, le template embarqué, une génération gloutonne et au plus
 | HF BF16 original | `1,4,9,16,25` |
 | HF FP16 intermédiaire | `1,4,9,16,25` |
 | HF FP16 + 275 poids palettisés de l’export initial, embeddings d’origine | `1,2,3,4,5` |
-| HF FP16 + tables d’embeddings INT8 uniquement | `1,4,9,16,25` |
+| HF FP16 + embedding principal INT8 simulé et PLE exporté, sans palettes | `1,4,9,16,25` |
 | Export initial exécuté sur iPhone, rapports 2 et 8 | `1,2,3,4,5` |
 
 Les contrôles HF utilisent Transformers 5.12.1, PyTorch 2.9.0+cpu, attention
@@ -45,8 +45,9 @@ jetons**. Le correctif porte sur la compression des poids et est testé avec la
 consigne originale des carrés.
 
 Un nouvel export réel a terminé en environ **11 min 17 s**, sans OOM ni arrêt par
-la garde de réserve hôte. Avec ses poids palettisés et ses tables INT8, la
-référence HF réussit les **8/8 contrôles figés**, dont les carrés
+la garde de réserve hôte. Avec ses LUT/indices finalisés, son sidecar PLE et
+une quantification INT8 de l’embedding principal simulée depuis le checkpoint,
+la référence HF réussit les **8/8 contrôles figés**, dont les carrés
 `1, 4, 9, 16, 25`. Le FP16 sans compression réussit 7/8 : il répond
 `42,200,20` au cas des sommes, dont le corrigé reste `42,200,30`. Cet échec est
 conservé ; un contrôle BF16 original séparé reproduit la même erreur sur cette
@@ -56,15 +57,19 @@ modèles ni d’annoncer une arithmétique fiable sur toutes les consignes.
 | Référence CPU, mêmes huit consignes | Réponses exactes |
 | --- | --- |
 | Checkpoint FP16 sans compression | 7/8 |
-| Export initial : palettes à groupes de 32 + embeddings INT8 | 5/8 |
-| Nouvel export : palettes à groupes de 8 + embeddings INT8 | 8/8 |
+| Export initial : palettes à groupes de 32, PLE lu et embedding principal INT8 simulé | 5/8 |
+| Nouvel export : palettes à groupes de 8, PLE lu et embedding principal INT8 simulé | 8/8 |
 
 L’export initial échoue aussi sur les cubes, en répondant `1,2,3,4` ; le
 nouveau répond `1, 8, 27, 64`. Les trois contrôles utilisent le même script et
 le même fichier de consignes. Les échecs restent dans leurs résultats bruts.
 
 Les 8/8 du candidat concernent la référence CPU utilisant ses véritables LUT et
-son sidecar PLE. Ils ne mesurent pas l’exécution du graphe Core AI compilé.
+son sidecar PLE. Le vérificateur recalcule l’embedding principal INT8 depuis le
+checkpoint ; il ne lit pas sa table sérialisée dans l’asset. Ce résultat ne
+vérifie donc pas cette constante exportée et ne mesure pas l’exécution du graphe
+Core AI compilé. Une comparaison ultérieure de la table sérialisée est décrite
+plus bas pour le candidat composite ; elle ne change pas la méthode de ces 8/8.
 
 ## Contre-vérification iPhone : rapports 9 à 19
 
@@ -310,11 +315,21 @@ conservés ; aucun passage implicite à 8K ou autre backend n’est introduit.
 ## Contrôle d’une normalisation composite
 
 Une piste distincte utilise l’API publique
-[`RMSNormImpl` et `ExternalizeSpec`](https://apple.github.io/coreai-torch/main/api/composite-ops/rms-norm.html)
+[`RMSNormImpl` et `ExternalizeSpec`](https://github.com/apple/coreai-torch/blob/b51fd006d978b6db7debef2566a373e258d91ba4/docs/api/composite-ops/rms-norm.md)
 pour conserver une frontière `rms_norm` reconnue dans le graphe source.
 Les paramètres FP16 d’origine restent les mêmes objets ; leur promotion FP32
 est explicite à l’entrée du produit de normalisation. La normalisation V
 utilise une échelle constante de un, sans ajouter de poids appris.
+
+La référence d’API est `coreai-torch 0.4.3`, tag `v0.4.3`, révision
+`b51fd006d978b6db7debef2566a373e258d91ba4`, dans l’environnement CPU Linux
+Python 3.12.13, PyTorch 2.9.0+cpu, `coreai-core 1.0.0b3` et `coreai-opt 0.3.0`
+décrit dans le [rapport de préparation](gemma-32k-export-2026-10-15.md#provenance-et-conversion).
+Le [manifeste de provenance des fixtures](../mobile/ios/Assist/NumericalProbe/generator-provenance.json)
+consigne les versions et SHA-256 des fichiers installés `converter.py`,
+`externalize.py` et `composite_ops/_rms_norm.py` ; ces trois empreintes
+correspondent aux fichiers de cette révision. Ce contrôle lie les API utilisées
+à une source précise, sans prétendre que le paquet a été installé depuis Git.
 
 Le contrôle d’intégration avec des poids synthétiques et sa répétition
 indépendante utilisent les primitives iOS épinglées. Ils sauvegardent puis
@@ -455,8 +470,9 @@ Le build 5 ajoute un diagnostic natif distinct pour les six formes RMSNorm
 du palier de requête 8, chacune avec une échelle non uniforme et une échelle
 de un. Les données sont synthétiques : elles couvrent notamment le
 débordement d’un carré FP16 et l’arrondi prématuré d’epsilon. Une référence
-FP64 arrondie en FP16 est vérifiée indépendamment par `math.fsum` ; ses douze
-résultats correspondent exactement aux fichiers stockés. L’opération CPU
+NumPy FP64 arrondie en FP16 est recalculée avec
+`np.mean(..., dtype=np.float64)`, puis racine, division et produit en FP64 ;
+ses douze résultats correspondent exactement aux fichiers stockés. L’opération CPU
 publique reste à au plus un ULP, seuil conservé pour le diagnostic natif.
 
 Les 32 fichiers occupent **1 149 268 octets**, dont 20 125 pour l’asset source
@@ -528,7 +544,7 @@ Neural Engine, aucun des **278 528 éléments** ne dépasse un ULP ; seules
 trois valeurs numériques diffèrent de la référence, chacune d’un ULP.
 Les 17 408 différences de signe de zéro expliquent les autres différences
 de bits. Les quatre groupes terminent sans valeur non finie. Une vérification
-indépendante par `math.fsum` confirme les références FP64 arrondies en FP16.
+avec l’oracle NumPy FP64 du générateur confirme les références arrondies en FP16.
 
 Ce contrôle établit que la frontière FP32 supprime les écarts dépassant le
 seuil sur ces six formes de requête 8, avec les mêmes données synthétiques.
@@ -639,8 +655,13 @@ ponctuation ou le sens. Ce petit jeu est une régression ciblée, pas un benchma
 général de Gemma.
 
 [Le vérificateur](../scripts/check-gemma-quality.py) exécute une référence HF
-hors réseau sur le checkpoint local, éventuellement avec les LUT/indices de
-l’export et ses embeddings INT8. Nos essais utilisent le staging FP16 et les
+hors réseau sur le checkpoint local. Il exige les empreintes approuvées des
+poids et de l’inventaire complet du checkpoint, configuration et tokenizer
+compris, et refuse une modification du jeu canonique de huit consignes. Il peut
+utiliser les LUT/indices de
+l’export et son sidecar PLE. L’option `--ple` simule la quantification INT8 de
+l’embedding principal depuis le checkpoint et lit le PLE exporté ; elle ne lit
+pas la table principale sérialisée. Nos essais utilisent le staging FP16 et les
 intermédiaires conservés du workflow Linux borné. Pour un nouvel export, le
 [wrapper de capture](../scripts/export-gemma-with-palettes.py), utilisé dans les
 [commandes de préparation](gemma-export.md#export-32k-sans-écraser-un-essai-précédent),
@@ -649,12 +670,24 @@ Le vérificateur peut aussi charger le checkpoint BF16 local en FP16, avec
 l’empreinte BF16 correspondante ; ce chargement nécessite davantage de mémoire
 que notre staging mappé. Utiliser l’environnement Python épinglé de
 l’export, suffisamment de RAM et des limites CPU/mémoire adaptées. Les poids
-restent hors Git. Exemple depuis la racine d’Assist, avec des chemins locaux :
+restent hors Git. Depuis la racine d’Assist, inspecter d’abord l’inventaire de
+l’instantané source dont la provenance a été vérifiée, avant les essais :
+
+```sh
+"$EXPORT_PYTHON" scripts/check-gemma-quality.py \
+  --checkpoint "$CHECKPOINT_LOCAL" --print-checkpoint-manifest
+```
+
+Conserver cet inventaire et son empreinte approuvée dans
+`CHECKPOINT_MANIFEST_SHA256`. Cette lecture n’authentifie pas à elle seule la
+source ; ne pas remplacer l’empreinte attendue par celle d’un dossier modifié
+pour faire réussir un contrôle. Exemple d’inférence avec des chemins locaux :
 
 ```sh
 "$EXPORT_PYTHON" scripts/check-gemma-quality.py \
   --checkpoint "$CHECKPOINT_LOCAL" \
   --checkpoint-sha256 "$CHECKPOINT_SHA256" \
+  --checkpoint-manifest-sha256 "$CHECKPOINT_MANIFEST_SHA256" \
   --palettes "$FINALIZED_WEIGHTS" \
   --ple "$BUNDLE_PLE" \
   --output "$NEW_RESULT_JSON"

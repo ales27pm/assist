@@ -21,7 +21,6 @@ from importlib.metadata import version
 import json
 from pathlib import Path
 import re
-import resource
 import shutil
 import sys
 import time
@@ -36,9 +35,13 @@ from coreai_torch import ExternalizeSpec, TorchConverter, get_decomp_table
 from coreai_torch.composite_ops import RMSNormImpl
 
 
-ORIGINAL_GENERATOR_SHA256 = "49345988e2b01f0a5e624270cfa41cc6ca0563237f33384f014a5f80d8dd3ec0"
+ORIGINAL_GENERATOR_SHA256 = "1fcec3addd69f222e640ce09de0bb22b99bab0340e38c072744d476e01869a6e"
+BASELINE_GENERATOR_SHA256 = "49345988e2b01f0a5e624270cfa41cc6ca0563237f33384f014a5f80d8dd3ec0"
+LEGACY_GENERATOR_SHA256 = "2b03b0ba1c80cd890d80d9b86d2aacb6c4aafd405d1ca4bc58c138509e08eeaf"
+LEGACY_METADATA_SHA256 = "333021a0bb292530ba506815e8dd4b683bce66791e585224fde7827e21615671"
 ORIGINAL_MANIFEST_SHA256 = "134b093a1c2b189c37458fa3776f4193feacf4c6d251e52dc69d5cee10be3c29"
 ORIGINAL_ASSET_SHA256 = "46932657bf6ea3e4a3e99abba91b377b1ddbfb731a8553a4d5728fc414f54c8c"
+VARIANT = "F16 public wrapper; cast F32 before named RMSNorm; cast F16 after named RMSNorm"
 
 
 def load_original():
@@ -80,6 +83,41 @@ class OnesNormFP32(nn.Module):
 def tree_snapshot(root):
     return {path.relative_to(root).as_posix(): sha(path)
             for path in sorted(root.rglob("*")) if path.is_file()}
+
+
+def require_disjoint_resources(output, source):
+    output, source = output.resolve(), source.resolve()
+    require(not output.is_relative_to(source) and not source.is_relative_to(output),
+            "Output and original fixtures must not overlap")
+
+
+def verify_provenance(provenance, output, source, checks):
+    fixed = {"schemaVersion": 1, "kind": "assistRMSNormFP32FixtureProvenance",
+             "generator": "scripts/export-rmsnorm-fp32-probe.py", "variant": VARIANT,
+             "fixtureInputsExpectedAndScalesUnchanged": True, "modelWeightsLoaded": False,
+             "runtimeOrSpecializationInvoked": False, "nativeCorrectnessVerified": False,
+             "aneExecutionVerified": False, "originalManifestSHA256": ORIGINAL_MANIFEST_SHA256,
+             "originalAssetSHA256": ORIGINAL_ASSET_SHA256}
+    require(all(type(provenance.get(key)) is type(value) and provenance[key] == value
+                for key, value in fixed.items()), "Fixed generator provenance changed")
+    legacy = provenance["generatorSHA256"] == LEGACY_GENERATOR_SHA256
+    require(provenance["generatorSHA256"] in {sha(Path(__file__)), LEGACY_GENERATOR_SHA256}
+            and provenance["originalGeneratorSHA256"] == (BASELINE_GENERATOR_SHA256 if legacy else ORIGINAL_GENERATOR_SHA256),
+            "Generator provenance mismatch")
+    metadata_digest = provenance.get("assetMetadataSHA256")
+    require(metadata_digest is not None or legacy, "Missing asset metadata provenance")
+    require(not legacy or metadata_digest in (None, LEGACY_METADATA_SHA256), "Historical asset metadata provenance changed")
+    original.verify_metadata(output / original.ASSET / "metadata.json",
+                             metadata_digest if metadata_digest is not None else LEGACY_METADATA_SHA256)
+    require(json.dumps(provenance["eagerChecks"], sort_keys=True, allow_nan=False)
+            == json.dumps(checks, sort_keys=True, allow_nan=False), "Recorded eager checks differ from recomputed results")
+    require(provenance["versions"] == {name: version(name) for name in (*original.PINS, "numpy")}
+            and provenance["originalSourceSHA256"] == json.loads((source / "generator-provenance.json").read_text())["sourceSHA256"],
+            "Export environment provenance mismatch")
+    allowed = set(fixed) | {"generatorSHA256", "originalGeneratorSHA256", "versions", "originalSourceSHA256", "eagerChecks"}
+    if metadata_digest is not None:
+        allowed.add("assetMetadataSHA256")
+    require(set(provenance) == allowed, "Unexpected generator provenance fields")
 
 
 def verified_source(source):
@@ -196,6 +234,7 @@ def inspect_asset(path, fixtures, source):
 
 
 def export(output, source):
+    require_disjoint_resources(output, source)
     output.mkdir(parents=True, exist_ok=False)
     baseline = json.loads((source / "manifest.json").read_text())
     files = {row[field] for row in baseline["fixtures"] for field in ("inputFile", "expectedFile")}
@@ -236,11 +275,12 @@ def export(output, source):
     write_json(output / "generator-provenance.json", {
         "schemaVersion": 1, "kind": "assistRMSNormFP32FixtureProvenance",
         "generator": "scripts/export-rmsnorm-fp32-probe.py", "generatorSHA256": sha(Path(__file__)),
+        "assetMetadataSHA256": sha(output / original.ASSET / "metadata.json"),
         "originalGeneratorSHA256": ORIGINAL_GENERATOR_SHA256, "originalManifestSHA256": ORIGINAL_MANIFEST_SHA256,
         "originalAssetSHA256": ORIGINAL_ASSET_SHA256,
         "versions": {name: version(name) for name in (*original.PINS, "numpy")},
         "originalSourceSHA256": json.loads((source / "generator-provenance.json").read_text())["sourceSHA256"],
-        "variant": "F16 public wrapper; cast F32 before named RMSNorm; cast F16 after named RMSNorm",
+        "variant": VARIANT,
         "eagerChecks": checks, "fixtureInputsExpectedAndScalesUnchanged": True,
         "modelWeightsLoaded": False, "runtimeOrSpecializationInvoked": False,
         "nativeCorrectnessVerified": False, "aneExecutionVerified": False,
@@ -274,13 +314,7 @@ def verify(output, source):
         module = (WeightedNormFP32(scale) if name.endswith("_weighted") else OnesNormFP32(shape[-1])).eval()
         checks.append({"id": name, **original.eager_check(module, x, scale, expected)})
     provenance = json.loads((output / "generator-provenance.json").read_text())
-    require(provenance["generatorSHA256"] == sha(Path(__file__))
-            and provenance["originalGeneratorSHA256"] == ORIGINAL_GENERATOR_SHA256
-            and provenance["originalManifestSHA256"] == ORIGINAL_MANIFEST_SHA256
-            and provenance["originalAssetSHA256"] == ORIGINAL_ASSET_SHA256, "Generator provenance mismatch")
-    require(provenance["versions"] == {name: version(name) for name in (*original.PINS, "numpy")}
-            and provenance["originalSourceSHA256"] == json.loads((source / "generator-provenance.json").read_text())["sourceSHA256"],
-            "Export environment provenance mismatch")
+    verify_provenance(provenance, output, source, checks)
     contract = inspect_asset(output / original.ASSET, manifest["fixtures"], source)
     files = sorted(path for path in output.rglob("*") if path.is_file())
     require({path.relative_to(output).as_posix() for path in files} == allowed, "Unexpected output tree contents")
@@ -289,7 +323,8 @@ def verify(output, source):
     return {"status": "passed", "scope": "Synthetic F32-boundary CPU and saved source only",
             "assetSHA256": manifest["assetSHA256"], "manifestSHA256": sha(output / "manifest.json"),
             "fixtureCount": len(manifest["fixtures"]), "resourceFiles": len(files), "resourceBytes": total,
-            "allFixtureHashesReread": True, "assetMainHashVerified": True,
+            "allFixtureHashesReread": True, "assetMainHashVerified": True, "assetMetadataHashVerified": True,
+            "assetMetadataSHA256": sha(output / original.ASSET / "metadata.json"),
             "fixtureInputsExpectedAndScalesUnchanged": True, "contract": contract, "eagerChecks": checks,
             "modelWeightsLoaded": False, "runtimeOrSpecializationInvoked": False,
             "nativeCorrectnessVerified": False, "aneExecutionVerified": False}
@@ -305,7 +340,7 @@ def main():
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     require(args.verify or not args.output.exists(), "Refusing to overwrite an output directory")
-    require(args.output.resolve() != args.source_fixtures.resolve(), "Original fixtures are immutable")
+    require_disjoint_resources(args.output, args.source_fixtures)
     if args.report:
         require(not args.report.exists() and not args.report.is_symlink(), "Refusing to overwrite a report")
         require(not args.report.resolve().is_relative_to(args.output.resolve())
@@ -329,10 +364,10 @@ def main():
         if before is not None:
             result["originalResourceTreeUnchanged"] = tree_snapshot(args.source_fixtures) == before
         result["elapsedSeconds"] = time.monotonic() - started
-        result["maxRSSBytesLinux"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+        result["maxRSSBytes"] = original.max_rss_bytes()
         if args.report:
             write_json(args.report, result)
-        print(json.dumps({key: result[key] for key in ("status", "elapsedSeconds", "maxRSSBytesLinux")}), flush=True)
+        print(json.dumps({key: result[key] for key in ("status", "elapsedSeconds", "maxRSSBytes")}), flush=True)
 
 
 if __name__ == "__main__":

@@ -60,6 +60,13 @@ automatiquement juste avant la compilation : un inventaire recalculé sur des
 fichiers altérés ne constitue pas un contrôle indépendant. Le dépôt conserve le
 verrou approuvé ; les gros fichiers restent hors de Git mais doivent être
 présents dans l’archive de construction EAS lorsque Gemma est requis.
+L’exception explicite de `.easignore` inclut ce dossier Gemma complet, avec son
+asset `.aimodel`, son PLE et son tokenizer. Les checkpoints bruts et les secrets
+restent exclus. Cette inclusion autorise la préparation
+de l’archive ; elle ne prouve ni un envoi EAS réussi ni la présence du modèle
+dans une IPA signée. La [limite d’upload source EAS de 2 Gio](eas-build.md#archive-envoyée)
+reste à résoudre pour les vrais paquets dont les ZIP vérifiés dépassent déjà
+2 Gio : mesurer séparément l’archive source EAS complète avant l’envoi.
 
 Le [dérivé abliterated épinglé](gemma-abliterated.md) est également accepté.
 Son verrou déclare `model.repository` et `model.revision` pour Huihui, ainsi
@@ -125,9 +132,12 @@ vérifiée lorsque l’inventaire exact et les attributs des fichiers source et
 destination sont inchangés (identité, taille, dates de modification et de
 changement). Le verrou, les scripts, la configuration Node et le mode imposant
 Gemma font aussi partie de cette décision. Tout écart relance la vérification
-complète ; le témoin n’est écrit qu’après validation des octets copiés et de
-leurs attributs. Supprimer ce témoin ou utiliser `--copy` sans `--incremental`
-impose une nouvelle vérification complète. Un build neuf conserve ce contrôle.
+complète. Pour un bundle présent, le témoin de succès n’est écrit qu’après
+validation des octets copiés et de leurs attributs. En mode facultatif sans
+modèle, un témoin avec `result: null` atteste seulement l’absence de source et
+de copie périmée dans l’app ; il n’atteste aucun poids copié. Supprimer ce
+témoin ou utiliser `--copy` sans `--incremental` impose une nouvelle vérification
+complète. Un build neuf conserve ce contrôle.
 
 Un fichier destination déjà présent n’est réutilisé que si son empreinte est
 correcte. Les fichiers divergents ou supplémentaires font échouer la phase ;

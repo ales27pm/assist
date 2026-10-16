@@ -257,9 +257,12 @@ total Metal de **81 920 octets**. Ces instantanés ne mesurent pas les allocatio
 transitoires et ne permettent toujours pas d'identifier une cause mémoire.
 Les deux JSON physiques passent le parseur TypeScript livré sans perte de champ.
 
-Ce résultat ferme les pistes d'une différence des quatre fichiers sélectionnés,
-d'un nom de fonction absent et d'un descripteur absent pour cet essai. Il ne
-prouve pas que les poids ou ressources de la fonction ont été chargés : Apple
+Le contrôle d'identité exclut une différence uniquement pour les quatre
+fichiers qu'il a lus. Le rapport de chargement exclut un nom de fonction ou un
+descripteur absent dans le modèle qu'il a préparé. Les deux rapports n'ont ni
+empreinte d'asset commune ni identité de chemin comparable : ils ne prouvent
+pas que la copie contrôlée est celle passée à `AIModel`. Ils ne prouvent pas
+non plus que les poids ou ressources de la fonction ont été chargés : Apple
 décrit `AIModel` comme un objet léger, les poids et buffers appartenant aux
 [fonctions chargées](https://developer.apple.com/documentation/coreai/aimodel).
 Le PLE est une entrée tensorielle explicite du graphe ; la sonde n'ouvre pas son

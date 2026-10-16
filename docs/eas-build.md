@@ -20,7 +20,9 @@ requiert **iOS 27.2 à l’exécution**. Le premier essai EAS a rejeté le minim
 de déploiement 27.2 avant compilation ; l’app et ses Pods ciblent donc 27.1,
 avec une garde native avant tout chargement Gemma. La compilation ARM64 complète
 a réussi au [troisième essai](https://expo.dev/accounts/27pm/projects/assist/builds/9000a844-455c-43b8-bd09-158483a065a9),
-sans signature ni poids ; l’exécution Gemma reste non vérifiée. Le contrôle
+sans signature ni poids. Cet essai ne vérifiait pas l’exécution Gemma ; les
+[rapports physiques ultérieurs](verification.md) concernent un import manuel.
+Le contrôle
 `eas-build-pre-install` contrôle la configuration de scène UIKit, puis vérifie
 le paquet Gemma s’il est présent (et l’exige pour
 `preview`), puis valide l’hôte Apple Silicon et les versions Xcode/SDK. Il ne teste
@@ -36,11 +38,16 @@ Sources : [images Expo](https://docs.expo.dev/build-reference/infrastructure/),
 
 ### Prototype TestFlight avec import manuel
 
-Le profil `testflight` produit la version **1.0.0 (3)** pour App Store Connect.
-Ce prototype autorise l’absence de Gemma embarqué et demande son import local
+Le build historique **1.0.0 (3)** a été signé et traité par TestFlight,
+comme décrit dans le [rapport de vérification](verification.md). Le profil
+`testflight` utilise les versions du projet Xcode (`MARKETING_VERSION` et
+`CURRENT_PROJECT_VERSION`) ; vérifier ces valeurs avant chaque nouvelle build.
+Ce profil autorise l’absence de Gemma embarqué et demande son import local
 depuis l’app ; le chargement Gemma reste réservé à iOS 27.2+. Le profil `preview`
 conserve son exigence de modèle embarqué. Une build TestFlight ne constitue pas
 une qualification de l’inférence, des 32K ou de l’ANE.
+
+Depuis `mobile/` pour les deux commandes :
 
 ```sh
 npx --yes eas-cli@24.14.0 build --platform ios --profile testflight
@@ -71,13 +78,18 @@ La livraison demandée doit inclure Gemma dans l’application, pas seulement
 proposer un import manuel. `preview` impose `ASSIST_REQUIRE_BUNDLED_GEMMA=1` :
 le contrôle initial et la copie Xcode échouent si l’export et son inventaire
 cryptographique revu sont absents. Voir [le contrat d’empaquetage](bundled-gemma.md).
-L’export réel n’est pas encore préparé ; ne pas présenter une build sans poids
-comme cette livraison complète.
+Un [export réel 32K a été préparé et contrôlé](gemma-32k-export-2026-10-15.md),
+puis importé manuellement sur l’iPhone ; ses limites numériques et les essais
+suivants sont conservés dans le [diagnostic de fidélité](gemma-numeric-fidelity.md).
+Sa présence dans une archive EAS ou une IPA signée n’est pas établie : ne pas
+présenter une build sans poids comme cette livraison complète.
 
 Une signature valide et une IPA téléchargeable ne prouvent pas que Gemma
 fonctionne : exécuter ensuite la qualification physique 8K avant 32K.
 
 ## Contrôle natif facultatif sans signature
+
+Depuis `mobile/` :
 
 ```sh
 npx --yes eas-cli@24.14.0 build --platform ios --profile ios-compile
@@ -90,20 +102,27 @@ installable** et ne remplace pas le profil `preview` demandé pour distribution.
 
 ## Archive envoyée
 
-La règle racine `.easignore` n’inclut que `mobile/` et `scripts/` ; elle exclut
-notamment les poids, secrets, certificats, crash reports, caches et artefacts.
-Avant la première livraison embarquée, ajouter une exception limitée au seul
-export approuvé dans `mobile/ios/Assist/BundledModels/Gemma`, puis vérifier que
-l’archive contient exactement l’inventaire approuvé. Cette exception n’est pas
-encore activée tant que le vrai paquet et son lock n’ont pas été revus.
+La règle racine `.easignore` inclut `mobile/` et `scripts/`, avec une exception
+explicite pour le bundle complet dans
+`mobile/ios/Assist/BundledModels/Gemma`, asset `.aimodel`, PLE et tokenizer
+compris. Les checkpoints bruts, secrets, certificats,
+crash reports, caches et artefacts restent exclus. Cette exception rend le
+chemin d’archive utilisable par `preview` ; elle ne remplace pas le verrou
+`mobile/gemma-bundle.lock.json` revu ni la vérification des empreintes avant
+copie. Vérifier que les fichiers Gemma archivés correspondent exactement à
+cet inventaire. Aucune archive EAS contenant le vrai bundle ni IPA signée
+avec Gemma embarqué n’est démontrée.
 EAS CLI 24.14.0 limite l’archive source compressée à **2 Gio**
 (`MAX_ALLOWED_PROJECT_TARBALL_SIZE` dans `build/utils/repository.js`). Mesurer
 l’archive complète, modèle compris, avant l’envoi. Si elle dépasse cette limite,
 la livraison nécessite une autre voie de transfert vérifiée à la construction ;
 ne pas omettre Gemma ni publier les poids sur un nouvel hébergement pour contourner
 silencieusement le blocage. Cette limite concerne l’upload des sources, pas une
-mesure de la mémoire nécessaire à l’inférence.
-Inspecter l’archive avant envoi :
+mesure de la mémoire nécessaire à l’inférence. Le ZIP group8 vérifié occupe
+**2 784 586 364 octets**, déjà plus de 2 Gio ; son format ne remplace pas la
+mesure de l’archive source EAS complète. L’exception d’inclusion ne résout donc
+pas cette limite de transfert, qui reste à vérifier avant toute livraison.
+Inspecter l’archive avant envoi depuis `mobile/` :
 
 ```sh
 inspection_dir=$(mktemp -d)

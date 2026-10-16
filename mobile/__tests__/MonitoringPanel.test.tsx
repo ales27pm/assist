@@ -279,12 +279,22 @@ test('shows only the latest eight events while preserving the bounded full log f
     })),
   });
   native.getMonitoringSnapshot.mockResolvedValue(JSON.stringify(report));
+  const share = jest
+    .spyOn(Share, 'share')
+    .mockResolvedValue({ action: Share.sharedAction, activityType: undefined });
+  const user = userEvent.setup();
   await renderAsync(<MonitoringPanel />);
   await expandDashboard();
   expect(screen.queryByText('Info · NATIVE_EVENT_0')).not.toBeOnTheScreen();
   expect(screen.queryByText('Info · NATIVE_EVENT_1')).not.toBeOnTheScreen();
   expect(screen.getByText('Info · NATIVE_EVENT_2')).toBeOnTheScreen();
   expect(screen.getByText('Critique · NATIVE_EVENT_9')).toBeOnTheScreen();
+  expect(share).not.toHaveBeenCalled();
+  await user.press(screen.getByRole('button', { name: 'Partager le suivi' }));
+  expect(share).toHaveBeenCalledTimes(1);
+  const exported = JSON.parse(share.mock.calls[0][0].message!);
+  expect(exported.events).toHaveLength(10);
+  expect(exported.events).toEqual(report.events);
 });
 
 test('charts measured zero separately from missing data and exposes a textual range', async () => {

@@ -6,9 +6,10 @@ interne TestFlight (`VALID`, `IN_BETA_TESTING`). Il ajoute les
 nécessaires à l’analyse de l’erreur des cubes. La correction de cette erreur et
 son opérateur responsable restent à isoler. Les
 [rapports 20 à 23](gemma-numeric-fidelity.md#rapports-20-à-23--diagnostic-natif-et-récupération-longue)
-confirment l’exécution des diagnostics sur iPhone : entrée exacte, moteur
-réinitialisé et inversion de classement entre `4` et `8` avant le choix
-glouton. Les trois textes longs, repris avec un budget de 256, donnent chacun
+séparent deux observations. Seul le rapport 20 contient `numericalDiagnostics` :
+entrée exacte, moteur réinitialisé et inversion de classement entre `4` et `8`
+avant le choix glouton. Les rapports 21 à 23, avec un budget de 256, n’activent
+pas ce champ ; les trois textes longs donnent chacun
 six lignes exactes sur six, jusqu’à 32 256 jetons d’entrée et 89 de sortie.
 Il s’agit d’un passage par cas ; la répétabilité et l’usage ANE restent à qualifier.
 
@@ -90,7 +91,11 @@ utilisateur montre l’app ouverte depuis TestFlight, en état `idle`, sans mod�
 embarqué, conformément au prototype avec import manuel choisi. La répétition des
 démarrages à froid, la réouverture et le retour d’arrière-plan restent à vérifier.
 
-## Contrôles locaux exécutés
+## Contrôles locaux historiques, avant le diagnostic 4
+
+Ce relevé conserve les résultats de l’étape antérieure. Les nombres de tests
+plus récents du build 4 sont indiqués dans « Livraison du diagnostic 4 » ;
+aucune nouvelle exécution n’est revendiquée par cette section historique.
 
 - React Native 0.87.1, React 19.2.3 ; dépendances npm verrouillées.
 - `npm run typecheck` et `npm run lint` : succès.
@@ -176,8 +181,9 @@ est traité par TestFlight et son interface est affichée sur l’iPhone. Le cra
 du build 2 est décrit ci-dessus. Des essais à longueur réelle 8K/16K/près de 32K
 et un essai hors réseau sont documentés, avec leurs échecs de qualité. La
 stabilité répétée, les performances soutenues, la récupération sans rechargement
-et l’attribution matérielle ANE restent à qualifier. Aucune signature,
-installation ou modification de monGARS.
+et l’attribution matérielle ANE restent à qualifier. Ces travaux concernent
+Assist ; aucune signature, installation ou modification n’a été effectuée sur
+l’application distincte monGARS.
 
 Le sélecteur n’effectue pas de copie durable : le dossier doit rester disponible
 sur l’iPhone, et doit être sélectionné à nouveau après fermeture de l’app.

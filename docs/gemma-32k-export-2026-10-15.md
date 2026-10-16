@@ -77,7 +77,7 @@ Son SHA-256 est
 | --- | --- |
 | Capacité déclarée du moteur | 32 768 jetons |
 | Chargement, warmup compris | 94,74 s |
-| Premier jeton, depuis le début de la requête native | 0,921 s |
+| Premier jeton, depuis le début de la tâche de préparation de génération | 0,921 s |
 | Entrée formatée / sortie générée | 42 / 251 jetons |
 | Durée totale de génération | 7,362 s |
 | Débit moyen de cet essai, délai initial inclus | 34,09 jetons/s |
@@ -86,8 +86,11 @@ Son SHA-256 est
 | Fin de génération / état final | `eos` / `ready` |
 
 Le modèle a produit une réponse française non vide et le moteur est revenu à
-l’état prêt. Le débit inclut la préparation, le délai initial et la finalisation
-de la requête ; il ne constitue pas une mesure isolée du décodage. Le rapport
+l’état prêt. Le chronomètre démarre dans la tâche de génération, avant le template
+et la tokenisation, après le décodage et la validation de la requête ainsi que
+la création de cette tâche. Le débit inclut cette préparation, le délai initial
+et la finalisation de la génération ; il ne constitue pas une mesure isolée du
+décodage ni une latence depuis l’entrée du pont natif. Le rapport
 ne sépare pas la spécialisation du chargement et ne renseigne pas l’état de son
 cache. Les instantanés avant/après ne mesurent pas le pic du chargement, et les
 échantillons de génération peuvent manquer des pics transitoires.

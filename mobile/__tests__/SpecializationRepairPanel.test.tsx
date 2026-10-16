@@ -353,6 +353,11 @@ test('restores a failed invalidation after rejection without launching any quali
     ),
   ).toBeOnTheScreen();
   expect(screen.queryByText(/private\/cache/)).toBeNull();
+  expect(
+    screen.queryByText(
+      'La réparation n’a pas retourné de rapport exploitable.',
+    ),
+  ).toBeNull();
   expect(native.getLastSpecializationRepair).toHaveBeenCalledTimes(2);
   expect(native.runNumericalProbe).not.toHaveBeenCalled();
   expect(native.runModelLoadProbe).not.toHaveBeenCalled();

@@ -48,6 +48,18 @@ plateformes et versions acceptées/refusées ; il ne simule pas la compilation d
 Core AI. Le contrôle réel ne fait que lire l’environnement sélectionné. Il reste
 à résoudre les dépendances, compiler et exécuter sur le matériel.
 
+Sur macOS avec Swift 6 et CryptoKit, exécuter aussi depuis la racine :
+
+```sh
+bash scripts/check-swift.sh
+```
+
+Ce script compile et exécute les cinq groupes de contrôles de politique,
+monitoring, diagnostic de chargement, réparation et identité d’asset, avec la
+concurrence stricte Swift 6. La CI utilise la même commande. Ces contrats
+Foundation/CryptoKit ne compilent ni Core AI ni l’app iOS et ne qualifient pas
+l’exécution sur iPhone.
+
 Dans `mobile/`, une fois les dépendances obtenues :
 
 ```sh

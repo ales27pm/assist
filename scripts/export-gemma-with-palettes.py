@@ -10,6 +10,8 @@ from pathlib import Path
 import runpy
 import sys
 
+from gemma_contracts import finalized_palette_paths
+
 
 @contextmanager
 def retain_palettes(directory):
@@ -49,8 +51,7 @@ def main():
     sys.argv = [str(args.exporter.resolve()), *export_args]
     with retain_palettes(args.palettes.resolve()):
         runpy.run_path(sys.argv[0], run_name='__main__')
-    if not any(args.palettes.glob('*.safetensors')):
-        raise RuntimeError('No finalized palettes were captured; inspect the export configuration')
+    finalized_palette_paths(args.palettes)
 
 
 if __name__ == '__main__':

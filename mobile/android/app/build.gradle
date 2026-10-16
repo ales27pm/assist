@@ -94,8 +94,10 @@ def validateReleaseSigning = tasks.register("validateReleaseSigning") {
     }
 }
 
-tasks.matching { it.name == "preReleaseBuild" }.configureEach {
-    dependsOn validateReleaseSigning
+tasks.configureEach {
+    if (name == "preReleaseBuild") {
+        dependsOn validateReleaseSigning
+    }
 }
 
 android {
