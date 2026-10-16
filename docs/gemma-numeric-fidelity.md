@@ -340,9 +340,10 @@ particuliers et la durée de vie des mappings. Le contrôle complet termine en
 140 s, sous une limite de 6 Gio, sans swap, OOM ni arrêt de garde ; son maximum
 de cgroup est **5 369 225 216 octets**. Ces mesures ne concernent pas l’iPhone.
 
-L’export source complet conserve les mêmes palettes, PLE, tokenizer et capacité
-32K. Il n’a pas encore produit de paquet complet. Après correction du coût de
-nettoyage de l’allocateur entre les petits sous-graphes RMSNorm, l’essai est
+Les premiers essais d’export source complet conservent les mêmes palettes,
+PLE, tokenizer et capacité 32K, sans produire de paquet complet. Après
+correction du coût de nettoyage de l’allocateur entre les petits
+sous-graphes RMSNorm, l’essai est
 arrêté à **846 s** par la garde de réserve mémoire de l’hôte, fixée à **3 Gio**.
 Le cgroup atteint sa limite de **6 Gio**, sans OOM ni swap ; 716 des 1 074
 sous-graphes attendus sont convertis. Sa limite souple a été relevée de 5 à
@@ -368,8 +369,8 @@ avant/après montrent une baisse de mémoire, sans établir un gain de pic
 comparable entre les essais. La garde de l’hôte arrête cependant cette reprise
 à **388,5 s**, après 273 sous-graphes RMSNorm et le premier graphe `extend`.
 Le maximum du cgroup est **5 266 264 064 octets**, inférieur au plafond de
-6 Gio ; il n’y a ni OOM ni swap. Il manque donc toujours un export source
-complet, et aucun nouveau paquet n’est proposé à l’iPhone.
+6 Gio ; il n’y a ni OOM ni swap. Cet essai ne produit donc pas d’export source
+complet, et aucun paquet partiel n’est proposé à l’iPhone.
 
 Une reprise unique est mise en attente le 16 octobre à **04:55 UTC**, pour
 quatre heures au plus. Elle exige **11 Gio disponibles pendant 60 s** et
@@ -384,10 +385,11 @@ tout chargement et remplacée par un profil **3 Gio de RAM et 8 Gio de swap**.
 Les réserves de l’hôte restent à 3 Gio de RAM et 2 Gio de swap ; la durée du
 worker est bornée à une heure. Le swap existant de 8 Gio étant plein, un
 nouveau fichier de 16 Gio est préparé sur le second SSD ext4, sans toucher au
-swap existant ni aux partitions. Son activation et la libération des caches
-propres attendent une authentification `sudo` dans le terminal du propriétaire.
-Les limites de cgroup et les refus en cas de RAM, swap ou disque insuffisant
-sont vérifiés ; cela ne prouve pas encore un export avec swap réussi.
+swap existant ni aux partitions. Le propriétaire active ce fichier le
+16 octobre à **05:15 UTC**, puis le noyau confirme **24 Gio de swap au total**.
+Le helper libère les caches propres sans arrêter les autres processus ni
+modifier `fstab`. Les limites de cgroup et les refus en cas de RAM, swap ou
+disque insuffisant sont vérifiés.
 
 Le vérificateur indépendant est aussi renforcé : il lie la provenance aux
 quatre empreintes approuvées des outils, puis compare les métadonnées et types
@@ -396,12 +398,39 @@ test synthétique détecte un alias de cache ou un encodage matériel de sortie
 modifié malgré des résumés de types/dimensions identiques ; cinq cas négatifs
 sont rejetés. La lecture du véritable asset group8 extrait les neuf contrats
 et leurs six cartes de quatre alias sans modifier son bytecode. Cela valide
-le contrôle, sans valider un nouveau candidat.
+le contrôle, sans valider à lui seul un nouveau candidat.
+
+La reprise avec swap termine ensuite en **682,46 s**, sans OOM ni arrêt de
+garde. Son maximum de cgroup est **3 221 225 472 octets de RAM**, avec un
+maximum de swap observé de **4 088 025 088 octets**. Les 347 entrées épinglées
+et la configuration restent inchangées après l’export. Le nouveau dossier
+`gemma4-e2b-32k-group8-rmscomposite` contient neuf fichiers, soit
+**3 763 175 559 octets**.
+
+La validation indépendante relit le bytecode, ses neuf contrats publics
+complets et leurs alias de cache : ils correspondent à la référence group8.
+Les douze corps RMSNorm dédupliqués conservent la moyenne et l’inverse RMS
+FP32, avec **1 074 appels** dans les six graphes du modèle. PLE et tokenizer
+restent identiques ; l’inventaire passe aussi le vérificateur Node inchangé.
+Ces contrôles source et le contrôle CPU des cubes ne prouvent pas encore le
+chargement, la réponse ou l’exécution ANE de ce candidat sur iPhone.
+
+Son archive `Assist-Gemma-4-E2B-32K-group8-rmscomposite.zip` contient
+**2 784 394 966 octets**, avec le SHA-256
+`aa236e56dd9eac90d93b3cddc24adb147c693944c7f7f8a11ccb93de1434ed06`.
+Chaque entrée est relue contre l’inventaire ; le corps HTTP complet produit
+ensuite la même empreinte depuis l’hôte d’export. La capture de stockage
+transmise par l’utilisateur indique environ **41,18 Go libres**, pour un
+total ZIP et dossier extrait d’environ **6,55 Go**. L’espace de compilation
+natif de ce candidat reste non mesuré. Le prochain contrôle est son
+chargement dans le build TestFlight existant, suivi des cubes en nouvelle
+conversation avec un budget de 64 ; les essais longs attendent ce résultat.
 
 ## Intégrité du paquet transféré
 
-Le paquet final comporte neuf fichiers, soit **3 763 087 387 octets**. Ses neuf
-fonctions et signatures de graphes sont vérifiées, ainsi que l’inventaire SHA-256
+Le paquet group8 de référence comporte neuf fichiers, soit
+**3 763 087 387 octets**. Ses neuf fonctions et signatures de graphes sont
+vérifiées, ainsi que l’inventaire SHA-256
 par le vérificateur Node indépendant. L’archive
 `Assist-Gemma-4-E2B-32K-group8.zip` contient **2 784 586 364 octets**, avec le SHA-256
 `09e2b12f665ab29b0395146033d6a732d8f2363eadcd085d6f92fa9897c50af4`.
