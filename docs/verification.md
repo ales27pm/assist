@@ -12,10 +12,13 @@ glouton. Les trois textes longs, repris avec un budget de 256, donnent chacun
 six lignes exactes sur six, jusqu’à 32 256 jetons d’entrée et 89 de sortie.
 Il s’agit d’un passage par cas ; la répétabilité et l’usage ANE restent à qualifier.
 
-Un [essai 32K distinct avec normalisations HF32](gemma-numeric-fidelity.md#essai-séparé-avec-normalisations-hf32)
-est préparé avec les mêmes palettes group8. L’export, ses neuf signatures,
-l’inventaire et le ZIP sont vérifiés ; la référence CPU donne 8/8. Sa correction
-des cubes et ses performances natives restent à tester dans le build 4 existant.
+L’[essai 32K avec normalisations HF32](gemma-numeric-fidelity.md#essai-séparé-avec-normalisations-hf32)
+est suspendu après réception de [journaux d’échec du chargement](gemma-numeric-fidelity.md#échecs-natifs-du-chargement-journaux-de-23-h-07-et-23-h-08).
+Un abandon Metal pendant le préchauffage et un arrêt mémoire d’un autre
+processus Assist sont confirmés. L’utilisateur confirme le dossier HF32 ; les
+journaux ne fournissent pas l’empreinte de ses fichiers installés.
+L’export, ses neuf signatures, l’inventaire et le ZIP passent leurs contrôles,
+et la référence CPU donne 8/8. Ces contrôles n’établissent pas sa viabilité native.
 
 Le correctif **1.0.0 (3)** est signé et traité par TestFlight. La capture
 utilisateur du 15 octobre à 02:49 EDT confirme l’affichage de l’interface initiale

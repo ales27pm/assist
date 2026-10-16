@@ -250,14 +250,62 @@ Les neuf fichiers archivés ont été relus et comparés à l’inventaire. Le c
 HTTP complet donne aussi cette empreinte ; ce contrôle ne mesure pas la
 réception ni l’exécution sur l’iPhone.
 
-Ces contrôles portent sur l’export source et la référence CPU. Le candidat doit
-encore être compilé et exécuté sur iPhone : réponse des cubes, placement matériel,
-temps et mémoire restent inconnus. La préférence Neural Engine du parcours
+Ces contrôles portent sur l’export source et la référence CPU. Le chargement
+sur iPhone échoue ensuite, avant de pouvoir mesurer la réponse des cubes ou
+le placement de l’ensemble du modèle. La préférence Neural Engine du parcours
 statique de l’app est conservée ; les opérations FP32 peuvent modifier le
 placement et les performances. Ce paquet ne constitue donc pas un correctif
 natif confirmé. Il s’importe comme dossier distinct dans le build TestFlight 4.
-Le premier essai demandé reste la même consigne des cubes, en premier après
-chargement, nouvelle conversation et budget 64, avec partage du rapport.
+La recommandation d’essai et le téléchargement sont ensuite suspendus après
+réception des journaux ci-dessous. Aucun nouveau chargement de ce candidat
+n’est demandé pendant l’investigation.
+
+## Échecs natifs du chargement, journaux de 23 h 07 et 23 h 08
+
+Les cinq fichiers reçus concernent Assist **1.0.0 (4)** sous iOS
+**27.2 (24B5110a)**, sur `iPhone17,1`. L’utilisateur confirme avoir sélectionné
+`gemma4-e2b-32k-group8-hf32norm` lors de ces fermetures. Les journaux ne
+contiennent ni ce nom ni l’empreinte du paquet installé : l’identité du dossier
+repose sur cette confirmation, et ses octets installés ne sont pas vérifiés.
+
+Les fichiers `.ips` et `.crash` du premier événement décrivent **le même
+incident**, pas deux crashs. Environ **53 s après le lancement**, le processus
+subit `SIGABRT` dans `Metal MTLReportFailure`, appelé par
+`GPU::MemrefBufferizer::createMemrefHeap`. La pile remonte par le chargement
+d’une fonction Core AI, `StaticShapeEngine.warmup` et `AssistInferenceCoordinator.load`.
+Le thread d’interface reçoit aussi un avertissement mémoire. L’échec précède
+la génération ; le graphe exact et la taille de l’allocation ne sont pas fournis.
+Cette pile prouve le passage par un runtime GPU, sans établir le placement de
+tout le modèle ni la responsabilité d’une normalisation particulière.
+
+Le JetsamEvent suivant concerne **un autre processus Assist**, avec le motif
+`per-process-limit`. Ses 216 064 pages de 16 384 octets représentent
+**3 539 992 576 octets**, et `lifetimeMax` correspond à **3 598 221 312 octets**.
+Ce sont les valeurs de comptabilisation de ce lancement, pas une limite fixe
+universelle ni les maxima échantillonnés des rapports de génération précédents.
+La conversion pages/octets suit la [méthode Apple pour les rapports jetsam](https://developer.apple.com/documentation/xcode/identifying-high-memory-use-with-jetsam-event-reports).
+
+Le relevé d’écritures indique **4 294,98 Mo** de mémoire adossée à des fichiers
+salie sur environ **8 931 s**, avec `Action taken: none`. Cet intervalle commence
+avant le dernier lancement ; tout ce volume ne peut pas être attribué aux
+53 secondes du crash. Le téléphone n’a que **1 818,46 Mo libres** au moment du
+relevé, ce qui ajoute une contrainte pour la compilation. Le relevé ne prouve
+cependant pas que le stockage est la cause directe de l’abandon Metal. Le
+champ matériel `Memory size: 7.47 GB` n’est pas la consommation d’Assist.
+La capture AutoBugCapture restante vise `amsengagementd`, pas un autre crash
+d’Assist.
+
+Le préchauffage de la dépendance épinglée charge et retient les six fonctions
+`extend`/`prompt_opt` des trois paliers. Cela peut amplifier les allocations
+résidentes, mais la pile ne révèle pas combien avaient déjà été chargées.
+Retirer simplement le préchauffage pourrait déplacer l’échec à la première
+génération ; ce n’est pas un correctif démontré.
+
+Le paquet HF32 reste archivé avec ses empreintes d’origine. Sa page affiche
+l’état suspendu et les requêtes GET/HEAD du ZIP répondent **HTTP 410**. Les
+réussites CPU et d’intégrité restent des observations historiques, sans valider
+le chargement sur iPhone. La fenêtre **32K** et le group8 de référence sont
+conservés ; aucun passage implicite à 8K ou autre backend n’est introduit.
 
 ## Intégrité du paquet transféré
 
