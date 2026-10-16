@@ -232,8 +232,114 @@ et la présence du descripteur de la fonction sélectionnée. Ces métadonnées 
 enregistrées avant l'unique appel à `loadFunction`; les schémas 1 et 2 restent
 lisibles. Aucun tenseur n'est exécuté pour cette inspection.
 
-Le prochain essai physique commence par la vérification de l'asset F16, puis,
-si les quatre fichiers sont conformes, par un seul test de `extend_1024_8` avec
-partage des deux rapports. Le contexte déclaré reste 32K, group8 et la préférence
-Neural Engine est conservée. Ces nouveaux contrôles nécessitent une nouvelle
-build ; leur exécution sur l'iPhone reste à vérifier séparément de leur compilation.
+## Résultats physiques du build 10
+
+Les deux contrôles ont été exécutés sur l'iPhone avec le build 10 le 16 octobre.
+Le rapport d'identité commencé à **16:42:37.417 UTC** se termine à `completed` :
+les quatre tailles et SHA-256 correspondent à la référence, et le contenu brut
+de `main.hash` correspond au digest recalculé de `main.mlirb`. Assist a donc lu
+les **1 381 786 497 octets** du bytecode sélectionné. Cette preuve porte sur les
+quatre fichiers contrôlés ; elle ne démontre pas leur lecture par un service
+système ni l'intégrité des fichiers PLE/tokenizer.
+
+Le rapport de chargement commencé à **16:45:08.421 UTC** échoue ensuite sur
+`extend_1024_8`, avec le même `E_FUNCTION_LOAD_FAILED` et l'unique erreur
+`Foundation._GenericObjCError`, code `0`. Le schéma 3 confirme avant cet appel :
+
+- les **neuf fonctions** attendues, sans troncature de la liste ;
+- la correspondance de leur ensemble de noms avec le résumé source ;
+- la présence du descripteur de `extend_1024_8` dans le modèle préparé.
+
+Les observations encadrent le chargement à 249,797458 et 276,593875 ms, soit
+**26,796417 ms**, mesures et persistance comprises. L'empreinte finale observée
+est de **47 892 344 octets**, le budget restant de **3 492 100 232 octets** et le
+total Metal de **81 920 octets**. Ces instantanés ne mesurent pas les allocations
+transitoires et ne permettent toujours pas d'identifier une cause mémoire.
+Les deux JSON physiques passent le parseur TypeScript livré sans perte de champ.
+
+Ce résultat ferme les pistes d'une différence des quatre fichiers sélectionnés,
+d'un nom de fonction absent et d'un descripteur absent pour cet essai. Il ne
+prouve pas que les poids ou ressources de la fonction ont été chargés : Apple
+décrit `AIModel` comme un objet léger, les poids et buffers appartenant aux
+[fonctions chargées](https://developer.apple.com/documentation/coreai/aimodel).
+Le PLE est une entrée tensorielle explicite du graphe ; la sonde n'ouvre pas son
+fichier ni le tokenizer avant l'appel qui échoue. L'accès de sécurité au dossier
+reste retenu jusqu'à la fin de l'opération native.
+
+Le contrôle **« Diagnostic de calcul » → « Tester le calcul natif »** a ensuite
+été exécuté dans ce même build, sans chargement normal de Gemma. Ses petits
+modèles intégrés utilisent aussi `AIModel` et `loadFunction(named:)`.
+
+| Variante / préférence | Sorties mesurées | Résultat du build 10 |
+| --- | ---: | --- |
+| `f16_boundary` / Neural Engine préféré | 0/12 | 12 erreurs natives Foundation génériques |
+| `f16_boundary` / CPU seul | 12/12 | 12 réussites, maximum 1 ULP |
+| `f32_boundary` / Neural Engine préféré | 12/12 | 12 réussites, maximum 1 ULP |
+| `f32_boundary` / CPU seul | 12/12 | 12 réussites, maximum 1 ULP |
+
+Le total de **12 échecs sur 48** masque un changement par rapport au build 7 :
+les 12 cas F16 avec préférence Neural Engine produisaient alors des sorties
+avec écarts numériques jusqu'à 12 ULP. Ils renvoient maintenant une erreur
+`Foundation._GenericObjCError`, code `0`, sans `actualSHA256`, lignes comparées
+ou mesure ULP. Les 36 autres sorties ont exactement les mêmes SHA-256 que dans
+le rapport physique du build 7. Les identités d'assets et manifests sont aussi
+identiques. Le JSON du build 10 passe le parseur TypeScript livré.
+
+Les durées des erreurs F16 sont propres à chaque cas (3,3755 ms, puis
+0,699958 ms, etc.). Dans le source livré, un échec global de préparation
+produirait douze durées issues du même chronomètre, donc non décroissantes.
+Ces erreurs passent par le traitement individuel après préparation et contrôle
+des douze noms. Le rapport ne distingue cependant pas le chargement de la
+fonction, l'accès aux buffers et son exécution ; il ne faut pas les présenter
+comme douze échecs de chargement déjà localisés.
+
+Cette observation montre que le défaut ne se limite pas au gros modèle Gemma
+ni à son dossier externe. Elle ne prouve pas une cause commune aux deux erreurs,
+un défaut matériel ANE ou le placement effectif de toutes les fonctions réussies.
+
+La reprise a été exécutée avec un flux Console vérifié actif à **16:54:26 UTC**.
+Les 48 résultats reproduisent les mêmes erreurs et empreintes de sortie que le
+premier essai du build 10. Les journaux à **12:55:17 −0400** contiennent les
+48 chargements de fonctions dans le même ordre que le JSON. Pour chacun des
+douze premiers cas F16, ils montrent successivement le chargement demandé,
+un échec de chargement précompilé dans `aned`, le retour `success=0` avec
+`error=(null)` côté Assist, puis l'erreur de chargement de
+`MPSGraphNDXRuntime.mm:603`. La première séquence s'étend de 12:55:17.379698 à
+12:55:17.381145. L'échec de ce contrôle est donc maintenant localisé au
+chargement précompilé, avant une sortie numérique.
+
+Le service écrit aussi `existsInCache=0` et « Sandbox extension is nil/not
+valid ». Le premier concerne son propre cache ANE, pas nécessairement le cache
+de spécialisation Core AI. Le second message apparaît ailleurs dans la même
+capture avant un chargement réussi pour un appelant masqué : ce texte seul ne
+prouve pas un refus d'accès. Le chemin du modèle, son identité de signature et
+la raison sous-jacente restent masqués ou nuls. Ces observations ne suffisent
+pas à conclure à une corruption de cache ou à un défaut d'autorisation précis.
+
+Le groupe F16 CPU commence à 12:55:17.399137 et réussit. Le groupe F32 avec
+préférence Neural Engine commence à 12:55:17.414510 ; on observe ensuite une
+création de programme par `aned`, un retour de chargement réussi et des requêtes
+ANE côté Assist. Le groupe F32 CPU commence à 12:55:17.491183 et réussit aussi.
+Ces messages précisent cet essai ; ils ne qualifient pas l'ensemble de Gemma
+et ne remplacent pas la valeur `aneExecution: unverified` du rapport.
+
+La capture est arrêtée et l'assertion temporaire de connexion libérée. Un
+inventaire CoreDevice en lecture seule retrouve les entrées compilées F16,
+F32 et Gemma ; leurs trois petits `manifest.plist` et les deux graphes compilés
+des petites fixtures ont été copiés pour comparaison, sans charger de fonction
+ni modifier ces fichiers. Aucun gros fichier de poids n'a été copié. La présence
+d'une entrée ne démontre pas que toutes ses ressources peuvent être chargées.
+Les attributs compilés donnent une différence supplémentaire : les douze entrées
+numériques F16 et les six entrées Gemma portent `mps.fullyPlacedOnANE` et
+`mps.noGPUActivity`, tandis que les douze entrées numériques F32 portent
+`mps.disableNDX`. Cela rapproche les deux modèles F16 du même parcours compilé,
+sans prouver une cause commune ni un placement effectif de Gemma. Ces attributs
+internes sont des observations ; aucun réglage privé n'est ajouté à l'app.
+Les manifests ne contiennent aucune URL absolue périmée ni référence concrète
+à un fichier manquant. Leurs identifiants de ressources correspondent aux tables
+d'offsets et les offsets observés restent dans les tailles des fichiers ; cela
+ne donne pas l'emplacement ni l'accessibilité du binaire ANE précompilé.
+Le contexte 32K, group8, la préférence Neural Engine et les exports restent
+inchangés. Aucune purge ou modification manuelle des caches n'a été effectuée ;
+Core AI peut toujours les utiliser pendant les contrôles. Aucune nouvelle
+reprise identique n'est demandée.
