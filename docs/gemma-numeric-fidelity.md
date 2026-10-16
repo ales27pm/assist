@@ -509,8 +509,85 @@ Le rapport de schéma 2 distingue les variantes, leurs empreintes, les écarts
 par ligne et quatre exemples fautifs au plus par cas. Les bits de l’entrée
 NDArray sont aussi relus avant exécution. Les 32 ressources et le générateur
 d’origine sont conservés sans modification ; le modèle Gemma et son moteur
-ne changent pas. L’effet natif de cette frontière FP32 reste à mesurer avant
-de modifier ou reconvertir le modèle complet.
+ne changent pas.
+
+Le rapport physique du build **7**, sous le même iOS 27.2 (24B5110a), permet
+ensuite de comparer ces deux frontières. Les empreintes des deux assets,
+manifestes, entrées et références correspondent aux ressources distribuées.
+
+| Frontière du composite | Mode demandé | Cas réussis | Écart maximal |
+| --- | --- | --- | --- |
+| FP16 | Préférence Neural Engine | 0/12 | 12 ULP |
+| FP16 | CPU seul | 12/12 | 1 ULP |
+| FP32 | Préférence Neural Engine | **12/12** | **1 ULP** |
+| FP32 | CPU seul | 12/12 | 1 ULP |
+
+Les 24 résultats FP16 reproduisent exactement les empreintes, nombres
+d’échecs et maxima ULP du build 5. Avec la frontière FP32 et la préférence
+Neural Engine, aucun des **278 528 éléments** ne dépasse un ULP ; seules
+trois valeurs numériques diffèrent de la référence, chacune d’un ULP.
+Les 17 408 différences de signe de zéro expliquent les autres différences
+de bits. Les quatre groupes terminent sans valeur non finie. Une vérification
+indépendante par `math.fsum` confirme les références FP64 arrondies en FP16.
+
+Ce contrôle établit que la frontière FP32 supprime les écarts dépassant le
+seuil sur ces six formes de requête 8, avec les mêmes données synthétiques.
+Il ne détermine ni l’opération interne responsable, ni le placement ANE, ni
+la fidélité des activations de Gemma ou du préremplissage de requête 64.
+L’application au modèle entier reste un candidat à qualifier sur iPhone ;
+la consigne des cubes, les poids group8 et la capacité **32 768** restent figés.
+
+Le monitoring joint est cohérent avec le résultat : **48 contrôles terminés,
+12 échecs**, 59 événements, 60 échantillons et retour à `idle`. Le diagnostic
+dure environ **397 ms** entre ses deux événements de début et de fin. L’état
+thermique observé est nominal et le mode économie d’énergie est activé.
+Le maximum mémoire de session, **1 732 562 104 octets**, inclut les deux
+générations antérieures et ne mesure pas le pic propre de ce diagnostic.
+
+## Candidat du modèle entier à frontière FP32
+
+Le dossier distinct `gemma4-e2b-32k-group8-rms-fp32io` applique cette frontière
+aux 227 normalisations ordinaires et aux 35 normalisations V sans poids.
+L’entrée et l’échelle du composite RMSNorm sont promues en FP32 ; sa sortie
+revient au dtype FP16 du modèle. Les paramètres FP16 d’origine, les poids
+group8, le tokenizer, le sidecar PLE et les paliers 1 024, 8 192 et 32 768
+sont conservés. Les petits contrôles intégrés vérifient les neuf fonctions,
+les états, les octets des paramètres et les corps composites sauvegardés.
+
+Le contrôle Apple eager CPU du modèle E2B entier répond **`1, 8, 27, 64`**,
+puis EOS, avec la même consigne de 32 jetons. Sa séquence et toute sa trace
+de scores enregistrée sont identiques au contrôle CPU précédent. Il termine
+en 135 s, sous une limite de 6 Gio sans swap. Il ne lance pas le graphe Core AI
+compilé et ne constitue pas un nouveau passage des huit consignes de qualité.
+
+L’export source complet termine en **758 s**, sous une limite de 6 Gio de
+mémoire et 4 Gio de swap, sans OOM ni arrêt de garde. Son maximum de cgroup
+atteint 6 Gio ; le maximum de swap observé est **251 637 760 octets**. Les
+360 entrées épinglées et la configuration restent inchangées avant et après
+l’export. Les anciens modèles et résultats sont conservés.
+
+La validation indépendante relit **12 corps composites FP32**, sans valeur
+flottante FP16 interne, et leurs **1 074 appels**. Les neuf interfaces publiques,
+contraintes matérielles, métadonnées et alias de cache correspondent à la
+référence group8. L’inventaire des neuf fichiers, **3 763 515 801 octets**, passe
+le vérificateur Node inchangé. Les enregistrements des poids source et palettes
+correspondent au contrôle précédent ; PLE et tokenizer sont identiques octet
+pour octet. Cette validation ne relit pas indépendamment chaque constante
+LUT/indice sérialisée dans le nouvel asset.
+
+L’archive `Assist-Gemma-4-E2B-32K-group8-rms-fp32io.zip` occupe
+**2 784 442 786 octets**, avec le SHA-256
+`5111e5f497bf62e6c6f5dcd187ac5ad39ef2655306fdeac5b11d8cd036a662e9`.
+Ses neuf entrées sont décompressées et comparées à l’inventaire, puis le corps
+HTTP complet produit cette même empreinte. Le ZIP et son dossier extrait
+occupent ensemble **6,55 Go**, auxquels s’ajoutera le cache de compilation,
+dont la taille reste inconnue. La relecture HTTP depuis l’hôte ne vérifie pas
+la réception sur l’iPhone.
+
+Le chargement et la réponse de ce nouveau dossier restent à qualifier sur
+iPhone avec le build **7**, une nouvelle conversation et un budget de **64**.
+La réponse attendue aux cubes reste `1, 8, 27, 64`. L’exécution ANE, la qualité
+en contexte long et les performances du modèle compilé restent non vérifiées.
 
 ## Intégrité du paquet transféré
 

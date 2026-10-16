@@ -94,6 +94,16 @@ TypeScript. Leur lecteur système Linux est remplacé, dans une copie privée
 de test uniquement, par une mesure explicitement synthétique avec
 `lowPowerMode: false` ; ils ne constituent pas des mesures iPhone.
 
+Le rapport iPhone du build **7**, reçu ensuite sous iOS 27.2 (24B5110a), contient
+60 échantillons, 59 événements et deux résumés de génération. Il enregistre le
+chargement, les générations, le déchargement puis les 48 contrôles numériques,
+avec les 12 échecs effectivement présents dans leurs résultats et un retour
+à `idle`. Les durées et débits sont cohérents avec les compteurs ; les métriques
+de mémoire et de thermique sont renseignées, tandis que la pression reste
+`unknown` faute d’événement. Ce rapport confirme ce parcours observé, sans
+valider la mise en page, l’arrière-plan, l’annulation ou les pointes manquées
+entre échantillons.
+
 Sur la build distribuée, vérifier le chargement, la génération, l’EOS,
 l’annulation et la progression des 48 cas. Tester le panneau ouvert puis fermé,
 le passage arrière-plan/premier plan, l’absence de nouvelles requêtes de suivi
