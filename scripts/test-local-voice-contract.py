@@ -36,6 +36,12 @@ class LocalVoiceSourceContractTests(unittest.TestCase):
         source_phase = self.project.split("/* Begin PBXSourcesBuildPhase section */", 1)[1]
         source_phase = source_phase.split("/* End PBXSourcesBuildPhase section */", 1)[0]
         self.assertEqual(source_phase.count("AssistVoice.swift in Sources"), 1)
+        self.assertIn("path = Assist/Voice/AssistVoiceCallbacks.swift;", self.project)
+        self.assertEqual(source_phase.count("AssistVoiceCallbacks.swift in Sources"), 1)
+
+    def test_legacy_callbacks_use_the_native_tested_boundary(self):
+        for role in ("authorization", "microphone", "recognition", "audioTap"):
+            self.assertIn(f"AssistVoiceCallbacks.{role}", self.voice)
 
     def test_typed_voice_surface_is_implemented_by_objc_bridge(self):
         for name in ("getVoiceStatus", "startListening", "stopListening", "cancelVoice", "speak"):

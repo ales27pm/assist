@@ -87,14 +87,11 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         switch SFSpeechRecognizer.authorizationStatus() {
         case .authorized: requestMicrophone(token)
         case .notDetermined:
-            SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
-                let allowed = authorization == .authorized
-                Task { @MainActor [weak self] in
-                    guard let self, self.generation == token, self.phase == "requesting" else { return }
-                    if allowed { self.requestMicrophone(token) }
-                    else { self.fail("La permission de reconnaissance vocale est requise.", code: "E_VOICE_SPEECH_PERMISSION") }
-                }
-            }
+            SFSpeechRecognizer.requestAuthorization(AssistVoiceCallbacks.authorization { [weak self] allowed in
+                guard let self, self.generation == token, self.phase == "requesting" else { return }
+                if allowed { self.requestMicrophone(token) }
+                else { self.fail("La permission de reconnaissance vocale est requise.", code: "E_VOICE_SPEECH_PERMISSION") }
+            })
         default: fail("La permission de reconnaissance vocale est refusée. Autorise-la dans les réglages iOS.", code: "E_VOICE_SPEECH_PERMISSION")
         }
     }
@@ -179,13 +176,11 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         switch AVAudioApplication.shared.recordPermission {
         case .granted: beginCapture(token)
         case .undetermined:
-            AVAudioApplication.requestRecordPermission { [weak self] allowed in
-                Task { @MainActor [weak self] in
-                    guard let self, self.generation == token, self.phase == "requesting" else { return }
-                    if allowed { self.beginCapture(token) }
-                    else { self.fail("La permission du microphone est requise.", code: "E_VOICE_MIC_PERMISSION") }
-                }
-            }
+            AVAudioApplication.requestRecordPermission(AssistVoiceCallbacks.microphone { [weak self] allowed in
+                guard let self, self.generation == token, self.phase == "requesting" else { return }
+                if allowed { self.beginCapture(token) }
+                else { self.fail("La permission du microphone est requise.", code: "E_VOICE_MIC_PERMISSION") }
+            })
         default: fail("La permission du microphone est refusée. Autorise-la dans les réglages iOS.", code: "E_VOICE_MIC_PERMISSION")
         }
     }
@@ -217,27 +212,21 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             localRequest.taskHint = .dictation
             let sink = AssistVoiceAudioSink(localRequest)
             request = localRequest
-            recognitionTask = recognizer.recognitionTask(with: localRequest) { [weak self] result, error in
-                // Only immutable, Sendable values cross the callback boundary.
-                let text = result?.bestTranscription.formattedString
-                let isFinal = result?.isFinal ?? false
-                let message = error?.localizedDescription
-                Task { @MainActor [weak self] in
-                    guard let self, self.generation == token,
-                          self.phase == "listening" || self.phase == "finishing" else { return }
-                    if let text {
-                        self.latestTranscript = text
-                        self.emit(kind: "transcript", text: text, isFinal: isFinal)
-                    }
-                    if isFinal { self.finishRecognition(emitFinal: false) }
-                    else if let message { self.fail("La dictée locale s’est arrêtée : \(message)", code: "E_VOICE_RECOGNITION") }
+            recognitionTask = recognizer.recognitionTask(with: localRequest, resultHandler: AssistVoiceCallbacks.recognition { [weak self] snapshot in
+                guard let self, self.generation == token,
+                      self.phase == "listening" || self.phase == "finishing" else { return }
+                if let text = snapshot.text {
+                    self.latestTranscript = text
+                    self.emit(kind: "transcript", text: text, isFinal: snapshot.isFinal)
                 }
-            }
+                if snapshot.isFinal { self.finishRecognition(emitFinal: false) }
+                else if let message = snapshot.message { self.fail("La dictée locale s’est arrêtée : \(message)", code: "E_VOICE_RECOGNITION") }
+            })
             // Apple's append API accepts buffers from an audio tap. No actor
             // state, model, blocking work or per-buffer Task is touched here.
-            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            input.installTap(onBus: 0, bufferSize: 1024, format: format, block: AssistVoiceCallbacks.audioTap { buffer in
                 sink.append(buffer)
-            }
+            })
             hasTap = true
             engine.prepare()
             try engine.start()
@@ -295,28 +284,38 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     private func observe(_ name: Notification.Name) {
-        observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
-            let isOwnCategoryChange = name == AVAudioSession.routeChangeNotification &&
-                (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) == AVAudioSession.RouteChangeReason.categoryChange.rawValue
-            guard !isOwnCategoryChange else { return }
+        observers.append(NotificationCenter.default.addObserver(
+            forName: name, object: nil, queue: .main,
+            using: Self.mainNotificationHandler(owner: self, name: name)
+        ))
+    }
+
+    nonisolated private static func mainNotificationHandler(
+        owner: AssistVoice, name: Notification.Name
+    ) -> @Sendable (Notification) -> Void {
+        { [weak owner] notification in
+            let routeReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
             // This observer explicitly runs on the main operation queue. Handle
             // it synchronously so an old route event cannot stop a newer turn.
-            MainActor.assumeIsolated { [weak self] in
-                guard let self else { return }
-                if name == UIApplication.didBecomeActiveNotification {
-                    let action = self.pendingForegroundAction
-                    self.pendingForegroundAction = nil
-                    if self.phase == "requesting" { action?() }
-                    return
-                }
-                // System permission sheets temporarily deactivate the app.
-                // Preserve that request, but never start its microphone until
-                // didBecomeActive. Actual background always invalidates it.
-                if name == UIApplication.willResignActiveNotification && self.phase == "requesting" { return }
-                guard self.phase != "idle" else { return }
-                self.cancelCurrent()
+            MainActor.assumeIsolated { [weak owner] in
+                owner?.handleNotification(name, routeReason: routeReason)
             }
-        })
+        }
+    }
+
+    private func handleNotification(_ name: Notification.Name, routeReason: UInt?) {
+        if name == AVAudioSession.routeChangeNotification &&
+            routeReason == AVAudioSession.RouteChangeReason.categoryChange.rawValue { return }
+        if name == UIApplication.didBecomeActiveNotification {
+            let action = pendingForegroundAction
+            pendingForegroundAction = nil
+            if phase == "requesting" { action?() }
+            return
+        }
+        // Permission sheets may deactivate the app; actual background cancels.
+        if name == UIApplication.willResignActiveNotification && phase == "requesting" { return }
+        guard phase != "idle" else { return }
+        cancelCurrent()
     }
 
     private func canadianVoice() -> AVSpeechSynthesisVoice? {
