@@ -1,4 +1,4 @@
-# Fidélité numérique de Gemma — 15 octobre 2026
+# Fidélité numérique de Gemma — 15–16 octobre 2026
 
 L’erreur des rapports iPhone 2 et 8 est reproductible hors de l’app : la
 palettisation des poids suffit à transformer la réponse correcte
@@ -306,6 +306,87 @@ l’état suspendu et les requêtes GET/HEAD du ZIP répondent **HTTP 410**. Les
 réussites CPU et d’intégrité restent des observations historiques, sans valider
 le chargement sur iPhone. La fenêtre **32K** et le group8 de référence sont
 conservés ; aucun passage implicite à 8K ou autre backend n’est introduit.
+
+## Contrôle d’une normalisation composite
+
+Une piste distincte utilise l’API publique
+[`RMSNormImpl` et `ExternalizeSpec`](https://apple.github.io/coreai-torch/main/api/composite-ops/rms-norm.html)
+pour conserver une frontière `rms_norm` reconnue dans le graphe source.
+Les paramètres FP16 d’origine restent les mêmes objets ; leur promotion FP32
+est explicite à l’entrée du produit de normalisation. La normalisation V
+utilise une échelle constante de un, sans ajouter de poids appris.
+
+Le contrôle d’intégration avec des poids synthétiques et sa répétition
+indépendante utilisent les primitives iOS épinglées. Ils sauvegardent puis
+relisent les neuf fonctions attendues, les types matériels et les quatre alias
+de mutation des caches, sur les six fonctions des trois paliers de contexte.
+Les corps RMSNorm se dédupliquent par forme et conservent une moyenne, un
+inverse RMS et un epsilon FP32, avec des entrées/sorties de données FP16. Ce
+constat source ne démontre pas une fusion matérielle pendant la spécialisation
+iOS.
+
+Le modèle E2B entier répond ensuite **`1, 8, 27, 64`**, puis EOS, dans le
+contrôle Apple eager CPU utilisant exactement cette nouvelle implémentation.
+Les 32 identifiants de la consigne sont inchangés ; les identifiants générés et
+les scores au pas 3 correspondent au contrôle HF32 précédent. Les 242
+normalisations observées restent finies. Le contexte déclaré est 32 768, avec
+le palier court 1 024 pour cette consigne ; seul ce cas court du modèle entier
+a été rejoué avec cette implémentation.
+
+Pour ce diagnostic sur l’hôte, les 275 reconstructions de palettes sont copiées
+sans changer leurs octets dans des fichiers ordinaires mappés depuis le disque.
+Six petits cas, vérifiés indépendamment, préservent aussi les bits FP16
+particuliers et la durée de vie des mappings. Le contrôle complet termine en
+140 s, sous une limite de 6 Gio, sans swap, OOM ni arrêt de garde ; son maximum
+de cgroup est **5 369 225 216 octets**. Ces mesures ne concernent pas l’iPhone.
+
+L’export source complet conserve les mêmes palettes, PLE, tokenizer et capacité
+32K. Il n’a pas encore produit de paquet complet. Après correction du coût de
+nettoyage de l’allocateur entre les petits sous-graphes RMSNorm, l’essai est
+arrêté à **846 s** par la garde de réserve mémoire de l’hôte, fixée à **3 Gio**.
+Le cgroup atteint sa limite de **6 Gio**, sans OOM ni swap ; 716 des 1 074
+sous-graphes attendus sont convertis. Sa limite souple a été relevée de 5 à
+6 Gio pendant cet essai, sans modifier la limite dure ni la réserve de l’hôte.
+Ces graphes partiels ne sont pas distribués. Le chargement et la correction
+numérique native restent à vérifier.
+
+L’audit de `coreai-torch 0.4.3` montre que le chemin d’externalisation depuis un
+module conserve ses six exports initiaux validés, puis les recapture sans
+abaisser les premiers. Une optimisation de durée de vie, dépendante de champs
+privés et bloquée sur les empreintes des sources installées, libère seulement
+ces exports devenus inutiles. Les six références faibles du petit modèle et
+celle du cas à 33 normalisations disparaissent ; les objets paramètres et les
+chemins d’export ordinaires sont conservés. Les graphes sources complets restent
+identiques après normalisation des seuls symboles aléatoires. Une répétition
+indépendante du cas à 33 normalisations confirme ce résultat. Ces contrôles
+synthétiques ne préjugent pas du gain mémoire sur E2B ni du chargement iOS ; le
+nouvel essai complet reste borné à 6 Gio, sans swap et avec la même réserve de
+3 Gio pour l’hôte.
+
+Sur E2B, les six exports initiaux sont effectivement collectés. Leurs mesures
+avant/après montrent une baisse de mémoire, sans établir un gain de pic
+comparable entre les essais. La garde de l’hôte arrête cependant cette reprise
+à **388,5 s**, après 273 sous-graphes RMSNorm et le premier graphe `extend`.
+Le maximum du cgroup est **5 266 264 064 octets**, inférieur au plafond de
+6 Gio ; il n’y a ni OOM ni swap. Il manque donc toujours un export source
+complet, et aucun nouveau paquet n’est proposé à l’iPhone.
+
+Une reprise unique est mise en attente le 16 octobre à **04:55 UTC**, pour
+quatre heures au plus. Elle exige **11 Gio disponibles pendant 60 s** et
+35 Gio de stockage libre avant démarrage, puis conserve la limite de 6 Gio et
+la réserve de 3 Gio. La configuration est liée à une empreinte approuvée avant
+exécution ; la marge est revérifiée après les lectures d’intégrité. Cette file
+ne lance ni nouvel essai automatique après échec, ni publication. Un export
+réussi nécessitera encore une validation indépendante et un essai iPhone.
+
+Le vérificateur indépendant est aussi renforcé : il lie la provenance aux
+quatre empreintes approuvées des outils, puis compare les métadonnées et types
+d’entrée/sortie complets des neuf fonctions avec le group8 de référence. Le
+test synthétique détecte un alias de cache ou un encodage matériel de sortie
+modifié malgré des résumés de types/dimensions identiques ; cinq cas négatifs
+sont rejetés. La lecture du véritable asset group8 extrait les neuf contrats
+et leurs six cartes de quatre alias sans modifier son bytecode. Cela valide
+le contrôle, sans valider un nouveau candidat.
 
 ## Intégrité du paquet transféré
 
