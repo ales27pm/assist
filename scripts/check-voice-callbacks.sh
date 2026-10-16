@@ -30,11 +30,29 @@ xcrun --sdk macosx swiftc \
   -framework AVFoundation -framework Speech \
   -o "$VOICE_CHECK_DIR/check-voice-callbacks"
 
+# The standalone swiftc harness needs this debug entitlement for Swift's macOS
+# backtracer to inspect an expected-crash child. Sign only the temporary test
+# executable; the app and its distribution entitlements are never touched.
+cat >"$VOICE_CHECK_DIR/debug-entitlements.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.get-task-allow</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+/usr/bin/codesign --force --sign - \
+  --entitlements "$VOICE_CHECK_DIR/debug-entitlements.plist" \
+  "$VOICE_CHECK_DIR/check-voice-callbacks"
+
 "$VOICE_CHECK_DIR/check-voice-callbacks"
 
 for VOICE_CHECK_NEGATIVE in authorization audio-tap; do
   VOICE_CHECK_NEGATIVE_LOG="$VOICE_CHECK_DIR/negative-$VOICE_CHECK_NEGATIVE.log"
-  if "$VOICE_CHECK_DIR/check-voice-callbacks" "--negative-$VOICE_CHECK_NEGATIVE" \
+  if SWIFT_BACKTRACE='enable=yes,interactive=no,color=no,output-to=stderr' \
+      "$VOICE_CHECK_DIR/check-voice-callbacks" "--negative-$VOICE_CHECK_NEGATIVE" \
       >"$VOICE_CHECK_NEGATIVE_LOG" 2>&1; then
     echo "ERROR: the legacy $VOICE_CHECK_NEGATIVE negative control did not trap." >&2
     cat "$VOICE_CHECK_NEGATIVE_LOG" >&2
