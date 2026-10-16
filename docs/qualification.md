@@ -46,7 +46,10 @@ un essai froid.
    chacun des trois textes longs**, dans une nouvelle conversation à chaque
    fois. Leurs six lignes attendues nécessitent 89 jetons avant EOS ; les
    [rapports 17 à 19](gemma-numeric-fidelity.md#contre-vérification-iphone--rapports-9-à-19)
-   s’arrêtent à 64 et ne qualifient donc pas la réponse complète.
+   s’arrêtent à 64 et ne qualifient donc pas la réponse complète. Les
+   [rapports 21 à 23](gemma-numeric-fidelity.md#rapports-20-à-23--diagnostic-natif-et-récupération-longue)
+   reprennent ensuite ces trois textes avec 256 : six lignes exactes sur six,
+   89 jetons et EOS à chaque palier, sur un seul passage par cas.
 4. **Répétabilité** : au moins trois répétitions par scénario pertinent,
    démarrage et réutilisation séparés. Conserver les échecs, pas seulement le
    meilleur passage. Réduire la charge si l’appareil chauffe ou devient instable.

@@ -113,6 +113,50 @@ une borne basse du pic réel. L’état du cache de spécialisation, le mode hor
 réseau de cette série, la répétabilité et l’usage ANE ne sont pas établis.
 Le nom du dossier ne remplace pas une empreinte du paquet installé.
 
+## Rapports 20 à 23 : diagnostic natif et récupération longue
+
+Le build **1.0.0 (4)** fournit maintenant les diagnostics attendus sur iPhone.
+Le rapport 20 a l’empreinte exacte des **32 jetons** de la consigne des cubes,
+avec les deux curseurs à zéro avant l’inférence. Les douze pas, EOS inclus,
+ont des scores retournés finis et sélectionnent chaque fois le premier candidat.
+Les identifiants décodent exactement `1, 4, 9, 16` : le choix glouton et le texte
+affiché correspondent aux scores du moteur.
+
+Le premier **choix de jeton** différent survient au pas 3, après le préfixe
+commun `1, ` ; les scores diffèrent déjà aux pas précédents. La comparaison
+des scores s’arrête ici, car les préfixes suivants ne sont plus identiques.
+
+| Candidat au pas 3 | iPhone, scores retournés | Contrôle Apple eager CPU, normes HF32 |
+| --- | ---: | ---: |
+| `4` (236812) | 15,34375 | 15,203125 |
+| `8` (236828) | 15,328125 | 15,8515625 |
+
+Sur iPhone, la marge de `4` est **0,015625**, soit deux ULP FP16 à cette
+amplitude. Le classement est inversé par rapport au contrôle CPU. Cela situe
+l’écart avant le choix glouton ; l’opérateur responsable, les scores natifs
+avant softcap et la fidélité générale du graphe restent à établir.
+
+Avec le budget corrigé de **256**, les trois textes longs inchangés sont
+maintenant complets et exacts, chacun sur un essai :
+
+| Rapport | Entrée formatée | Sortie | Lignes exactes | Premier jeton | Durée totale | Maximum échantillonné |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 21, texte 8K | 8 188 | 89 | 6/6 | 3,29 s | 7,10 s | 1 987 235 432 octets |
+| 22, texte 16K | 16 372 | 89 | 6/6 | 7,79 s | 11,48 s | 2 101 694 128 octets |
+| 23, texte près de 32K | 32 256 | 89 | 6/6 | 17,34 s | 21,04 s | 2 211 647 272 octets |
+
+Ces générations finissent par EOS et reviennent à `ready`. Les six lignes
+incluent la réponse `ABSENT` ; près de 32K, la première clé `NACRE-32` est aussi
+correcte. Le total maximal observé est **32 345 jetons**, dans la capacité de
+32 768. Ces réussites qualifient ces trois cas synthétiques, pas toutes les
+tâches longues ni leur répétabilité.
+
+Les quatre rapports recopient un seul relevé de chargement de **2,73 s**, avec
+1 579 977 336 octets après chargement. L’état du cache de spécialisation n’est
+pas mesuré ; ce ne sont pas quatre chargements indépendants. L’identité du
+paquet installé par empreinte, le mode hors réseau de cette série et
+l’exécution ANE restent non établis.
+
 ## Diagnostic de l’écart restant
 
 Un contrôle CPU du parcours Apple iOS, avec les mêmes palettes et tables INT8,
@@ -131,6 +175,22 @@ réécritures du compilateur Core AI ni par la spécialisation sur appareil. Ils
 ne démontrent donc pas qu’une modification de normalisation corrigerait le
 graphe livré.
 
+Un contrôle supplémentaire limite volontairement la sortie aux quatre premiers
+jetons et déplace uniquement l’arrondi avant la multiplication par le poids de
+RMSNorm. Il choisit encore `8` au pas 3 : score 15,875 contre 15,1875 pour `4`.
+Cette seule différence d’ordre d’arrondi ne reproduit donc pas le classement
+natif. Le contrôle court termine par `length` après `1, 8` ; il ne constitue pas
+une nouvelle réussite du cas complet. Aucun correctif d’export n’est déduit de
+cette ablation négative.
+
+Une lecture seule du véritable asset group8 trouve **12 graphes internes**
+(neuf fonctions publiques et trois auxiliaires), avec 28 862 opérations. Les
+résultats flottants déclarés sont tous FP16, notamment les 1 074 réductions
+`reduce_mean` et les 1 074 `rsqrt`. Les normalisations ne portent donc pas de
+frontière FP32 explicite dans cet export. Ce relevé décrit l’IR sauvegardé ; il
+ne mesure ni la précision interne des opérations fusionnées sur iPhone ni leur
+responsabilité dans l’inversion observée.
+
 Le build de diagnostic **1.0.0 (4)** ajoute un champ optionnel
 `numericalDiagnostics` aux rapports des requêtes gloutonnes d’au plus 64 jetons
 d’entrée et 64 jetons de sortie. Il conserve les deux meilleurs scores finis
@@ -144,9 +204,9 @@ longs. Son coût fait partie des durées des petits essais instrumentés.
 
 Pour la consigne confirmée des cubes, l’empreinte attendue est
 `cb364516a49b4006b836b933fc11ca273cb5a659bc05ff0d20fdf5ec2e15fc99`.
-Après installation de ce build, reprendre cette même consigne en premier
-après rechargement, budget 64, puis partager le rapport. Les mesures natives
-restent nécessaires avant d’attribuer ou de corriger l’écart de calcul.
+Le rapport 20 fournit cette empreinte et les scores natifs décrits ci-dessus.
+L’étape suivante consiste à isoler la différence de calcul, puis à vérifier un
+correctif sur cette même consigne, sans changer le corrigé ni la fenêtre 32K.
 
 ## Intégrité du paquet transféré
 

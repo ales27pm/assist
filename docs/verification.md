@@ -4,7 +4,13 @@ Le build de diagnostic **1.0.0 (4)** est désormais signé et disponible en test
 interne TestFlight (`VALID`, `IN_BETA_TESTING`). Il ajoute les
 [observations numériques bornées](gemma-numeric-fidelity.md#diagnostic-de-lécart-restant)
 nécessaires à l’analyse de l’erreur des cubes. La correction de cette erreur et
-l’exécution de ces nouveaux diagnostics sur iPhone restent à vérifier.
+son opérateur responsable restent à isoler. Les
+[rapports 20 à 23](gemma-numeric-fidelity.md#rapports-20-à-23--diagnostic-natif-et-récupération-longue)
+confirment l’exécution des diagnostics sur iPhone : entrée exacte, moteur
+réinitialisé et inversion de classement entre `4` et `8` avant le choix
+glouton. Les trois textes longs, repris avec un budget de 256, donnent chacun
+six lignes exactes sur six, jusqu’à 32 256 jetons d’entrée et 89 de sortie.
+Il s’agit d’un passage par cas ; la répétabilité et l’usage ANE restent à qualifier.
 
 Le correctif **1.0.0 (3)** est signé et traité par TestFlight. La capture
 utilisateur du 15 octobre à 02:49 EDT confirme l’affichage de l’interface initiale
