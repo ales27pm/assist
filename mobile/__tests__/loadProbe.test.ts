@@ -41,6 +41,87 @@ test('accepts a saved native error with its bounded code and matching stages', (
   expect(parseLoadProbeReport(JSON.stringify(failure))).toEqual(failure);
 });
 
+const correlated = {
+  ...report,
+  schemaVersion: 2,
+  nativeBuild: '9',
+  attempt: {
+    id: '9cde6700-1e52-4a3c-9b84-8a677eb4124a',
+    startedAtUTC: '2026-10-16T13:00:00.123Z',
+    processIdentifier: 20501,
+    entryPoint: 'single_function_load_probe',
+  },
+};
+
+test('preserves the attempt identity and native error chain through sharing', () => {
+  const failure = {
+    ...correlated,
+    stage: 'failed',
+    errorCode: 'E_FUNCTION_LOAD_FAILED',
+    nativeErrors: [
+      { domain: 'NSCocoaErrorDomain', code: 260, swiftType: 'Foundation.NSError' },
+      { domain: 'NSPOSIXErrorDomain', code: 2, swiftType: 'Foundation.NSError' },
+    ],
+    samples: [
+      ...report.samples,
+      { stage: 'failed', elapsedMs: 80, thermalState: 'nominal' },
+    ],
+  };
+  expect(parseLoadProbeReport(JSON.stringify(failure))).toEqual(failure);
+  expect(
+    parseLoadProbeReport(
+      JSON.stringify({
+        ...failure,
+        attempt: { ...failure.attempt, path: '/private/model' },
+        nativeErrors: failure.nativeErrors.map(error => ({
+          ...error,
+          localizedDescription: '/private/model secret prompt',
+        })),
+      }),
+    ),
+  ).toEqual(failure);
+});
+
+test.each([
+  { attempt: undefined },
+  { attempt: { ...correlated.attempt, id: 'not-an-id' } },
+  { attempt: { ...correlated.attempt, processIdentifier: -1 } },
+  { attempt: { ...correlated.attempt, processIdentifier: 1.5 } },
+  { attempt: { ...correlated.attempt, startedAtUTC: 'yesterday' } },
+  { attempt: { ...correlated.attempt, startedAtUTC: '2026-02-30T00:00:00.000Z' } },
+  { attempt: { ...correlated.attempt, entryPoint: 'normal_load' } },
+  { nativeErrors: [{ domain: 'NSPOSIXErrorDomain', code: 2 }] },
+])('rejects invalid or inconsistent attempt metadata %j', change => {
+  expect(() =>
+    parseLoadProbeReport(JSON.stringify({ ...correlated, ...change })),
+  ).toThrow();
+});
+
+test.each([
+  undefined,
+  [],
+  Array(4).fill({ domain: 'NSPOSIXErrorDomain', code: 2, swiftType: 'NSError' }),
+  [{ domain: '/private/model', code: 2, swiftType: 'NSError' }],
+  [{ domain: 'NSPOSIXErrorDomain', code: 1.5, swiftType: 'NSError' }],
+  [{ domain: 'NSPOSIXErrorDomain', code: 2 ** 53, swiftType: 'NSError' }],
+  [{ domain: 'NSPOSIXErrorDomain', code: 2, swiftType: 'secret prompt' }],
+])('rejects malformed native failure evidence %j', nativeErrors => {
+  expect(() =>
+    parseLoadProbeReport(
+      JSON.stringify({
+        ...correlated,
+        stage: 'failed',
+        errorCode: 'E_FUNCTION_LOAD_FAILED',
+        nativeErrors,
+        samples: [
+          ...report.samples,
+          { stage: 'failed', elapsedMs: 80, thermalState: 'nominal' },
+        ],
+      }),
+    ),
+  ).toThrow();
+});
+
 test.each(loadProbeFunctions)(
   'allows only the specified full-bundle function: %s',
   functionName => {

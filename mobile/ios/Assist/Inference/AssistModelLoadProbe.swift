@@ -26,7 +26,7 @@ enum AssistModelLoadProbe {
     static let maximumReportBytes = 32 * 1024
     static let maximumModelNameBytes = 160
     static let maximumExactJSONInteger: UInt64 = 9_007_199_254_740_991
-    static let measurementMethods = [
+    private static let legacyMeasurementMethods = [
         "scope": "One selected function is loaded; no generation, execution timing, quality qualification or recovery is performed",
         "preparation": "One AIModel with the production static-model Neural Engine preference; initialization may specialize the model before the selected function load; no StaticShapeEngine, embedding/state preload or retained warmup bank",
         "cache": "Cache state is unmeasured and untouched; no cache inspection load, clearing or automatic retry",
@@ -41,6 +41,10 @@ enum AssistModelLoadProbe {
         "lowPowerMode": "ProcessInfo.isLowPowerModeEnabled",
         "aneExecution": "Actual ANE/GPU placement and utilization are not measured",
     ]
+    static let measurementMethods = legacyMeasurementMethods.merging([
+        "attempt": "Fresh UUID, wall-clock UTC start and process ID identify this manual probe; wall time is for crash correlation, not duration measurement",
+        "nativeErrors": "At most three NSError domains, signed codes and Swift type names; unsafe labels are redacted and codes beyond exact JSON range omitted; descriptions, debug messages and other userInfo are omitted",
+    ]) { _, new in new }
 
     enum Stage: String, Codable, Sendable {
         case preparingModel = "preparing_model"
@@ -78,6 +82,67 @@ enum AssistModelLoadProbe {
         case preparationFailed = "E_MODEL_PREPARATION_FAILED"
         case functionLoadFailed = "E_FUNCTION_LOAD_FAILED"
         case functionNotFound = "E_FUNCTION_NOT_FOUND"
+    }
+
+    struct Attempt: Codable, Sendable {
+        let id: String
+        let startedAtUTC: String
+        let processIdentifier: Int32
+        var entryPoint = "single_function_load_probe"
+
+        private static func formatter() -> ISO8601DateFormatter {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            return formatter
+        }
+
+        static func current() -> Attempt {
+            Attempt(id: UUID().uuidString.lowercased(), startedAtUTC: formatter().string(from: Date()),
+                    processIdentifier: ProcessInfo.processInfo.processIdentifier)
+        }
+
+        func validate() throws {
+            let formatter = Self.formatter()
+            guard id.count == 36, UUID(uuidString: id)?.uuidString.lowercased() == id,
+                  startedAtUTC.utf8.count == 24, let date = formatter.date(from: startedAtUTC),
+                  formatter.string(from: date) == startedAtUTC, processIdentifier > 0,
+                  entryPoint == "single_function_load_probe" else { throw Failure.corruptReport }
+        }
+    }
+
+    struct NativeErrorEvidence: Codable, Sendable {
+        let domain: String
+        let code: Int?
+        let swiftType: String
+
+        // These are identifiers, never descriptions or arbitrarily truncated messages.
+        private static func label(_ value: String) -> String {
+            let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._".utf8)
+            guard !value.isEmpty, value.utf8.count <= 160,
+                  value.utf8.allSatisfy({ allowed.contains($0) }) else { return "redacted" }
+            return value
+        }
+
+        static func capture(_ error: any Error) -> [NativeErrorEvidence] {
+            var result: [NativeErrorEvidence] = []
+            var next: (any Error)? = error
+            var seen = Set<ObjectIdentifier>()
+            while let current = next, result.count < 3 {
+                let native = current as NSError
+                guard seen.insert(ObjectIdentifier(native)).inserted else { break }
+                let code = (-9_007_199_254_740_991...9_007_199_254_740_991).contains(native.code) ? native.code : nil
+                result.append(NativeErrorEvidence(domain: label(native.domain), code: code,
+                    swiftType: label(String(reflecting: type(of: current)))))
+                next = native.userInfo[NSUnderlyingErrorKey] as? any Error
+            }
+            return result
+        }
+
+        func validate() throws {
+            guard domain == Self.label(domain), swiftType == Self.label(swiftType),
+                  code.map({ (-9_007_199_254_740_991...9_007_199_254_740_991).contains($0) }) ?? true else { throw Failure.corruptReport }
+        }
     }
 
     struct Reading: Sendable {
@@ -120,7 +185,7 @@ enum AssistModelLoadProbe {
     }
 
     struct Report: Codable, Sendable {
-        var schemaVersion = 1
+        var schemaVersion = 2
         var kind = "assistModelLoadDiagnostic"
         var scope = "single_function_load_only_no_generation"
         var aneExecution = "unverified"
@@ -129,9 +194,11 @@ enum AssistModelLoadProbe {
         let functionName: String
         var contextCapacity = 32_768
         let modelName: String
+        var attempt: Attempt?
         var stage = Stage.preparingModel
         var samples: [Sample] = []
         var errorCode: NativeErrorCode?
+        var nativeErrors: [NativeErrorEvidence]?
         var measurementMethods = AssistModelLoadProbe.measurementMethods
 
         init(nativeBuild: String, osVersion: String, functionName: String, modelName: String) throws {
@@ -140,15 +207,17 @@ enum AssistModelLoadProbe {
             self.osVersion = Self.systemLabel(osVersion, maximumBytes: 160)
             self.functionName = functionName
             self.modelName = sanitizedModelName(modelName)
+            self.attempt = .current()
         }
 
         mutating func observe(_ stage: Stage, sampleStage: SampleStage, reading: Reading, elapsedMs: Double,
-                              errorCode: NativeErrorCode? = nil) throws {
+                              errorCode: NativeErrorCode? = nil, nativeError: (any Error)? = nil) throws {
             guard samples.count < 4 else { throw Failure.corruptReport }
             let sample = try Sample(stage: sampleStage, elapsedMs: elapsedMs, reading: reading)
             guard sample.elapsedMs >= (samples.last?.elapsedMs ?? 0) else { throw Failure.corruptReport }
             self.stage = stage
             self.errorCode = errorCode
+            self.nativeErrors = nativeError.map(NativeErrorEvidence.capture)
             samples.append(sample)
         }
 
@@ -159,13 +228,26 @@ enum AssistModelLoadProbe {
         }
 
         func validate() throws {
-            guard schemaVersion == 1, kind == "assistModelLoadDiagnostic",
+            guard (schemaVersion == 1 || schemaVersion == 2), kind == "assistModelLoadDiagnostic",
                   scope == "single_function_load_only_no_generation", aneExecution == "unverified",
                   functionNames.contains(functionName), contextCapacity == 32_768,
                   nativeBuild == Self.systemLabel(nativeBuild, maximumBytes: 32),
                   osVersion == Self.systemLabel(osVersion, maximumBytes: 160),
-                  modelName == sanitizedModelName(modelName), measurementMethods == AssistModelLoadProbe.measurementMethods,
+                  modelName == sanitizedModelName(modelName),
+                  measurementMethods == (schemaVersion == 1 ? legacyMeasurementMethods : AssistModelLoadProbe.measurementMethods),
                   (1...4).contains(samples.count) else { throw Failure.corruptReport }
+            if schemaVersion == 1 {
+                guard attempt == nil, nativeErrors == nil else { throw Failure.corruptReport }
+            } else {
+                guard let attempt else { throw Failure.corruptReport }
+                try attempt.validate()
+                let threw = errorCode == .preparationFailed || errorCode == .functionLoadFailed
+                guard threw == (nativeErrors != nil) else { throw Failure.corruptReport }
+                if let nativeErrors {
+                    guard (1...3).contains(nativeErrors.count) else { throw Failure.corruptReport }
+                    try nativeErrors.forEach { try $0.validate() }
+                }
+            }
             let expected: [[SampleStage]]
             switch stage {
             case .preparingModel: expected = [[.beforePrepare]]
@@ -276,7 +358,8 @@ enum AssistModelLoadProbe {
         let prepared: Prepared
         do { prepared = try await prepare() }
         catch {
-            try report.observe(.failed, sampleStage: .failed, reading: reading(), elapsedMs: elapsed(), errorCode: .preparationFailed)
+            try report.observe(.failed, sampleStage: .failed, reading: reading(), elapsedMs: elapsed(),
+                               errorCode: .preparationFailed, nativeError: error)
             return try store.save(report)
         }
         return try withExtendedLifetime(prepared) {
@@ -285,7 +368,8 @@ enum AssistModelLoadProbe {
             let loaded: Loaded?
             do { loaded = try load(prepared) }
             catch {
-                try report.observe(.failed, sampleStage: .failed, reading: reading(), elapsedMs: elapsed(), errorCode: .functionLoadFailed)
+                try report.observe(.failed, sampleStage: .failed, reading: reading(), elapsedMs: elapsed(),
+                                   errorCode: .functionLoadFailed, nativeError: error)
                 return try store.save(report)
             }
             guard let loaded else {
@@ -340,13 +424,21 @@ enum AssistModelLoadProbe {
             return max(0, Double(duration.seconds) * 1_000 + Double(duration.attoseconds) / 1e15)
         }, prepare: {
             try await AIModel(contentsOf: assetURL, options: SpecializationOptions(preferredComputeUnitKind: .neuralEngine))
-        }, load: { model in try model.loadFunction(named: functionName) })
+        }, load: { model in try loadFunctionForProbe(model: model, name: functionName) })
         #else
         throw Failure.unsupported
         #endif
     }
 
     #if canImport(CoreAI) && canImport(CoreAILanguageModels) && canImport(Darwin)
+    /// A named, non-inlined boundary helps distinguish probe loads in symbolicated reports.
+    @inline(never)
+    @available(iOS 27.2, *)
+    private static func loadFunctionForProbe(model: AIModel, name: String) throws -> InferenceFunction? {
+        let function = try model.loadFunction(named: name)
+        return withExtendedLifetime(model) { function }
+    }
+
     private static func validateLocalDirectory(_ root: URL) throws {
         let manager = FileManager.default
         try AssistModelDirectoryPolicy.validate(root, entry: { candidate in

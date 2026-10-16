@@ -39,6 +39,15 @@ d’écriture arrête le diagnostic avant l’appel risqué. Le rapport peut êt
 après réouverture de l’app, sans accès au dossier du modèle et sans nouvelle
 tentative de chargement. Il ne contient ni chemin, ni prompt, ni texte généré.
 
+Les nouveaux rapports de schéma 2 ajoutent un UUID d’essai, son début en UTC,
+le PID du processus et le chemin d’entrée constant `single_function_load_probe`.
+Ces champs servent à rapprocher une trace d’un journal iOS ; le temps mural
+n’est pas utilisé pour calculer les durées. Une erreur Swift conserve jusqu’à
+trois domaines `NSError`, codes signés représentables exactement en JSON et
+noms de types. Les libellés non conformes sont masqués et les messages libres,
+chemins et autres données `userInfo` ne sont pas exportés. L’ancien schéma 1
+reste lisible avec ses informations d’origine, sans lui inventer une identité.
+
 Les instantanés contiennent l’empreinte physique du processus, son budget
 d’allocation restant, l’état thermique et les observations Metal publiques
 disponibles. Ces observations ne donnent ni la taille du tas interne demandé
@@ -61,6 +70,59 @@ Un JSON émis par ce véritable encodeur Swift passe aussi le parseur TypeScript
 sans perdre de champ déclaré. Les tests React Native vérifient la restauration,
 le partage, les gardes d’opération et l’absence de tentative automatique.
 
-La compilation iOS et la présence des méthodes dans l’IPA sont vérifiées
-séparément à la livraison. Le comportement de cette nouvelle sonde sur iPhone
-reste à observer ; les tests du pont simulé ne démontrent pas cette exécution.
+La compilation iOS et la présence des méthodes dans l’IPA ont été vérifiées
+pour le build 8 livré. Les tests du pont simulé ne démontrent pas son exécution
+sur l’iPhone ; les observations reçues sont décrites ci-dessous.
+
+## Observation du build 8, le 16 octobre
+
+Le rapport partagé pour `gemma4-e2b-32k-group8-rms-fp32io` reste à
+`loading_function` pour `extend_1024_8`. La préparation a rendu la main :
+le dernier instantané, pris à 226,73 ms, précède `loadFunction(named:)`.
+Il indique une empreinte de **36 767 632 octets**, un budget d’allocation restant
+de **3 503 224 944 octets**, un état thermique nominal et le mode économie
+d’énergie désactivé. Ce sont des observations **avant** l’appel, pas le pic
+pendant le chargement. Le marqueur ne fournit ni durée jusqu’au crash, ni
+taille du tas Metal demandé, ni placement du modèle.
+
+L’utilisateur confirme une fermeture brutale après « Tester ce graphe ».
+Le journal iOS fourni pour le build 8 montre la même assertion Metal dans
+`createMemrefHeap` que le build 7. Son UUID de binaire est identique à celui
+de l’IPA livré. Cependant, ses cadres applicatifs nomment
+`StaticShapeEngine.warmup` et `AssistInferenceCoordinator.load(path:)`, alors
+que la sonde appelle directement `AIModel.loadFunction`. Le rapport ne contient
+pas d’identifiant d’essai, d’horodatage UTC ou d’identité de processus permettant
+de résoudre cette correspondance. Le bouton et le pont généré appellent bien
+la méthode dédiée dans le source livré ; le test de l’écran complet vérifie
+aussi cette séparation à la frontière native simulée. Ces contrôles ne
+remplacent pas une preuve du chemin exécuté sur l’iPhone.
+
+Une lecture seule des deux assets F16 et FP32 trouve les mêmes **275 résultats
+`lut_to_dense`** dans `extend_1024_8`, représentant **3 726 114 816 octets
+logiques** si tous ces poids sont développés. La table d’embeddings déquantifiée
+déclarée dans le graphe représente **805 306 368 octets**. Le plus grand résultat
+individuel observé est cette table, inférieur à la limite de buffer de 4 Gio
+rapportée par Metal. Ni la somme de ces volumes, ni la limite de buffer ne
+donne la taille du tas interne ou les durées de vie simultanées.
+
+Le candidat FP32 conserve ces poids en F16 dans l’IR ; il ne double pas tous
+les poids. Une matérialisation dense liée à un changement de placement est
+une hypothèse à vérifier sur le modèle compilé, pas une allocation mesurée.
+Les [règles d’Apple pour le Neural Engine](https://github.com/apple/coreai-models/blob/main/skills/skills/model-authoring/references/neural_engine_rules.md)
+indiquent que les opérations FP32 peuvent être exécutées sur GPU ou CPU.
+Cette possibilité ne démontre pas le placement effectif de cet export.
+Le contrôle demandé utilise l’ancien export F16 avec le même bouton et la
+même fonction dans le build 8. Il renvoie `failed` et `E_FUNCTION_LOAD_FAILED`,
+sans fermeture signalée dans ce rapport. L’appel est encadré par les mesures
+à 244,87 ms et 270,95 ms, soit 26,08 ms ; l’empreinte finale est de
+39 470 968 octets et l’observation Metal reste à 81 920 octets. Le code générique
+du build 8 ne conserve pas la raison native de cette erreur récupérable.
+
+Le source Apple épinglé initialise le modèle avec les mêmes options de
+spécialisation dans les deux parcours. Le chargement normal exécute ensuite
+`load_embeddings`, crée les états et entrées, puis préchauffe les six fonctions ;
+la sonde demande directement la fonction sélectionnée. Cette différence rend
+le contrôle utile, mais ne permet pas d’attribuer son erreur à l’absence des
+embeddings sans connaître l’erreur native. L’[exemple public de chargement Apple](https://developer.apple.com/documentation/coreai/integrating-on-device-ai-models-in-your-app-with-core-ai)
+utilise lui aussi l’initialisation du modèle suivie de `loadFunction(named:)`.
+Aucun nouvel export ni changement de contexte ne découle de ces seules traces.

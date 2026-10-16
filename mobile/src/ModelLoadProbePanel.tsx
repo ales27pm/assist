@@ -131,6 +131,10 @@ export function ModelLoadProbePanel({
           <Text selectable style={styles.text}>
             Dernier diagnostic : {report.functionName}
           </Text>
+          <Text selectable style={styles.text}>
+            Modèle : {report.modelName}
+            {report.attempt ? `\nEssai du ${report.attempt.startedAtUTC}` : ''}
+          </Text>
           <Text style={styles.text}>
             {report.stage === 'completed'
               ? 'Ce graphe a été chargé. La génération et le chargement cumulé restent à vérifier.'
@@ -138,6 +142,13 @@ export function ModelLoadProbePanel({
               ? 'Le diagnostic a retourné une erreur.'
               : `Dernière étape enregistrée : ${report.stage}. Cette trace seule ne détermine pas la cause d’une interruption.`}
           </Text>
+          {report.nativeErrors && (
+            <Text selectable style={styles.text}>
+              {report.nativeErrors
+                .map(item => `${item.domain} (${item.code ?? 'code indisponible'})`)
+                .join(' → ')}
+            </Text>
+          )}
           <Text style={styles.text}>
             Partage ce rapport avant un autre essai.
           </Text>

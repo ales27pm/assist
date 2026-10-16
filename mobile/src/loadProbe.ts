@@ -30,7 +30,7 @@ export type LoadProbeSample = {
   metalRecommendedWorkingSetBytes?: number;
 };
 export type LoadProbeReport = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   kind: 'assistModelLoadDiagnostic';
   scope: 'single_function_load_only_no_generation';
   aneExecution: 'unverified';
@@ -41,7 +41,14 @@ export type LoadProbeReport = {
   functionName: LoadProbeFunction;
   stage: ProbeStage;
   samples: LoadProbeSample[];
+  attempt?: {
+    id: string;
+    startedAtUTC: string;
+    processIdentifier: number;
+    entryPoint: 'single_function_load_probe';
+  };
   errorCode?: string;
+  nativeErrors?: { domain: string; code?: number; swiftType: string }[];
   measurementMethods: Record<string, string>;
 };
 
@@ -82,7 +89,7 @@ export function parseLoadProbeReport(json: string): LoadProbeReport | null {
     failed: 'failed',
   };
   if (
-    value.schemaVersion !== 1 ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
     value.kind !== 'assistModelLoadDiagnostic' ||
     value.scope !== 'single_function_load_only_no_generation' ||
     value.aneExecution !== 'unverified' ||
@@ -186,7 +193,7 @@ export function parseLoadProbeReport(json: string): LoadProbeReport | null {
     throw new Error('Identité du modèle invalide.');
   }
   const result: LoadProbeReport = {
-    schemaVersion: 1,
+    schemaVersion: value.schemaVersion,
     kind: 'assistModelLoadDiagnostic',
     scope: 'single_function_load_only_no_generation',
     aneExecution: 'unverified',
@@ -214,6 +221,72 @@ export function parseLoadProbeReport(json: string): LoadProbeReport | null {
       throw new Error('Code de diagnostic invalide.');
     }
     result.errorCode = code;
+  }
+  if (value.schemaVersion === 1) {
+    if (value.attempt != null || value.nativeErrors != null) {
+      throw new Error('Version du diagnostic incohérente.');
+    }
+    return result;
+  }
+  const attempt = record(value.attempt);
+  const id = text(attempt.id, 36);
+  const startedAtUTC = text(attempt.startedAtUTC, 24);
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(startedAtUTC) ||
+    !Number.isFinite(Date.parse(startedAtUTC)) ||
+    new Date(startedAtUTC).toISOString() !== startedAtUTC ||
+    typeof attempt.processIdentifier !== 'number' ||
+    !Number.isInteger(attempt.processIdentifier) ||
+    attempt.processIdentifier <= 0 ||
+    attempt.processIdentifier > 2_147_483_647 ||
+    attempt.entryPoint !== 'single_function_load_probe'
+  ) {
+    throw new Error('Identité de l’essai invalide.');
+  }
+  result.attempt = {
+    id,
+    startedAtUTC,
+    processIdentifier: attempt.processIdentifier,
+    entryPoint: 'single_function_load_probe',
+  };
+  const threw = [
+    'E_MODEL_PREPARATION_FAILED',
+    'E_FUNCTION_LOAD_FAILED',
+  ].includes(result.errorCode ?? '');
+  if (threw !== (value.nativeErrors != null)) {
+    throw new Error('Erreur native incohérente.');
+  }
+  if (value.nativeErrors != null) {
+    if (
+      !Array.isArray(value.nativeErrors) ||
+      value.nativeErrors.length < 1 ||
+      value.nativeErrors.length > 3
+    ) {
+      throw new Error('Erreur native invalide.');
+    }
+    result.nativeErrors = value.nativeErrors.map(item => {
+      const native = record(item);
+      const domain = text(native.domain, 160);
+      const swiftType = text(native.swiftType, 160);
+      if (
+        !/^[A-Za-z0-9._]+$/.test(domain) ||
+        !/^[A-Za-z0-9._]+$/.test(swiftType)
+      ) {
+        throw new Error('Identifiant d’erreur native invalide.');
+      }
+      const evidence: NonNullable<LoadProbeReport['nativeErrors']>[number] = {
+        domain,
+        swiftType,
+      };
+      if (native.code != null) {
+        if (typeof native.code !== 'number' || !Number.isSafeInteger(native.code)) {
+          throw new Error('Code d’erreur native invalide.');
+        }
+        evidence.code = native.code;
+      }
+      return evidence;
+    });
   }
   return result;
 }

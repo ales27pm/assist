@@ -52,7 +52,7 @@ struct ModelLoadProbeChecks {
     }
 
     static func report(_ name: String = "gemma4-e2b-32k-group8-rms-fp32io") throws -> Probe.Report {
-        try Probe.Report(nativeBuild: "8", osVersion: "Version 27.2 (test)",
+        try Probe.Report(nativeBuild: "9", osVersion: "Version 27.2 (test)",
                          functionName: "extend_1024_8", modelName: name)
     }
 
@@ -95,11 +95,24 @@ struct ModelLoadProbeChecks {
         var pending = try report()
         try pending.observe(.preparingModel, sampleStage: .beforePrepare, reading: Probe.Reading(), elapsedMs: 0)
         let pendingJSON = try store.save(pending)
+        let identityObject = try object(pendingJSON)
+        check(identityObject["schemaVersion"] as? Int == 2, "New reports must distinguish the correlated diagnostic schema.")
+        let attempt = identityObject["attempt"] as? [String: Any]
+        check(UUID(uuidString: attempt?["id"] as? String ?? "") != nil,
+              "Persist an attempt identifier before the first risky call.")
+        check(attempt?["processIdentifier"] as? Int == Int(ProcessInfo.processInfo.processIdentifier),
+              "Record the actual process identifier for crash correlation.")
+        check(attempt?["entryPoint"] as? String == "single_function_load_probe",
+              "Identify the diagnostic entry point independently of optimized stack names.")
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        check(dateFormatter.date(from: attempt?["startedAtUTC"] as? String ?? "") != nil,
+              "Record an absolute UTC start time in the saved marker.")
         check(pendingJSON.utf8.count <= Probe.maximumReportBytes, "The saved marker stays bounded.")
         check(try Probe.Store(directory: store.directory).readJSON() == pendingJSON, "A fresh store can read a marker after relaunch.")
         check(try manager.contentsOfDirectory(atPath: store.directory.path) == ["model-load-diagnostic.json"], "Keep one fixed marker file.")
         let cleanObject = try object(pendingJSON)
-        for (key, value) in [("schemaVersion", 2 as Any), ("contextCapacity", 8192 as Any),
+        for (key, value) in [("schemaVersion", 3 as Any), ("contextCapacity", 8192 as Any),
                              ("functionName", "load_embeddings" as Any), ("stage", "crashed" as Any),
                              ("modelName", "/private/model" as Any), ("aneExecution", "verified" as Any),
                              ("errorCode", "PRIVATE_ERROR_TEXT" as Any)] {
@@ -144,6 +157,23 @@ struct ModelLoadProbeChecks {
         try JSONSerialization.data(withJSONObject: changed).write(to: store.url)
         let redacted = try store.readJSON()
         check(!redacted.contains("/private/model/path") && !redacted.contains("secret prompt"), "Unknown disk fields must not be exported.")
+        var legacy = cleanObject
+        legacy["schemaVersion"] = 1
+        legacy.removeValue(forKey: "attempt")
+        var legacyMethods = legacy["measurementMethods"] as! [String: String]
+        legacyMethods.removeValue(forKey: "attempt")
+        legacyMethods.removeValue(forKey: "nativeErrors")
+        legacy["measurementMethods"] = legacyMethods
+        try JSONSerialization.data(withJSONObject: legacy).write(to: store.url)
+        check(try object(store.readJSON())["schemaVersion"] as? Int == 1,
+              "A build 8 marker must remain readable without inventing attempt identity or native errors.")
+        for patch: [String: Any] in [["id": "not-a-uuid"], ["processIdentifier": -1],
+                                    ["startedAtUTC": "2026-02-30T00:00:00.000Z"], ["entryPoint": "normal_load"]] {
+            changed = cleanObject
+            changed["attempt"] = (cleanObject["attempt"] as! [String: Any]).merging(patch) { _, new in new }
+            try JSONSerialization.data(withJSONObject: changed).write(to: store.url)
+            rejected { _ = try store.readJSON() }
+        }
 
         let target = temporary.appendingPathComponent("target")
         try Data("untouched".utf8).write(to: target)
@@ -177,6 +207,8 @@ struct ModelLoadProbeChecks {
         check(counters.get("prepareCalls") == 1 && counters.get("loadCalls") == 1, "Load only one model and one function.")
         check(counters.get("prepared") == 0 && counters.get("loaded") == 0, "Release model and function after final persistence.")
         check(try store.readJSON() == successfulJSON, "Saved completion matches the returned report.")
+        check(try object(successfulJSON)["attempt"] as? NSDictionary != attempt as NSDictionary?,
+              "Each manual attempt receives a fresh identifier.")
 
         let blocked = temporary.appendingPathComponent("blocked")
         try Data([0]).write(to: blocked)
@@ -207,8 +239,20 @@ struct ModelLoadProbeChecks {
             prepare: { () async throws -> Int in throw SyntheticFailure() }, load: { _ -> Int? in preconditionFailure("Preparation failed.") })
         check(try decoded(prepareFailure).errorCode == .preparationFailed, "Keep only a constant preparation error code.")
         let functionFailure = try await Probe.execute(report: report(), store: failStore, reading: { Probe.Reading() }, elapsed: { 0 },
-            prepare: { 1 }, load: { _ -> Int? in throw SyntheticFailure() })
+            prepare: { 1 }, load: { _ -> Int? in
+                throw NSError(domain: NSCocoaErrorDomain, code: NSFileReadNoSuchFileError, userInfo: [
+                    NSLocalizedDescriptionKey: "/private/model/path secret prompt",
+                    NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: 2,
+                        userInfo: [NSFilePathErrorKey: "/private/model/path"]),
+                ])
+            })
         check(try decoded(functionFailure).errorCode == .functionLoadFailed, "Keep only a constant function error code.")
+        let nativeErrors = try object(functionFailure)["nativeErrors"] as? [[String: Any]]
+        check(nativeErrors?.count == 2 && nativeErrors?[0]["domain"] as? String == NSCocoaErrorDomain
+              && nativeErrors?[0]["code"] as? Int == NSFileReadNoSuchFileError
+              && nativeErrors?[1]["domain"] as? String == NSPOSIXErrorDomain
+              && nativeErrors?[1]["code"] as? Int == 2,
+              "Preserve the native and underlying error codes without serializing user info.")
         let absentFunction = try await Probe.execute(report: report(), store: failStore, reading: { Probe.Reading() }, elapsed: { 0 },
             prepare: { 1 }, load: { _ -> Int? in nil })
         check(try decoded(absentFunction).errorCode == .functionNotFound, "A missing function is a failed probe.")
@@ -219,6 +263,15 @@ struct ModelLoadProbeChecks {
                   "Failed probes preserve bounded stage-aligned observations.")
             check(!value.contains("secret prompt") && !value.contains("/private/model/path"), "Never serialize native raw errors.")
         }
+        let unsafe = Probe.NativeErrorEvidence.capture(NSError(domain: "/private/model/path", code: Int.max))
+        check(unsafe.first?.domain == "redacted" && unsafe.first?.code == nil,
+              "Unsafe domains are redacted and unrepresentable codes stay unavailable rather than becoming zero.")
+        let longChain = NSError(domain: "NSCocoaErrorDomain", code: 1, userInfo: [NSUnderlyingErrorKey:
+            NSError(domain: "NSCocoaErrorDomain", code: 2, userInfo: [NSUnderlyingErrorKey:
+                NSError(domain: "NSCocoaErrorDomain", code: 3, userInfo: [NSUnderlyingErrorKey:
+                    NSError(domain: "NSCocoaErrorDomain", code: 4)])])])
+        check(Probe.NativeErrorEvidence.capture(longChain).map(\.code) == [1, 2, 3],
+              "Bound the underlying error chain independently of native user info size.")
         if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--fixture-json" {
             let destination = URL(fileURLWithPath: CommandLine.arguments[2])
             check(!manager.fileExists(atPath: destination.path), "Do not overwrite an existing fixture export.")

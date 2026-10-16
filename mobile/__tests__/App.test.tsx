@@ -24,6 +24,8 @@ jest.mock('../specs/NativeAssist', () => ({
     loadBundledModel: jest.fn(),
     unloadModel: jest.fn(),
     runNumericalProbe: jest.fn(),
+    runModelLoadProbe: jest.fn(),
+    getLastModelLoadProbe: jest.fn(),
     generate: jest.fn(),
     cancel: jest.fn(),
     reset: jest.fn(),
@@ -73,6 +75,7 @@ beforeEach(() => {
   );
   native.onProgress.mockReturnValue({ remove: jest.fn() });
   native.runNumericalProbe.mockResolvedValue(JSON.stringify(primitiveReport));
+  native.getLastModelLoadProbe.mockResolvedValue('null');
   native.selectModel.mockResolvedValue(
     '{"phase":"selected","modelName":"gemma"}',
   );
@@ -97,6 +100,48 @@ beforeEach(() => {
       aneExecution: 'unverified',
     });
   });
+});
+
+test('routes the graph diagnostic through its own native method in the full screen', async () => {
+  const report = {
+    schemaVersion: 1,
+    kind: 'assistModelLoadDiagnostic',
+    scope: 'single_function_load_only_no_generation',
+    aneExecution: 'unverified',
+    nativeBuild: '8',
+    osVersion: 'test',
+    modelName: 'gemma4-e2b-32k-group8-rms-fp32io',
+    contextCapacity: 32768,
+    functionName: 'extend_1024_8',
+    stage: 'completed',
+    samples: [
+      { stage: 'before_prepare', elapsedMs: 0, thermalState: 'nominal' },
+      { stage: 'before_function_load', elapsedMs: 10, thermalState: 'nominal' },
+      { stage: 'after_function_load', elapsedMs: 20, thermalState: 'nominal' },
+    ],
+    measurementMethods: { scope: 'Synthetic native boundary for screen routing' },
+  };
+  native.runModelLoadProbe.mockImplementation(async () => {
+    native.getLastModelLoadProbe.mockResolvedValue(JSON.stringify(report));
+    return JSON.stringify(report);
+  });
+  const user = userEvent.setup();
+  await renderAsync(<AssistantScreen />);
+  expect(screen.getByRole('button', { name: 'Tester ce graphe' })).toBeDisabled();
+  await user.press(
+    screen.getByRole('button', { name: 'Choisir un dossier exporté' }),
+  );
+  await user.press(
+    await screen.findByRole('button', { name: 'Tester ce graphe', disabled: false }),
+  );
+  expect(await screen.findByText(/Ce graphe a été chargé/)).toBeOnTheScreen();
+  expect(native.runModelLoadProbe).toHaveBeenCalledTimes(1);
+  expect(native.runModelLoadProbe).toHaveBeenCalledWith('extend_1024_8');
+  expect(native.loadModel).not.toHaveBeenCalled();
+  expect(native.loadBundledModel).not.toHaveBeenCalled();
+  expect(native.runNumericalProbe).not.toHaveBeenCalled();
+  expect(native.generate).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Envoyer' })).toBeDisabled();
 });
 
 test('runs and shares a separate primitive diagnostic without enabling Gemma generation', async () => {
@@ -335,6 +380,7 @@ async function load() {
 
 test('requires local model load, then sends remaining-context budget', async () => {
   const user = await load();
+  expect(native.runModelLoadProbe).not.toHaveBeenCalled();
   await user.type(screen.getByLabelText('Message'), 'Bonjour');
   await user.press(screen.getByRole('button', { name: 'Envoyer' }));
   expect(await screen.findByText('Bonjour.')).toBeOnTheScreen();

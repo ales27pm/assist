@@ -151,3 +151,53 @@ test('shows a saved native loading error as an error result without retrying', a
   ).toBeOnTheScreen();
   expect(native.runModelLoadProbe).toHaveBeenCalledTimes(1);
 });
+
+test('restores and shares the model, attempt identity and bounded native causes', async () => {
+  const failure = {
+    ...saved,
+    schemaVersion: 2,
+    nativeBuild: '9',
+    stage: 'failed',
+    errorCode: 'E_FUNCTION_LOAD_FAILED',
+    attempt: {
+      id: '9cde6700-1e52-4a3c-9b84-8a677eb4124a',
+      startedAtUTC: '2026-10-16T13:00:00.123Z',
+      processIdentifier: 20501,
+      entryPoint: 'single_function_load_probe',
+    },
+    nativeErrors: [
+      { domain: 'NSCocoaErrorDomain', code: 260, swiftType: 'Foundation.NSError' },
+      { domain: 'NSPOSIXErrorDomain', code: 2, swiftType: 'Foundation.NSError' },
+    ],
+    samples: [
+      ...saved.samples,
+      { stage: 'failed', elapsedMs: 80, thermalState: 'nominal' },
+    ],
+  };
+  native.getLastModelLoadProbe.mockResolvedValue(JSON.stringify(failure));
+  const share = jest
+    .spyOn(Share, 'share')
+    .mockResolvedValue({ action: Share.sharedAction, activityType: undefined });
+  const user = userEvent.setup();
+  await renderAsync(
+    <ModelLoadProbePanel
+      selected={false}
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  expect(
+    await screen.findByText(/Modèle : gemma4-e2b-32k-group8-rms-fp32io/),
+  ).toBeOnTheScreen();
+  expect(screen.getByText(/Essai du 2026-10-16T13:00:00.123Z/)).toBeOnTheScreen();
+  expect(
+    screen.getByText('NSCocoaErrorDomain (260) → NSPOSIXErrorDomain (2)'),
+  ).toBeOnTheScreen();
+  await user.press(
+    screen.getByRole('button', { name: 'Partager le diagnostic de chargement' }),
+  );
+  expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual(failure);
+  expect(native.runModelLoadProbe).not.toHaveBeenCalled();
+  share.mockRestore();
+});
