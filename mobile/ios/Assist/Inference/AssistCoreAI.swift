@@ -111,6 +111,35 @@ final class AssistCoreAI: NSObject {
         }
     }
 
+    @objc(repairNumericalProbe:)
+    func repairNumericalProbe(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        let coordinator = coordinator
+        Task { @concurrent in
+            do { completion(try await coordinator.repairNumericalProbe(), nil) }
+            catch { completion(nil, error as NSError) }
+        }
+    }
+
+    @objc(repairModelLoadProbe:functionName:completion:)
+    func repairModelLoadProbe(
+        _ path: String, functionName: String,
+        completion: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        let coordinator = coordinator
+        Task { @concurrent in
+            do { completion(try await coordinator.repairModelLoadProbe(path: path, functionName: functionName), nil) }
+            catch { completion(nil, error as NSError) }
+        }
+    }
+
+    @objc(lastSpecializationRepair:)
+    func lastSpecializationRepair(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        Task { @concurrent in
+            do { completion(try AssistSpecializationRepair.lastReportJSON(), nil) }
+            catch { completion(nil, error as NSError) }
+        }
+    }
+
     @objc(lastModelAssetProbe:)
     func lastModelAssetProbe(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
         Task { @concurrent in
@@ -560,6 +589,97 @@ private actor AssistInferenceCoordinator {
             await monitor.transition(phase: phase.rawValue, code: "LOAD_PROBE_FAILED", severity: "warning")
             throw error
         }
+    }
+
+    /// A repair is a separate manual operation, never a retry hidden inside loading.
+    /// The busy latch excludes all engine/probe mutations through validation, deletion and qualification.
+    func repairNumericalProbe() async throws -> String {
+        guard !busy else { throw AssistInferenceError.busy }
+        guard engine == nil else {
+            throw AssistInferenceError.invalid("Décharge le modèle avant de réparer sa préparation.")
+        }
+        guard #available(iOS 27.2, *) else {
+            throw AssistInferenceError.invalid("Cette réparation nécessite iOS 27.2 ou une version ultérieure.")
+        }
+        operationInFlight = true
+        defer { operationInFlight = false }
+        await monitor.transition(phase: "diagnosing", code: "SPECIALIZATION_REPAIR_STARTED")
+        await monitor.beginDiagnostic(total: 48)
+        do {
+            let monitor = monitor
+            let result = try await Self.repairNumericalSpecialization { variant, mode, function, passed in
+                await monitor.diagnosticCase(variant: variant, mode: mode, function: function, passed: passed)
+            }
+            await monitor.endDiagnostic(phase: phase.rawValue)
+            await monitor.transition(phase: phase.rawValue, code: "SPECIALIZATION_REPAIR_COMPLETED")
+            return result
+        } catch {
+            await monitor.transition(phase: phase.rawValue, code: "DIAGNOSTIC_FAILED", severity: "warning")
+            await monitor.transition(phase: phase.rawValue, code: "SPECIALIZATION_REPAIR_FAILED", severity: "warning")
+            throw error
+        }
+    }
+
+    func repairModelLoadProbe(path: String, functionName: String) async throws -> String {
+        guard !busy else { throw AssistInferenceError.busy }
+        guard engine == nil else {
+            throw AssistInferenceError.invalid("Décharge le modèle avant de réparer sa préparation.")
+        }
+        guard #available(iOS 27.2, *) else {
+            throw AssistInferenceError.invalid("Cette réparation nécessite iOS 27.2 ou une version ultérieure.")
+        }
+        // Keep the first repair bounded to the function whose failure was captured.
+        guard functionName == "extend_1024_8" else { throw AssistModelLoadProbe.Failure.invalidRequest }
+        operationInFlight = true
+        defer { operationInFlight = false }
+        await monitor.transition(phase: "diagnosing", code: "SPECIALIZATION_REPAIR_STARTED")
+        do {
+            let result = try await Self.repairSelectedSpecialization(path: path, functionName: functionName)
+            await monitor.transition(phase: phase.rawValue, code: "SPECIALIZATION_REPAIR_COMPLETED")
+            return result
+        } catch {
+            await monitor.transition(phase: phase.rawValue, code: "SPECIALIZATION_REPAIR_FAILED", severity: "warning")
+            throw error
+        }
+    }
+
+    @concurrent
+    private static func repairNumericalSpecialization(
+        onCase: @escaping @Sendable (String, String, String, Bool) async -> Void
+    ) async throws -> String {
+        return try await AssistSpecializationRepair.run(
+            target: .bundledF16,
+            nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            verifySource: { try AssistNumericalProbe.assetURLForSpecializationRepair() },
+            invalidate: { assetURL in
+                try AIModelCache.default.deleteEntry(
+                    for: assetURL, options: SpecializationOptions(preferredComputeUnitKind: .neuralEngine))
+            }, qualify: { try await AssistNumericalProbe.run(onCase: onCase) }
+        )
+    }
+
+    @concurrent
+    private static func repairSelectedSpecialization(path: String, functionName: String) async throws -> String {
+        return try await AssistSpecializationRepair.run(
+            target: .selectedGemmaF16,
+            nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            verifySource: {
+                let initial = AssistModelAssetProbe.Report(
+                    nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+                    osVersion: ProcessInfo.processInfo.operatingSystemVersionString)
+                let result = try AssistModelAssetProbe.execute(
+                    path: path, report: initial, store: AssistModelAssetProbe.Store.applicationSupport())
+                let verified = try JSONDecoder().decode(AssistModelAssetProbe.Report.self, from: Data(result.utf8))
+                guard verified.stage == .completed else { throw AssistModelLoadProbe.Failure.invalidBundle }
+                return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+                    .appendingPathComponent("gemma4-e2b-32k-group8-rmscomposite.aimodel", isDirectory: true)
+            }, invalidate: { assetURL in
+                try AIModelCache.default.deleteEntry(
+                    for: assetURL, options: SpecializationOptions(preferredComputeUnitKind: .neuralEngine))
+            }, qualify: { try await AssistModelLoadProbe.run(path: path, functionName: functionName) }
+        )
     }
 
     func runModelAssetProbe(path: String) async throws -> String {

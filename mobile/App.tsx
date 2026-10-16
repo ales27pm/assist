@@ -15,6 +15,7 @@ import NativeAssist from './specs/NativeAssist';
 import { MonitoringPanel } from './src/MonitoringPanel';
 import { ModelLoadProbePanel } from './src/ModelLoadProbePanel';
 import { ModelAssetProbePanel } from './src/ModelAssetProbePanel';
+import { SpecializationRepairPanel } from './src/SpecializationRepairPanel';
 import { parseMonitoringSnapshot } from './src/monitoring';
 import {
   EngineState,
@@ -326,6 +327,12 @@ export function AssistantScreen() {
           perform={perform}
         />
         <ModelLoadProbePanel
+          selected={selected}
+          busy={busy}
+          modelLoaded={ready}
+          perform={perform}
+        />
+        <SpecializationRepairPanel
           selected={selected}
           busy={busy}
           modelLoaded={ready}

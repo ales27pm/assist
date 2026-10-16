@@ -77,6 +77,20 @@ enum AssistNumericalProbe {
         }
     }
 
+    /// Identity-only preflight for an explicit, single-entry cache repair.
+    /// This creates no AIModel and leaves the CPU and F32 specializations alone.
+    static func assetURLForSpecializationRepair() throws -> URL {
+        guard let resources = Bundle.main.resourceURL else {
+            throw ProbeError.invalid("Ressources du contrôle numérique absentes.")
+        }
+        let asset = try prepareAsset(.f16Boundary, resources: resources.resolvingSymlinksInPath().standardizedFileURL)
+        guard asset.identity.fixtureAssetSHA256 == "46932657bf6ea3e4a3e99abba91b377b1ddbfb731a8553a4d5728fc414f54c8c",
+              asset.identity.manifestSHA256 == "134b093a1c2b189c37458fa3776f4193feacf4c6d251e52dc69d5cee10be3c29" else {
+            throw ProbeError.invalid("La réparation nécessite la référence F16 intégrée vérifiée.")
+        }
+        return asset.url
+    }
+
     private struct CaseResult: Encodable, Sendable {
         let variant: String
         let id: String

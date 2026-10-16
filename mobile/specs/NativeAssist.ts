@@ -17,6 +17,9 @@ export interface Spec extends TurboModule {
   reset(): Promise<string>;
   unloadModel(): Promise<string>;
   runNumericalProbe(): Promise<string>;
+  repairNumericalProbe(): Promise<string>;
+  repairModelLoadProbe(functionName: string): Promise<string>;
+  getLastSpecializationRepair(): Promise<string>;
   runModelLoadProbe(functionName: string): Promise<string>;
   getLastModelLoadProbe(): Promise<string>;
   runModelAssetProbe(): Promise<string>;

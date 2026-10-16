@@ -343,3 +343,8 @@ Le contexte 32K, group8, la préférence Neural Engine et les exports restent
 inchangés. Aucune purge ou modification manuelle des caches n'a été effectuée ;
 Core AI peut toujours les utiliser pendant les contrôles. Aucune nouvelle
 reprise identique n'est demandée.
+
+Une [reconstruction ciblée de la préparation](specialization-repair.md) est
+ajoutée pour le build 11. Cette nouvelle action manuelle utilise l'API publique
+de suppression d'une seule entrée, puis le contrôle d'origine. Le diagnostic
+de chargement habituel reste distinct et conserve son comportement décrit ici.
