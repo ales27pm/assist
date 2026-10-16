@@ -3,8 +3,8 @@
 module.exports = {
   name: 'Assist',
   slug: 'assist',
-  owner: '27pm',
+  owner: 'ales27',
   version: '1.0.0',
   ios: {bundleIdentifier: 'org.27pm.assist'},
-  extra: {eas: {projectId: 'c1a5f806-ff7a-4f65-addd-c5063d9bd31b'}},
+  extra: {eas: {projectId: '0185078d-6c84-4215-8883-4160acf12d22'}},
 };

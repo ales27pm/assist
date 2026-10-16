@@ -8,9 +8,11 @@ imports privés et conversations de l’iPhone ne sont jamais récupérés ni en
 
 ## Projet et image
 
-- Projet : [@27pm/assist](https://expo.dev/accounts/27pm/projects/assist).
+- Projet de livraison : [@ales27/assist](https://expo.dev/accounts/ales27/projects/assist).
+  Les liens historiques sous `@27pm/assist` restent des preuves des essais antérieurs.
 - Identifiant iOS inchangé : `org.27pm.assist`, séparé de monGARS.
-- EAS CLI épinglé : `24.14.0`.
+- EAS CLI exécuté pour la livraison : `24.14.0`; versions acceptées :
+  `>=24.14.0 <26.0.0`, pour permettre aussi la préparation GitHub avec EAS CLI 25.
 - Image : `macos-tahoe-26.6-xcode-27.1` (Xcode 27.1 RC).
 - Le minimum iOS de l’app est **27.1** ; Gemma reste bloqué avant **27.2**.
 
@@ -132,3 +134,15 @@ npx --yes eas-cli@24.14.0 build:inspect --platform ios --profile preview \
 
 Ne pas faire passer une compilation interrompue, refusée ou en attente pour une
 build signée : conserver l’URL, l’identifiant et le statut final EAS.
+
+## Compilation depuis GitHub
+
+Dans le projet EAS payé, choisir la branche `codex/local-voice-build-13`,
+le sous-dossier de base `mobile`, le profil `testflight` et l'environnement
+`production`. Le profil de soumission est aussi `testflight`. Le bundle iOS et
+la fiche App Store Connect demeurent ceux d'Assist.
+
+L'essai GitHub du 16 octobre sur `main` au commit `43641a4` visait l'ancienne
+version 11 et a échoué pendant la préparation : le service utilisait EAS CLI
+25.1.1 alors que `eas.json` exigeait exactement 24.14.0. La plage de compatibilité
+ci-dessus corrige cette frontière sans modifier le code natif du candidat 13.
