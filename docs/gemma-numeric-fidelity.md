@@ -476,6 +476,42 @@ La préférence ne prouve pas l’usage ANE. Ces petits contrôles doivent
 orienter l’enquête avant une autre modification du modèle entier ; même
 réussis, ils ne qualifient pas Gemma. Son contexte reste 32K.
 
+Le rapport physique du build **1.0.0 (5)**, sous iOS 27.2 (24B5110a),
+correspond aux empreintes de l’asset et du manifeste ci-dessus. Les
+**12/12 cas CPU seuls** respectent le seuil d’un ULP ; dix ont un maximum
+de zéro et les deux cas de largeur 1 536 atteignent un ULP. Cela décrit les
+valeurs numériques, pas une identité générale des octets : les deux signes
+de zéro sont équivalents dans cette mesure.
+
+Avec la préférence Neural Engine, les **12/12 cas échouent** : 61 544 des
+278 528 éléments dépassent un ULP, avec des maxima de **12 ULP** pour les
+échelles non uniformes et **10 ULP** pour les échelles de un. Les 24 cas
+terminent sans erreur ni valeur non finie. Pour une largeur et une échelle
+données, les comptes d’échecs sont exactement proportionnels au nombre de
+têtes ; aucune différence de valeurs par tête n’est déduite de ces seuls
+comptes. Ce contrôle isole un écart du parcours spécialisé sur une primitive,
+sans prouver le placement ANE, l’opération interne responsable ou sa
+responsabilité dans les cubes de Gemma. L’arrondi d’epsilon et la précision
+de la frontière du composite restent des hypothèses à départager.
+
+Un contrôle CPU des variantes d’arrondi ne reproduit aucune empreinte native
+du parcours avec préférence Neural Engine : epsilon FP16 seul ne suffit pas
+à expliquer les comptes d’échecs. Le build **6** compare donc les fixtures
+d’origine avec un second asset synthétique, dont la frontière du composite
+RMSNorm est **FP32 en entrée et sortie**. Les wrappers publics restent FP16,
+avec un cast avant et après le composite ; les entrées, échelles et références
+sont inchangées. Les six corps sont vérifiés sans valeur FP16 interne et les
+douze contrôles CPU restent à au plus un ULP. Le nouvel asset a le SHA-256
+`93aaa58c491d25bd924a5131a83c37e212eb08a62915f156f4782500e28ab213`.
+
+Le même bouton lance les deux assets dans les deux modes, soit **48 cas**.
+Le rapport de schéma 2 distingue les variantes, leurs empreintes, les écarts
+par ligne et quatre exemples fautifs au plus par cas. Les bits de l’entrée
+NDArray sont aussi relus avant exécution. Les 32 ressources et le générateur
+d’origine sont conservés sans modification ; le modèle Gemma et son moteur
+ne changent pas. L’effet natif de cette frontière FP32 reste à mesurer avant
+de modifier ou reconvertir le modèle complet.
+
 ## Intégrité du paquet transféré
 
 Le paquet group8 de référence comporte neuf fichiers, soit

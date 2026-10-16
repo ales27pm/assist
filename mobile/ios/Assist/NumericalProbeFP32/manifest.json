@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "kind": "assistRMSNormFixtures",
+  "asset": "RMSNormProbe.aimodel",
+  "assetSHA256": "93aaa58c491d25bd924a5131a83c37e212eb08a62915f156f4782500e28ab213",
+  "fixtures": [
+    {
+      "id": "rms_q8_256_8_weighted",
+      "function": "rms_q8_256_8_weighted",
+      "inputFile": "rms_q8_256_8_weighted.input.f16",
+      "inputSHA256": "01aee86228abd44e4c6254c94f2051cbe5f85f843997a995f6da9f8638a30f51",
+      "expectedFile": "rms_q8_256_8_weighted.expected.f16",
+      "expectedSHA256": "056ae0014b6344f7abdcafc1442af038ea67e0550c1ea4ae967545d0d0af2d25",
+      "shape": [
+        1,
+        8,
+        8,
+        256
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_256_8_ones",
+      "function": "rms_q8_256_8_ones",
+      "inputFile": "rms_q8_256_8_ones.input.f16",
+      "inputSHA256": "01aee86228abd44e4c6254c94f2051cbe5f85f843997a995f6da9f8638a30f51",
+      "expectedFile": "rms_q8_256_8_ones.expected.f16",
+      "expectedSHA256": "f11d6ee08eedc7a2582a8cd01978992de4780163426ea1db3587e96ee6377164",
+      "shape": [
+        1,
+        8,
+        8,
+        256
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_256_1_weighted",
+      "function": "rms_q8_256_1_weighted",
+      "inputFile": "rms_q8_256_1_weighted.input.f16",
+      "inputSHA256": "0b58f58b2db9a495134d1a3ba4523b80deff7e29028abc4497423d9969c58c9b",
+      "expectedFile": "rms_q8_256_1_weighted.expected.f16",
+      "expectedSHA256": "1416da53f24b22280eccf4da6a7789352a828116af6d75c3c406cbac46f8f90e",
+      "shape": [
+        1,
+        8,
+        1,
+        256
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_256_1_ones",
+      "function": "rms_q8_256_1_ones",
+      "inputFile": "rms_q8_256_1_ones.input.f16",
+      "inputSHA256": "0b58f58b2db9a495134d1a3ba4523b80deff7e29028abc4497423d9969c58c9b",
+      "expectedFile": "rms_q8_256_1_ones.expected.f16",
+      "expectedSHA256": "250c5c902631bb88244e496e5d257711dcf4289afa8495660b82ebcf65637193",
+      "shape": [
+        1,
+        8,
+        1,
+        256
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_512_8_weighted",
+      "function": "rms_q8_512_8_weighted",
+      "inputFile": "rms_q8_512_8_weighted.input.f16",
+      "inputSHA256": "db33ed2dc0f600f01089952e7849071f43e209ae08453a478c8fa34d50be804e",
+      "expectedFile": "rms_q8_512_8_weighted.expected.f16",
+      "expectedSHA256": "7f5c46047dc0f7ba4872c28ddda21982a9ffafb997364e0596a0ff3db01acf12",
+      "shape": [
+        1,
+        8,
+        8,
+        512
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_512_8_ones",
+      "function": "rms_q8_512_8_ones",
+      "inputFile": "rms_q8_512_8_ones.input.f16",
+      "inputSHA256": "db33ed2dc0f600f01089952e7849071f43e209ae08453a478c8fa34d50be804e",
+      "expectedFile": "rms_q8_512_8_ones.expected.f16",
+      "expectedSHA256": "8ae007eb33c3a36f94b838cfcf8042c4389f24a0553204b31ca5ad5e802791d8",
+      "shape": [
+        1,
+        8,
+        8,
+        512
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_512_1_weighted",
+      "function": "rms_q8_512_1_weighted",
+      "inputFile": "rms_q8_512_1_weighted.input.f16",
+      "inputSHA256": "1e48147f7911c17bb8825cf3a952d150e6510af60ca7b00098da7b37f8318d82",
+      "expectedFile": "rms_q8_512_1_weighted.expected.f16",
+      "expectedSHA256": "32e7660a343d2dcecb77e0bc01e6e56331060cf14a3b886f5e0e63018a80b066",
+      "shape": [
+        1,
+        8,
+        1,
+        512
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_512_1_ones",
+      "function": "rms_q8_512_1_ones",
+      "inputFile": "rms_q8_512_1_ones.input.f16",
+      "inputSHA256": "1e48147f7911c17bb8825cf3a952d150e6510af60ca7b00098da7b37f8318d82",
+      "expectedFile": "rms_q8_512_1_ones.expected.f16",
+      "expectedSHA256": "cbdb4f8d5500a081bcaa49544e897be0369648cb1192f921ba9df2bb24b74e23",
+      "shape": [
+        1,
+        8,
+        1,
+        512
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_1536_1_weighted",
+      "function": "rms_q8_1536_1_weighted",
+      "inputFile": "rms_q8_1536_1_weighted.input.f16",
+      "inputSHA256": "137b28aefed99768fae89bf4c061cde6d5927808247e49978485ff0e8645a9a4",
+      "expectedFile": "rms_q8_1536_1_weighted.expected.f16",
+      "expectedSHA256": "da461fdb6d200826f6978b0205e027e92446d5e2db77c6ac80b632e047b99bb3",
+      "shape": [
+        1,
+        8,
+        1,
+        1536
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_1536_1_ones",
+      "function": "rms_q8_1536_1_ones",
+      "inputFile": "rms_q8_1536_1_ones.input.f16",
+      "inputSHA256": "137b28aefed99768fae89bf4c061cde6d5927808247e49978485ff0e8645a9a4",
+      "expectedFile": "rms_q8_1536_1_ones.expected.f16",
+      "expectedSHA256": "48169804728daa13dbb2a66fe7bb90df84f0ffcb0cb8383a73061f705b0dc811",
+      "shape": [
+        1,
+        8,
+        1,
+        1536
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_256_35_weighted",
+      "function": "rms_q8_256_35_weighted",
+      "inputFile": "rms_q8_256_35_weighted.input.f16",
+      "inputSHA256": "1c8ba6af54640d289eda503152a58f0494c7f46d1a88076c1e4336d2e16acf88",
+      "expectedFile": "rms_q8_256_35_weighted.expected.f16",
+      "expectedSHA256": "6c2d7f0765dc8b7f2d2a9c922d3a8d79fa015b21a08e2971e5b1252c8089111d",
+      "shape": [
+        1,
+        8,
+        35,
+        256
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    },
+    {
+      "id": "rms_q8_256_35_ones",
+      "function": "rms_q8_256_35_ones",
+      "inputFile": "rms_q8_256_35_ones.input.f16",
+      "inputSHA256": "1c8ba6af54640d289eda503152a58f0494c7f46d1a88076c1e4336d2e16acf88",
+      "expectedFile": "rms_q8_256_35_ones.expected.f16",
+      "expectedSHA256": "f86c7687c54bea8fc4a38aef5e29d964543ffbd29f9c9b5228d39e2314571d17",
+      "shape": [
+        1,
+        8,
+        35,
+        256
+      ],
+      "reference": "float64_rmsnorm_then_float16",
+      "maxULP": 1
+    }
+  ]
+}

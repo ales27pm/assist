@@ -26,6 +26,33 @@ test('primitive report preserves failures and extra evidence without qualifying 
     expect(() => parsePrimitiveReport(JSON.stringify(invalid))).toThrow();
   }
 });
+test('comparison report preserves both asset identities and the failing baseline', () => {
+  const assets = ['f16_boundary', 'f32_boundary'].map((variant, index) => ({
+    variant,
+    fixtureAssetSHA256: String(index + 1).repeat(64),
+    manifestSHA256: String(index + 3).repeat(64),
+  }));
+  const report = {
+    schemaVersion: 2,
+    kind: 'assistPrimitiveQualification',
+    scope: 'primitive_only_gemma_unqualified',
+    aneExecution: 'unverified',
+    assets,
+    summary: { cases: 48, failed: 12, nonfinite: 0, maxULP: 12 },
+    results: [{ variant: 'f16_boundary', passed: false, maxULP: 12 }],
+  };
+  expect(parsePrimitiveReport(JSON.stringify(report))).toEqual(report);
+  for (const invalid of [
+    { ...report, assets: undefined },
+    { ...report, assets: [assets[0], assets[0]] },
+    { ...report, assets: [assets[0], { ...assets[1], variant: 'unknown' }] },
+    { ...report, assets: [assets[0], { ...assets[1], fixtureAssetSHA256: 'bad' }] },
+    { ...report, summary: { ...report.summary, cases: 24 } },
+    { ...report, summary: { ...report.summary, failed: 49 } },
+  ]) {
+    expect(() => parsePrimitiveReport(JSON.stringify(invalid))).toThrow();
+  }
+});
 test('no artificial output cap', () => {
   expect(outputBudget('')).toBeNull();
   expect(outputBudget(' ')).toBeNull();

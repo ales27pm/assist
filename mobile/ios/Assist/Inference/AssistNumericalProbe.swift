@@ -38,6 +38,31 @@ enum AssistNumericalProbe {
         let expected: [UInt16]
     }
 
+    private enum Variant: String, CaseIterable, Sendable {
+        case f16Boundary = "f16_boundary"
+        case f32Boundary = "f32_boundary"
+
+        var folder: String {
+            switch self {
+            case .f16Boundary: return "NumericalProbe"
+            case .f32Boundary: return "NumericalProbeFP32"
+            }
+        }
+    }
+
+    private struct AssetIdentity: Encodable, Sendable {
+        let variant: String
+        let fixtureAssetSHA256: String
+        let manifestSHA256: String
+    }
+
+    private struct PreparedAsset: Sendable {
+        let variant: Variant
+        let identity: AssetIdentity
+        let url: URL
+        let fixtures: [PreparedFixture]
+    }
+
     private enum Mode: String, Sendable {
         case neuralEnginePreferred = "neural_engine_preferred"
         case cpuOnly = "cpu_only"
@@ -53,6 +78,7 @@ enum AssistNumericalProbe {
     }
 
     private struct CaseResult: Encodable, Sendable {
+        let variant: String
         let id: String
         let function: String
         let mode: String
@@ -67,6 +93,26 @@ enum AssistNumericalProbe {
         let expectedSHA256: String
         let elapsedMs: Double
         let error: String?
+        let rows: [RowResult]?
+        let worstExamples: [Deviation]?
+    }
+
+    private struct RowResult: Encodable, Sendable {
+        let query: Int
+        let elements: Int
+        var failedElements = 0
+        var nonfinite = 0
+        var maxULP: Int?
+        var bitwiseDifferences = 0
+        var signedZeroDifferences = 0
+    }
+
+    private struct Deviation: Encodable, Sendable {
+        let logicalIndex: Int
+        let inputBits: UInt16
+        let expectedBits: UInt16
+        let actualBits: UInt16
+        let ulp: Int
     }
 
     private struct Summary: Encodable, Sendable {
@@ -91,7 +137,7 @@ enum AssistNumericalProbe {
     }
 
     private struct Report: Encodable, Sendable {
-        let schemaVersion = 1
+        let schemaVersion = 2
         let kind = "assistPrimitiveQualification"
         let scope = "primitive_only_gemma_unqualified"
         let aneExecution = "unverified"
@@ -99,6 +145,7 @@ enum AssistNumericalProbe {
         let osVersion: String
         let fixtureAssetSHA256: String
         let manifestSHA256: String
+        let assets: [AssetIdentity]
         let results: [CaseResult]
         let summary: Summary
     }
@@ -120,9 +167,44 @@ enum AssistNumericalProbe {
         guard let resources = Bundle.main.resourceURL else {
             throw ProbeError.invalid("Ressources du contrôle numérique absentes.")
         }
-        // Resolve system bundle-path aliases before rejecting symlinks inside our resource folder.
+        // Resolve system bundle-path aliases before rejecting symlinks inside our resource folders.
         let root = resources.resolvingSymlinksInPath().standardizedFileURL
-            .appendingPathComponent("NumericalProbe", isDirectory: true)
+        let assets = try Variant.allCases.map { try prepareAsset($0, resources: root) }
+        guard assets[0].identity.fixtureAssetSHA256 != assets[1].identity.fixtureAssetSHA256,
+              zip(assets[0].fixtures, assets[1].fixtures).allSatisfy({ left, right in
+                  left.fixture.function == right.fixture.function && left.fixture.shape == right.fixture.shape
+                      && left.fixture.inputSHA256 == right.fixture.inputSHA256
+                      && left.fixture.expectedSHA256 == right.fixture.expectedSHA256
+              }) else {
+            throw ProbeError.invalid("Les deux variantes doivent comparer les mêmes données et références.")
+        }
+        var results: [CaseResult] = []
+        for asset in assets {
+            for mode in [Mode.neuralEnginePreferred, .cpuOnly] {
+                try Task.checkCancellation()
+                // Each variant/mode releases its model before the next one is loaded.
+                results += try await runMode(mode, asset: asset)
+            }
+        }
+        let baseline = assets[0].identity
+        let report = Report(
+            nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            fixtureAssetSHA256: baseline.fixtureAssetSHA256, manifestSHA256: baseline.manifestSHA256,
+            assets: assets.map(\.identity), results: results,
+            summary: Summary(
+                cases: results.count, failed: results.filter { !$0.passed }.count,
+                nonfinite: results.reduce(0) { $0 + $1.nonfinite },
+                maxULP: results.compactMap(\.maxULP).max()
+            )
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return String(decoding: try encoder.encode(report), as: UTF8.self)
+    }
+
+    private static func prepareAsset(_ variant: Variant, resources: URL) throws -> PreparedAsset {
+        let root = resources.appendingPathComponent(variant.folder, isDirectory: true)
         let manifestURL = try resource("manifest.json", under: root, directory: false)
         let manifestData = try boundedData(manifestURL, maximumBytes: 64 * 1024)
         let manifest = try JSONDecoder().decode(Manifest.self, from: manifestData)
@@ -139,25 +221,12 @@ enum AssistNumericalProbe {
             throw ProbeError.invalid("main.hash du contrôle numérique invalide.")
         }
 
-        var results: [CaseResult] = []
-        for mode in [Mode.neuralEnginePreferred, .cpuOnly] {
-            try Task.checkCancellation()
-            // Each mode owns its AIModel/functions locally and releases them before the next mode.
-            results += try await runMode(mode, assetURL: assetURL, fixtures: prepared)
-        }
-        let report = Report(
-            nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
-            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
-            fixtureAssetSHA256: bytecodeHash, manifestSHA256: digest(manifestData), results: results,
-            summary: Summary(
-                cases: results.count, failed: results.filter { !$0.passed }.count,
-                nonfinite: results.reduce(0) { $0 + $1.nonfinite },
-                maxULP: results.compactMap(\.maxULP).max()
-            )
+        return PreparedAsset(
+            variant: variant,
+            identity: AssetIdentity(variant: variant.rawValue, fixtureAssetSHA256: bytecodeHash,
+                                    manifestSHA256: digest(manifestData)),
+            url: assetURL, fixtures: prepared
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return String(decoding: try encoder.encode(report), as: UTF8.self)
     }
 
     private static func prepare(_ manifest: Manifest, root: URL) throws -> [PreparedFixture] {
@@ -199,13 +268,12 @@ enum AssistNumericalProbe {
         }
     }
 
-    private static func runMode(
-        _ mode: Mode, assetURL: URL, fixtures: [PreparedFixture]
-    ) async throws -> [CaseResult] {
+    private static func runMode(_ mode: Mode, asset: PreparedAsset) async throws -> [CaseResult] {
+        let fixtures = asset.fixtures
         let loadStarted = ContinuousClock.now
         let model: AIModel
         do {
-            model = try await AIModel(contentsOf: assetURL, options: mode.options)
+            model = try await AIModel(contentsOf: asset.url, options: mode.options)
             let names = model.functionNames
             guard names.count == 12, Set(names) == Set(fixtures.map { $0.fixture.function }) else {
                 throw ProbeError.invalid("Fonctions publiques de l’asset numérique inattendues.")
@@ -213,25 +281,29 @@ enum AssistNumericalProbe {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            return fixtures.map { failure($0.fixture, mode: mode, error: error, elapsedMs: elapsed(loadStarted)) }
+            return fixtures.map {
+                failure($0.fixture, variant: asset.variant, mode: mode, error: error, elapsedMs: elapsed(loadStarted))
+            }
         }
         var results: [CaseResult] = []
         for prepared in fixtures {
             try Task.checkCancellation()
             let started = ContinuousClock.now
             do {
-                results.append(try await runFixture(prepared, mode: mode, model: model, started: started))
+                results.append(try await runFixture(prepared, variant: asset.variant, mode: mode,
+                                                    model: model, started: started))
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                results.append(failure(prepared.fixture, mode: mode, error: error, elapsedMs: elapsed(started)))
+                results.append(failure(prepared.fixture, variant: asset.variant, mode: mode,
+                                       error: error, elapsedMs: elapsed(started)))
             }
         }
         return results
     }
 
     private static func runFixture(
-        _ prepared: PreparedFixture, mode: Mode, model: AIModel, started: ContinuousClock.Instant
+        _ prepared: PreparedFixture, variant: Variant, mode: Mode, model: AIModel, started: ContinuousClock.Instant
     ) async throws -> CaseResult {
         let fixture = prepared.fixture
         guard let function = try model.loadFunction(named: fixture.function) else {
@@ -251,6 +323,9 @@ enum AssistNumericalProbe {
         }
         var input = NDArray(descriptor: inputDescriptor)
         try fill(&input, bits: prepared.input, shape: fixture.shape)
+        guard try read(input, shape: fixture.shape) == prepared.input else {
+            throw ProbeError.invalid("Les bits de l’entrée numérique ont changé avant l’exécution.")
+        }
         // This documented NDArray dictionary overload also constructs the InferenceValue input views.
         var outputs = try await function.run(inputs: ["input": input], outputViews: InferenceFunction.MutableViews())
         try Task.checkCancellation()
@@ -262,21 +337,43 @@ enum AssistNumericalProbe {
         var failures = 0
         var nonfinite = 0
         var maximum: Int?
-        for (observed, expected) in zip(actual, prepared.expected) {
+        let rowElements = fixture.shape[2] * fixture.shape[3]
+        var rows = (0..<fixture.shape[1]).map { RowResult(query: $0, elements: rowElements) }
+        var worst: [Deviation] = []
+        for (index, pair) in zip(actual, prepared.expected).enumerated() {
+            let (observed, expected) = pair
+            let row = index / rowElements
+            if observed != expected {
+                rows[row].bitwiseDifferences += 1
+                if observed & 0x7fff == 0 && expected & 0x7fff == 0 { rows[row].signedZeroDifferences += 1 }
+            }
             guard finite(observed) else {
                 nonfinite += 1
                 failures += 1
+                rows[row].nonfinite += 1
+                rows[row].failedElements += 1
                 continue
             }
             let distance = ulpDistance(observed, expected)
             maximum = max(maximum ?? 0, distance)
-            if distance > fixture.maxULP { failures += 1 }
+            rows[row].maxULP = max(rows[row].maxULP ?? 0, distance)
+            if distance > fixture.maxULP {
+                failures += 1
+                rows[row].failedElements += 1
+                if worst.count < 4 || distance > worst.last!.ulp {
+                    worst.append(Deviation(logicalIndex: index, inputBits: prepared.input[index],
+                                           expectedBits: expected, actualBits: observed, ulp: distance))
+                    worst.sort { $0.ulp == $1.ulp ? $0.logicalIndex < $1.logicalIndex : $0.ulp > $1.ulp }
+                    if worst.count > 4 { worst.removeLast() }
+                }
+            }
         }
         return CaseResult(
-            id: fixture.id, function: fixture.function, mode: mode.rawValue, shape: fixture.shape,
+            variant: variant.rawValue, id: fixture.id, function: fixture.function, mode: mode.rawValue, shape: fixture.shape,
             elements: actual.count, passed: failures == 0, failedElements: failures, nonfinite: nonfinite,
             maxULP: maximum, actualSHA256: digest(halfData(actual)), inputSHA256: fixture.inputSHA256,
-            expectedSHA256: fixture.expectedSHA256, elapsedMs: elapsed(started), error: nil
+            expectedSHA256: fixture.expectedSHA256, elapsedMs: elapsed(started), error: nil,
+            rows: rows, worstExamples: worst
         )
     }
 
@@ -359,13 +456,15 @@ enum AssistNumericalProbe {
         Data(bits.flatMap { [UInt8(truncatingIfNeeded: $0), UInt8(truncatingIfNeeded: $0 >> 8)] })
     }
 
-    private static func failure(_ fixture: Fixture, mode: Mode, error: any Error, elapsedMs: Double) -> CaseResult {
+    private static func failure(
+        _ fixture: Fixture, variant: Variant, mode: Mode, error: any Error, elapsedMs: Double
+    ) -> CaseResult {
         CaseResult(
-            id: fixture.id, function: fixture.function, mode: mode.rawValue, shape: fixture.shape,
+            variant: variant.rawValue, id: fixture.id, function: fixture.function, mode: mode.rawValue, shape: fixture.shape,
             elements: fixture.shape.reduce(1, *), passed: false, failedElements: 0, nonfinite: 0,
             maxULP: nil, actualSHA256: nil, inputSHA256: fixture.inputSHA256,
             expectedSHA256: fixture.expectedSHA256, elapsedMs: elapsedMs,
-            error: String((error as NSError).localizedDescription.prefix(320))
+            error: String((error as NSError).localizedDescription.prefix(320)), rows: nil, worstExamples: nil
         )
     }
 

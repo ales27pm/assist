@@ -108,7 +108,7 @@ export function parseResult(json: string): GenerationResult {
 }
 
 export type PrimitiveReport = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   kind: 'assistPrimitiveQualification';
   scope: 'primitive_only_gemma_unqualified';
   aneExecution: 'unverified';
@@ -125,14 +125,32 @@ export function parsePrimitiveReport(json: string): PrimitiveReport {
   const summary = value.summary as Record<string, unknown> | undefined;
   const count = (item: unknown): item is number =>
     finite(item) && Number.isSafeInteger(item);
+  const assets = Array.isArray(value.assets) ? value.assets : [];
+  const hash = (item: unknown): boolean =>
+    typeof item === 'string' && /^[0-9a-f]{64}$/.test(item);
+  const comparisonAssets =
+    assets.length === 2 &&
+    ['f16_boundary', 'f32_boundary'].every(variant =>
+      assets.some(
+        item =>
+          item &&
+          typeof item === 'object' &&
+          !Array.isArray(item) &&
+          item.variant === variant &&
+          hash(item.fixtureAssetSHA256) &&
+          hash(item.manifestSHA256),
+      ),
+    );
   if (
-    value.schemaVersion !== 1 ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
     value.kind !== 'assistPrimitiveQualification' ||
     value.scope !== 'primitive_only_gemma_unqualified' ||
     value.aneExecution !== 'unverified' ||
     !summary ||
     !count(summary.cases) ||
-    summary.cases !== 24 ||
+    (value.schemaVersion === 1
+      ? summary.cases !== 24
+      : summary.cases !== 48 || !comparisonAssets) ||
     !count(summary.failed) ||
     summary.failed > summary.cases ||
     !count(summary.nonfinite) ||

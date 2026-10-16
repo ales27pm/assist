@@ -32,6 +32,8 @@
 **/*.aimodel/
 !/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/
 !/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/**
+!/mobile/ios/Assist/NumericalProbeFP32/RMSNormProbe.aimodel/
+!/mobile/ios/Assist/NumericalProbeFP32/RMSNormProbe.aimodel/**
 **/*.mlmodelc/
 **/*.mlpackage/
 **/*.safetensors

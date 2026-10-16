@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "kind": "assistRMSNormFP32FixtureProvenance",
+  "generator": "scripts/export-rmsnorm-fp32-probe.py",
+  "generatorSHA256": "2b03b0ba1c80cd890d80d9b86d2aacb6c4aafd405d1ca4bc58c138509e08eeaf",
+  "originalGeneratorSHA256": "49345988e2b01f0a5e624270cfa41cc6ca0563237f33384f014a5f80d8dd3ec0",
+  "originalManifestSHA256": "134b093a1c2b189c37458fa3776f4193feacf4c6d251e52dc69d5cee10be3c29",
+  "originalAssetSHA256": "46932657bf6ea3e4a3e99abba91b377b1ddbfb731a8553a4d5728fc414f54c8c",
+  "versions": {
+    "torch": "2.9.0+cpu",
+    "coreai-core": "1.0.0b3",
+    "coreai-torch": "0.4.3",
+    "numpy": "2.4.6"
+  },
+  "originalSourceSHA256": {
+    "coreai_torch.converter.TorchConverter": "ef5f86c11cd46f821252d9957d258e9fccf77bf717853f0e440ed90ebe41f73c",
+    "coreai_torch.externalize.ExternalizeSpec": "e624712a7f3b1b6cef839affaa52b64ebf7e8e608ccf5f8251f96a24da6dcfe5",
+    "coreai_torch.composite_ops._rms_norm.RMSNormImpl": "1699970c93cf117555c651d1defa82a37365117a18d52586d6e5653f430a33f5"
+  },
+  "variant": "F16 public wrapper; cast F32 before named RMSNorm; cast F16 after named RMSNorm",
+  "eagerChecks": [
+    {
+      "id": "rms_q8_256_8_weighted",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 2040,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_256_8_ones",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 2048,
+      "prematureHalfEpsilonMaxULP": 10
+    },
+    {
+      "id": "rms_q8_256_1_weighted",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 255,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_256_1_ones",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 256,
+      "prematureHalfEpsilonMaxULP": 10
+    },
+    {
+      "id": "rms_q8_512_8_weighted",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 4088,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_512_8_ones",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 4096,
+      "prematureHalfEpsilonMaxULP": 10
+    },
+    {
+      "id": "rms_q8_512_1_weighted",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 511,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_512_1_ones",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 512,
+      "prematureHalfEpsilonMaxULP": 10
+    },
+    {
+      "id": "rms_q8_1536_1_weighted",
+      "maxF16ULP": 1,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 1535,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_1536_1_ones",
+      "maxF16ULP": 1,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 1536,
+      "prematureHalfEpsilonMaxULP": 10
+    },
+    {
+      "id": "rms_q8_256_35_weighted",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 8925,
+      "prematureHalfEpsilonMaxULP": 13
+    },
+    {
+      "id": "rms_q8_256_35_ones",
+      "maxF16ULP": 0,
+      "finite": true,
+      "naiveHalfOverflowLostNonzeroElements": 8960,
+      "prematureHalfEpsilonMaxULP": 10
+    }
+  ],
+  "fixtureInputsExpectedAndScalesUnchanged": true,
+  "modelWeightsLoaded": false,
+  "runtimeOrSpecializationInvoked": false,
+  "nativeCorrectnessVerified": false,
+  "aneExecutionVerified": false
+}
