@@ -145,8 +145,22 @@ export function ModelLoadProbePanel({
           {report.nativeErrors && (
             <Text selectable style={styles.text}>
               {report.nativeErrors
-                .map(item => `${item.domain} (${item.code ?? 'code indisponible'})`)
+                .map(
+                  item =>
+                    `${item.domain} (${item.code ?? 'code indisponible'})`,
+                )
                 .join(' → ')}
+            </Text>
+          )}
+          {report.preparedLibrary && (
+            <Text selectable style={styles.text}>
+              Fonctions reconnues : {report.preparedLibrary.functionCount}
+              {'\n'}Liste conforme à la source :{' '}
+              {report.preparedLibrary.matchesSourceSummary ? 'oui' : 'non'}
+              {'\n'}Descripteur de la fonction choisie :{' '}
+              {report.preparedLibrary.selectedDescriptorPresent
+                ? 'présent'
+                : 'absent'}
             </Text>
           )}
           <Text style={styles.text}>

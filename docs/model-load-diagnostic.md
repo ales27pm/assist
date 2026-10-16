@@ -185,3 +185,55 @@ Aucune dépendance aux embeddings, corruption de cache, insuffisance de mémoire
 ou erreur de placement n'est établie à ce stade. La réussite antérieure d'un
 autre build ne remplace pas le contrôle du build 9, et ce contrôle ne qualifie
 pas le modèle FP32.
+
+## Contrôles supplémentaires et journal physique du 16 octobre
+
+L'utilisateur a également testé `prompt_opt_1024_64`, puis `extend_8192_8`,
+dans le même dossier F16. Les deux affichent le même message Foundation ; seul
+le dernier essai dispose ici d'un JSON conservé et corrélé au journal système.
+Son rapport du build 9, récupéré directement dans les données d'Assist, indique
+un début à **15:57:05.113 UTC** et `E_FUNCTION_LOAD_FAILED`, après une préparation
+retournée. Les observations avant/après chargement sont à 232,58 et 247,07 ms,
+soit **14,48 ms**, mesures et persistance comprises. L'empreinte finale est
+**99 895 208 octets**, le budget restant **3 440 097 368 octets** ; ces mesures
+ne sont pas celles du premier essai et ne mesurent toujours pas un pic.
+
+Console confirme l'appel à `extend_8192_8` et l'initialisation d'un délégué
+MPSGraph depuis un chemin de cache contenant le SHA source F16. Ce chemin
+n'est pas une empreinte recalculée des fichiers sélectionnés. Dans la fenêtre
+11:57:03–11:57:09 −0400, le système rapporte aussi des refus de lecture de
+métadonnées File Provider et d'une information d'espace disque pour le
+processus Assist. Ils précèdent le chargement explicite de la fonction et
+ne démontrent pas un refus de lecture des poids. Aucune cause précise Core AI,
+erreur de compilation ANE ou assertion de tas MPSGraph n'apparaît dans cette
+fenêtre conservée. Les erreurs LaunchServices plus tardives accompagnent le
+partage du rapport. Aucun de ces messages ne suffit à conclure à une corruption
+de cache ou à une panne mémoire. La capture est arrêtée et son assertion de
+connexion temporaire a été libérée ; l'utilisateur peut quitter l'app.
+
+## Vérification séparée de l'asset F16
+
+L'action manuelle **« Vérifier l’asset F16 »** lit les deux `metadata.json`,
+`main.hash` et `main.mlirb` de l'ancien export `rmscomposite`. Elle compare leurs
+tailles et leurs SHA-256 à la référence conservée. `main.hash` contient 32 octets
+bruts, comparés également au digest calculé de `main.mlirb`. La lecture se fait
+par blocs avec contrôle de stabilité du fichier. Ce contrôle ne prépare aucun
+modèle Core AI et ne charge aucune fonction. Il n'établit pas l'intégrité des
+contenus PLE/tokenizer ni l'accès aux fichiers depuis un service Core AI.
+
+Le rapport `assistModelAssetDiagnostic` est conservé séparément du dernier
+`assistModelLoadDiagnostic`. Une trace interrompue indique uniquement le dernier
+fichier commencé. Un résultat « conforme » signifie que les quatre fichiers
+lus correspondent à cette référence précise, pas que Gemma peut générer.
+
+Le schéma 3 du diagnostic de chargement ajoute la liste bornée des fonctions
+reconnues par `AIModel` après préparation, sa comparaison avec le résumé source
+et la présence du descripteur de la fonction sélectionnée. Ces métadonnées sont
+enregistrées avant l'unique appel à `loadFunction`; les schémas 1 et 2 restent
+lisibles. Aucun tenseur n'est exécuté pour cette inspection.
+
+Le prochain essai physique commence par la vérification de l'asset F16, puis,
+si les quatre fichiers sont conformes, par un seul test de `extend_1024_8` avec
+partage des deux rapports. Le contexte déclaré reste 32K, group8 et la préférence
+Neural Engine est conservée. Ces nouveaux contrôles nécessitent une nouvelle
+build ; leur exécution sur l'iPhone reste à vérifier séparément de leur compilation.

@@ -41,9 +41,12 @@ enum AssistModelLoadProbe {
         "lowPowerMode": "ProcessInfo.isLowPowerModeEnabled",
         "aneExecution": "Actual ANE/GPU placement and utilization are not measured",
     ]
-    static let measurementMethods = legacyMeasurementMethods.merging([
+    private static let schema2MeasurementMethods = legacyMeasurementMethods.merging([
         "attempt": "Fresh UUID, wall-clock UTC start and process ID identify this manual probe; wall time is for crash correlation, not duration measurement",
         "nativeErrors": "At most three NSError domains, signed codes and Swift type names; unsafe labels are redacted and codes beyond exact JSON range omitted; descriptions, debug messages and other userInfo are omitted",
+    ]) { _, new in new }
+    static let measurementMethods = schema2MeasurementMethods.merging([
+        "preparedLibrary": "Metadata inspection of the prepared AIModel before the selected function load: full function-name count, sorted sanitized prefix capped at 32 identifiers of 160 bytes, equality with source-summary name set and selected descriptor presence; no tensor allocation or execution",
     ]) { _, new in new }
 
     enum Stage: String, Codable, Sendable {
@@ -145,6 +148,38 @@ enum AssistModelLoadProbe {
         }
     }
 
+    struct PreparedLibraryEvidence: Codable, Sendable {
+        let functionCount: Int
+        let functionNamesPrefix: [String]
+        let functionNamesTruncated: Bool
+        let matchesSourceSummary: Bool
+        let selectedDescriptorPresent: Bool
+
+        private static func label(_ value: String) -> String {
+            let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._".utf8)
+            guard !value.isEmpty, value.utf8.count <= 160,
+                  value.utf8.allSatisfy({ allowed.contains($0) }) else { return "redacted" }
+            return value
+        }
+
+        static func capture(functionNames: [String], sourceFunctionNames: Set<String>,
+                            selectedDescriptorPresent: Bool) -> PreparedLibraryEvidence {
+            PreparedLibraryEvidence(functionCount: functionNames.count,
+                functionNamesPrefix: Array(functionNames.map(label).sorted().prefix(32)),
+                functionNamesTruncated: functionNames.count > 32,
+                matchesSourceSummary: Set(functionNames) == sourceFunctionNames,
+                selectedDescriptorPresent: selectedDescriptorPresent)
+        }
+
+        func validate() throws {
+            guard functionCount >= 0, UInt64(functionCount) <= maximumExactJSONInteger,
+                  functionNamesPrefix.count == min(functionCount, 32),
+                  functionNamesPrefix == functionNamesPrefix.sorted(),
+                  functionNamesPrefix.allSatisfy({ $0 == Self.label($0) }),
+                  functionNamesTruncated == (functionCount > 32) else { throw Failure.corruptReport }
+        }
+    }
+
     struct Reading: Sendable {
         var physicalFootprintBytes: UInt64?
         var availableMemoryBytes: UInt64?
@@ -185,7 +220,7 @@ enum AssistModelLoadProbe {
     }
 
     struct Report: Codable, Sendable {
-        var schemaVersion = 2
+        var schemaVersion = 3
         var kind = "assistModelLoadDiagnostic"
         var scope = "single_function_load_only_no_generation"
         var aneExecution = "unverified"
@@ -199,6 +234,7 @@ enum AssistModelLoadProbe {
         var samples: [Sample] = []
         var errorCode: NativeErrorCode?
         var nativeErrors: [NativeErrorEvidence]?
+        var preparedLibrary: PreparedLibraryEvidence?
         var measurementMethods = AssistModelLoadProbe.measurementMethods
 
         init(nativeBuild: String, osVersion: String, functionName: String, modelName: String) throws {
@@ -228,14 +264,32 @@ enum AssistModelLoadProbe {
         }
 
         func validate() throws {
-            guard (schemaVersion == 1 || schemaVersion == 2), kind == "assistModelLoadDiagnostic",
+            let expectedMethods: [String: String]
+            switch schemaVersion {
+            case 1: expectedMethods = legacyMeasurementMethods
+            case 2: expectedMethods = schema2MeasurementMethods
+            case 3: expectedMethods = AssistModelLoadProbe.measurementMethods
+            default: throw Failure.corruptReport
+            }
+            guard kind == "assistModelLoadDiagnostic",
                   scope == "single_function_load_only_no_generation", aneExecution == "unverified",
                   functionNames.contains(functionName), contextCapacity == 32_768,
                   nativeBuild == Self.systemLabel(nativeBuild, maximumBytes: 32),
                   osVersion == Self.systemLabel(osVersion, maximumBytes: 160),
                   modelName == sanitizedModelName(modelName),
-                  measurementMethods == (schemaVersion == 1 ? legacyMeasurementMethods : AssistModelLoadProbe.measurementMethods),
+                  measurementMethods == expectedMethods,
                   (1...4).contains(samples.count) else { throw Failure.corruptReport }
+            if schemaVersion < 3 {
+                guard preparedLibrary == nil else { throw Failure.corruptReport }
+            } else {
+                let inspected = samples.contains(where: { $0.stage == .beforeFunctionLoad })
+                guard inspected == (preparedLibrary != nil) else { throw Failure.corruptReport }
+                try preparedLibrary?.validate()
+                if stage == .failed {
+                    guard (inspected ? (errorCode == .functionLoadFailed || errorCode == .functionNotFound)
+                        : errorCode == .preparationFailed) else { throw Failure.corruptReport }
+                }
+            }
             if schemaVersion == 1 {
                 guard attempt == nil, nativeErrors == nil else { throw Failure.corruptReport }
             } else {
@@ -350,6 +404,7 @@ enum AssistModelLoadProbe {
         report initial: Report, store: Store,
         reading: @Sendable () -> Reading, elapsed: @Sendable () -> Double,
         prepare: @Sendable () async throws -> Prepared,
+        inspect: @Sendable (Prepared) -> PreparedLibraryEvidence,
         load: @Sendable (Prepared) throws -> Loaded?
     ) async throws -> String {
         var report = initial
@@ -363,6 +418,7 @@ enum AssistModelLoadProbe {
             return try store.save(report)
         }
         return try withExtendedLifetime(prepared) {
+            report.preparedLibrary = inspect(prepared)
             try report.observe(.loadingFunction, sampleStage: .beforeFunctionLoad, reading: reading(), elapsedMs: elapsed())
             try store.save(report)
             let loaded: Loaded?
@@ -390,6 +446,7 @@ enum AssistModelLoadProbe {
         guard #available(iOS 27.2, *) else { throw Failure.unsupported }
         let bundle: LanguageModelBundle
         let assetURL: URL
+        let sourceFunctionNames: Set<String>
         do {
             guard (path as NSString).isAbsolutePath else { throw Failure.invalidBundle }
             let root = URL(fileURLWithPath: path, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
@@ -413,6 +470,7 @@ enum AssistModelLoadProbe {
             try AssistInferencePolicy.validateGraphs(names, context: 32_768)
             guard names.count == 9, Set(names) == functionNames.union(["load_embeddings", "gather_embeddings_8", "gather_embeddings_64"])
             else { throw Failure.invalidBundle }
+            sourceFunctionNames = Set(names)
         } catch { throw Failure.invalidBundle }
         let store = try Store.applicationSupport()
         let report = try Report(nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
@@ -424,6 +482,9 @@ enum AssistModelLoadProbe {
             return max(0, Double(duration.seconds) * 1_000 + Double(duration.attoseconds) / 1e15)
         }, prepare: {
             try await AIModel(contentsOf: assetURL, options: SpecializationOptions(preferredComputeUnitKind: .neuralEngine))
+        }, inspect: { model in
+            PreparedLibraryEvidence.capture(functionNames: Array(model.functionNames), sourceFunctionNames: sourceFunctionNames,
+                selectedDescriptorPresent: model.functionDescriptor(for: functionName) != nil)
         }, load: { model in try loadFunctionForProbe(model: model, name: functionName) })
         #else
         throw Failure.unsupported
@@ -474,7 +535,9 @@ enum AssistModelLoadProbe {
             }
         }
         reading.physicalFootprintBytes = result == KERN_SUCCESS ? info.phys_footprint : nil
+        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
         reading.availableMemoryBytes = UInt64(os_proc_available_memory())
+        #endif
         switch ProcessInfo.processInfo.thermalState {
         case .nominal: reading.thermalState = "nominal"
         case .fair: reading.thermalState = "fair"

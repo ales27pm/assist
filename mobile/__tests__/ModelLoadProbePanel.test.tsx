@@ -166,8 +166,16 @@ test('restores and shares the model, attempt identity and bounded native causes'
       entryPoint: 'single_function_load_probe',
     },
     nativeErrors: [
-      { domain: 'NSCocoaErrorDomain', code: 260, swiftType: 'Foundation.NSError' },
-      { domain: 'NSPOSIXErrorDomain', code: 2, swiftType: 'Foundation.NSError' },
+      {
+        domain: 'NSCocoaErrorDomain',
+        code: 260,
+        swiftType: 'Foundation.NSError',
+      },
+      {
+        domain: 'NSPOSIXErrorDomain',
+        code: 2,
+        swiftType: 'Foundation.NSError',
+      },
     ],
     samples: [
       ...saved.samples,
@@ -190,14 +198,67 @@ test('restores and shares the model, attempt identity and bounded native causes'
   expect(
     await screen.findByText(/Modèle : gemma4-e2b-32k-group8-rms-fp32io/),
   ).toBeOnTheScreen();
-  expect(screen.getByText(/Essai du 2026-10-16T13:00:00.123Z/)).toBeOnTheScreen();
+  expect(
+    screen.getByText(/Essai du 2026-10-16T13:00:00.123Z/),
+  ).toBeOnTheScreen();
   expect(
     screen.getByText('NSCocoaErrorDomain (260) → NSPOSIXErrorDomain (2)'),
   ).toBeOnTheScreen();
   await user.press(
-    screen.getByRole('button', { name: 'Partager le diagnostic de chargement' }),
+    screen.getByRole('button', {
+      name: 'Partager le diagnostic de chargement',
+    }),
   );
   expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual(failure);
+  expect(native.runModelLoadProbe).not.toHaveBeenCalled();
+  share.mockRestore();
+});
+
+test('shares prepared-library observations without presenting a load marker as success', async () => {
+  const observed = {
+    ...saved,
+    schemaVersion: 3,
+    attempt: {
+      id: '9cde6700-1e52-4a3c-9b84-8a677eb4124a',
+      startedAtUTC: '2026-10-16T13:00:00.123Z',
+      processIdentifier: 20501,
+      entryPoint: 'single_function_load_probe',
+    },
+    preparedLibrary: {
+      functionCount: 1,
+      functionNamesPrefix: ['load_embeddings'],
+      functionNamesTruncated: false,
+      matchesSourceSummary: false,
+      selectedDescriptorPresent: false,
+    },
+  };
+  native.getLastModelLoadProbe.mockResolvedValue(JSON.stringify(observed));
+  const share = jest.spyOn(Share, 'share').mockResolvedValue({
+    action: Share.sharedAction,
+    activityType: undefined,
+  });
+  const user = userEvent.setup();
+  await renderAsync(
+    <ModelLoadProbePanel
+      selected={false}
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  expect(
+    await screen.findByText(/Liste conforme à la source : non/),
+  ).toBeOnTheScreen();
+  expect(
+    screen.getByText(/Descripteur de la fonction choisie : absent/),
+  ).toBeOnTheScreen();
+  expect(screen.queryByText(/Ce graphe a été chargé/)).toBeNull();
+  await user.press(
+    screen.getByRole('button', {
+      name: 'Partager le diagnostic de chargement',
+    }),
+  );
+  expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual(observed);
   expect(native.runModelLoadProbe).not.toHaveBeenCalled();
   share.mockRestore();
 });

@@ -30,7 +30,7 @@ export type LoadProbeSample = {
   metalRecommendedWorkingSetBytes?: number;
 };
 export type LoadProbeReport = {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   kind: 'assistModelLoadDiagnostic';
   scope: 'single_function_load_only_no_generation';
   aneExecution: 'unverified';
@@ -49,6 +49,13 @@ export type LoadProbeReport = {
   };
   errorCode?: string;
   nativeErrors?: { domain: string; code?: number; swiftType: string }[];
+  preparedLibrary?: {
+    functionCount: number;
+    functionNamesPrefix: string[];
+    functionNamesTruncated: boolean;
+    matchesSourceSummary: boolean;
+    selectedDescriptorPresent: boolean;
+  };
   measurementMethods: Record<string, string>;
 };
 
@@ -89,7 +96,7 @@ export function parseLoadProbeReport(json: string): LoadProbeReport | null {
     failed: 'failed',
   };
   if (
-    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+    ![1, 2, 3].includes(value.schemaVersion as number) ||
     value.kind !== 'assistModelLoadDiagnostic' ||
     value.scope !== 'single_function_load_only_no_generation' ||
     value.aneExecution !== 'unverified' ||
@@ -178,7 +185,7 @@ export function parseLoadProbeReport(json: string): LoadProbeReport | null {
     throw new Error('Étapes de chargement incohérentes.');
   }
   const methods = record(value.measurementMethods);
-  if (Object.keys(methods).length < 1 || Object.keys(methods).length > 16) {
+  if (Object.keys(methods).length < 1 || Object.keys(methods).length > 17) {
     throw new Error('Méthodes de mesure invalides.');
   }
   const measurementMethods: Record<string, string> = {};
@@ -193,7 +200,7 @@ export function parseLoadProbeReport(json: string): LoadProbeReport | null {
     throw new Error('Identité du modèle invalide.');
   }
   const result: LoadProbeReport = {
-    schemaVersion: value.schemaVersion,
+    schemaVersion: value.schemaVersion as 1 | 2 | 3,
     kind: 'assistModelLoadDiagnostic',
     scope: 'single_function_load_only_no_generation',
     aneExecution: 'unverified',
@@ -223,16 +230,77 @@ export function parseLoadProbeReport(json: string): LoadProbeReport | null {
     result.errorCode = code;
   }
   if (value.schemaVersion === 1) {
-    if (value.attempt != null || value.nativeErrors != null) {
+    if (
+      value.attempt != null ||
+      value.nativeErrors != null ||
+      value.preparedLibrary != null
+    ) {
       throw new Error('Version du diagnostic incohérente.');
     }
     return result;
+  }
+  if (value.schemaVersion === 2 && value.preparedLibrary != null) {
+    throw new Error('Version du diagnostic incohérente.');
+  }
+  if (value.schemaVersion === 3) {
+    const reachedLoad = samples.some(
+      sample => sample.stage === 'before_function_load',
+    );
+    if (reachedLoad !== (value.preparedLibrary != null)) {
+      throw new Error('Bibliothèque préparée incohérente.');
+    }
+    if (
+      stage === 'failed' &&
+      (reachedLoad
+        ? !['E_FUNCTION_LOAD_FAILED', 'E_FUNCTION_NOT_FOUND'].includes(
+            result.errorCode ?? '',
+          )
+        : result.errorCode !== 'E_MODEL_PREPARATION_FAILED')
+    ) {
+      throw new Error('Étape de l’erreur native incohérente.');
+    }
+    if (value.preparedLibrary != null) {
+      const library = record(value.preparedLibrary);
+      const count = library.functionCount;
+      if (
+        typeof count !== 'number' ||
+        !Number.isSafeInteger(count) ||
+        count < 0 ||
+        !Array.isArray(library.functionNamesPrefix) ||
+        library.functionNamesPrefix.length !== Math.min(count, 32) ||
+        typeof library.functionNamesTruncated !== 'boolean' ||
+        library.functionNamesTruncated !== count > 32 ||
+        typeof library.matchesSourceSummary !== 'boolean' ||
+        typeof library.selectedDescriptorPresent !== 'boolean'
+      ) {
+        throw new Error('Bibliothèque préparée invalide.');
+      }
+      const names = library.functionNamesPrefix.map(name => {
+        const valueName = text(name, 160);
+        if (!/^[A-Za-z0-9._]+$/.test(valueName)) {
+          throw new Error('Nom de fonction invalide.');
+        }
+        return valueName;
+      });
+      if (names.some((name, index) => index > 0 && names[index - 1] > name)) {
+        throw new Error('Liste de fonctions invalide.');
+      }
+      result.preparedLibrary = {
+        functionCount: count,
+        functionNamesPrefix: names,
+        functionNamesTruncated: library.functionNamesTruncated,
+        matchesSourceSummary: library.matchesSourceSummary,
+        selectedDescriptorPresent: library.selectedDescriptorPresent,
+      };
+    }
   }
   const attempt = record(value.attempt);
   const id = text(attempt.id, 36);
   const startedAtUTC = text(attempt.startedAtUTC, 24);
   if (
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+      id,
+    ) ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(startedAtUTC) ||
     !Number.isFinite(Date.parse(startedAtUTC)) ||
     new Date(startedAtUTC).toISOString() !== startedAtUTC ||
@@ -280,7 +348,10 @@ export function parseLoadProbeReport(json: string): LoadProbeReport | null {
         swiftType,
       };
       if (native.code != null) {
-        if (typeof native.code !== 'number' || !Number.isSafeInteger(native.code)) {
+        if (
+          typeof native.code !== 'number' ||
+          !Number.isSafeInteger(native.code)
+        ) {
           throw new Error('Code d’erreur native invalide.');
         }
         evidence.code = native.code;

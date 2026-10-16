@@ -53,14 +53,107 @@ const correlated = {
   },
 };
 
+const prepared = {
+  ...correlated,
+  schemaVersion: 3,
+  preparedLibrary: {
+    functionCount: 2,
+    functionNamesPrefix: ['extend_1024_8', 'load_embeddings'],
+    functionNamesTruncated: false,
+    matchesSourceSummary: false,
+    selectedDescriptorPresent: true,
+  },
+};
+
+test('preserves prepared-library mismatches as observations without claiming a successful load', () => {
+  const parsed = parseLoadProbeReport(JSON.stringify(prepared));
+  expect(parsed).toEqual(prepared);
+  expect(parsed?.stage).toBe('loading_function');
+  expect(
+    parseLoadProbeReport(
+      JSON.stringify({
+        ...prepared,
+        preparedLibrary: {
+          ...prepared.preparedLibrary,
+          privatePath: '/private/model',
+        },
+      }),
+    ),
+  ).toEqual(prepared);
+});
+
+test.each([
+  undefined,
+  { ...prepared.preparedLibrary, functionCount: 3 },
+  { ...prepared.preparedLibrary, functionCount: -1 },
+  { ...prepared.preparedLibrary, functionNamesTruncated: true },
+  {
+    ...prepared.preparedLibrary,
+    functionNamesPrefix: ['load_embeddings', 'extend_1024_8'],
+  },
+  {
+    ...prepared.preparedLibrary,
+    functionNamesPrefix: ['../private', 'load_embeddings'],
+  },
+  { ...prepared.preparedLibrary, selectedDescriptorPresent: 'yes' },
+])('rejects malformed prepared-library evidence %j', preparedLibrary => {
+  expect(() =>
+    parseLoadProbeReport(JSON.stringify({ ...prepared, preparedLibrary })),
+  ).toThrow();
+});
+
+test('keeps schema 2 compatible and rejects evidence introduced in schema 3', () => {
+  expect(parseLoadProbeReport(JSON.stringify(correlated))).toEqual(correlated);
+  expect(() =>
+    parseLoadProbeReport(JSON.stringify({ ...prepared, schemaVersion: 2 })),
+  ).toThrow();
+});
+
+test('does not invent prepared-library metadata when preparation fails', () => {
+  const failure = {
+    ...correlated,
+    schemaVersion: 3,
+    stage: 'failed',
+    errorCode: 'E_MODEL_PREPARATION_FAILED',
+    samples: [
+      report.samples[0],
+      { stage: 'failed', elapsedMs: 80, thermalState: 'nominal' },
+    ],
+    nativeErrors: [
+      {
+        domain: 'Foundation._GenericObjCError',
+        code: 0,
+        swiftType: 'Foundation._GenericObjCError',
+      },
+    ],
+  };
+  expect(parseLoadProbeReport(JSON.stringify(failure))).toEqual(failure);
+  expect(() =>
+    parseLoadProbeReport(
+      JSON.stringify({
+        ...failure,
+        preparedLibrary: prepared.preparedLibrary,
+      }),
+    ),
+  ).toThrow();
+});
+
 test('preserves the attempt identity and native error chain through sharing', () => {
   const failure = {
     ...correlated,
     stage: 'failed',
     errorCode: 'E_FUNCTION_LOAD_FAILED',
     nativeErrors: [
-      { domain: 'NSCocoaErrorDomain', code: 260, swiftType: 'Foundation.NSError' },
-      { domain: 'NSPOSIXErrorDomain', code: 2, swiftType: 'Foundation.NSError' },
+      {
+        domain: 'NSCocoaErrorDomain',
+        code: 260,
+        swiftType: 'Foundation.NSError',
+      },
+      {
+        domain: 'NSPOSIXErrorDomain',
+        code: 2,
+        swiftType: 'Foundation.NSError',
+      },
     ],
     samples: [
       ...report.samples,
@@ -88,7 +181,12 @@ test.each([
   { attempt: { ...correlated.attempt, processIdentifier: -1 } },
   { attempt: { ...correlated.attempt, processIdentifier: 1.5 } },
   { attempt: { ...correlated.attempt, startedAtUTC: 'yesterday' } },
-  { attempt: { ...correlated.attempt, startedAtUTC: '2026-02-30T00:00:00.000Z' } },
+  {
+    attempt: {
+      ...correlated.attempt,
+      startedAtUTC: '2026-02-30T00:00:00.000Z',
+    },
+  },
   { attempt: { ...correlated.attempt, entryPoint: 'normal_load' } },
   { nativeErrors: [{ domain: 'NSPOSIXErrorDomain', code: 2 }] },
 ])('rejects invalid or inconsistent attempt metadata %j', change => {
@@ -100,7 +198,11 @@ test.each([
 test.each([
   undefined,
   [],
-  Array(4).fill({ domain: 'NSPOSIXErrorDomain', code: 2, swiftType: 'NSError' }),
+  Array(4).fill({
+    domain: 'NSPOSIXErrorDomain',
+    code: 2,
+    swiftType: 'NSError',
+  }),
   [{ domain: '/private/model', code: 2, swiftType: 'NSError' }],
   [{ domain: 'NSPOSIXErrorDomain', code: 1.5, swiftType: 'NSError' }],
   [{ domain: 'NSPOSIXErrorDomain', code: 2 ** 53, swiftType: 'NSError' }],

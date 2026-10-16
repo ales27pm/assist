@@ -14,6 +14,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import NativeAssist from './specs/NativeAssist';
 import { MonitoringPanel } from './src/MonitoringPanel';
 import { ModelLoadProbePanel } from './src/ModelLoadProbePanel';
+import { ModelAssetProbePanel } from './src/ModelAssetProbePanel';
 import { parseMonitoringSnapshot } from './src/monitoring';
 import {
   EngineState,
@@ -32,7 +33,9 @@ import {
 async function monitoringForShare() {
   try {
     if (typeof NativeAssist?.getMonitoringSnapshot === 'function') {
-      return parseMonitoringSnapshot(await NativeAssist.getMonitoringSnapshot());
+      return parseMonitoringSnapshot(
+        await NativeAssist.getMonitoringSnapshot(),
+      );
     }
   } catch {
     // The optional sampler must not prevent sharing the original qualification evidence.
@@ -316,6 +319,12 @@ export function AssistantScreen() {
           />
         </View>
         <MonitoringPanel />
+        <ModelAssetProbePanel
+          selected={selected}
+          busy={busy}
+          modelLoaded={ready}
+          perform={perform}
+        />
         <ModelLoadProbePanel
           selected={selected}
           busy={busy}

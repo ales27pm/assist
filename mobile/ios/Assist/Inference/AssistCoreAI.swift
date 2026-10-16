@@ -111,6 +111,23 @@ final class AssistCoreAI: NSObject {
         }
     }
 
+    @objc(lastModelAssetProbe:)
+    func lastModelAssetProbe(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        Task { @concurrent in
+            do { completion(try AssistModelAssetProbe.lastReportJSON(), nil) }
+            catch { completion(nil, error as NSError) }
+        }
+    }
+
+    @objc(runModelAssetProbe:completion:)
+    func runModelAssetProbe(_ path: String, completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        let coordinator = coordinator
+        Task { @concurrent in
+            do { completion(try await coordinator.runModelAssetProbe(path: path), nil) }
+            catch { completion(nil, error as NSError) }
+        }
+    }
+
     @objc(runModelLoadProbe:functionName:completion:)
     func runModelLoadProbe(
         _ path: String, functionName: String,
@@ -541,6 +558,28 @@ private actor AssistInferenceCoordinator {
             return result
         } catch {
             await monitor.transition(phase: phase.rawValue, code: "LOAD_PROBE_FAILED", severity: "warning")
+            throw error
+        }
+    }
+
+    func runModelAssetProbe(path: String) async throws -> String {
+        guard !busy else { throw AssistInferenceError.busy }
+        guard engine == nil else {
+            throw AssistInferenceError.invalid("Décharge le modèle avant de vérifier ses fichiers.")
+        }
+        operationInFlight = true
+        defer { operationInFlight = false }
+        await monitor.transition(phase: "diagnosing", code: "ASSET_PROBE_STARTED")
+        do {
+            let result = try await AssistModelAssetProbe.run(path: path)
+            let report = try JSONDecoder().decode(AssistModelAssetProbe.Report.self, from: Data(result.utf8))
+            let failed = report.stage == .failed
+            await monitor.transition(phase: phase.rawValue,
+                                     code: failed ? "ASSET_PROBE_FAILED" : "ASSET_PROBE_COMPLETED",
+                                     severity: failed ? "warning" : "info")
+            return result
+        } catch {
+            await monitor.transition(phase: phase.rawValue, code: "ASSET_PROBE_FAILED", severity: "warning")
             throw error
         }
     }

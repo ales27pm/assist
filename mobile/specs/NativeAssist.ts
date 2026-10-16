@@ -19,6 +19,8 @@ export interface Spec extends TurboModule {
   runNumericalProbe(): Promise<string>;
   runModelLoadProbe(functionName: string): Promise<string>;
   getLastModelLoadProbe(): Promise<string>;
+  runModelAssetProbe(): Promise<string>;
+  getLastModelAssetProbe(): Promise<string>;
   readonly onProgress: CodegenTypes.EventEmitter<ProgressEvent>;
 }
 
