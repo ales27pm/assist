@@ -65,8 +65,55 @@ le même fichier de consignes. Les échecs restent dans leurs résultats bruts.
 
 Les 8/8 du candidat concernent la référence CPU utilisant ses véritables LUT et
 son sidecar PLE. Ils ne mesurent pas l’exécution du graphe Core AI compilé.
-Le paquet doit encore être réimporté et testé sur iPhone, avec de nouvelles
-conversations et les textes longs inchangés.
+
+## Contre-vérification iPhone : rapports 9 à 19
+
+Le nouveau dossier `gemma4-e2b-32k-group8` est ensuite chargé avec le build
+**1.0.0 (3)** sous iOS **27.2**. Les huit cas courts donnent **7/8 réponses
+exactes** : les carrés et les sommes sont corrects, mais le rapport 12 répond
+`1, 4, 9, 16` à la consigne confirmée : « Réponds uniquement avec les quatre
+cubes des nombres de 1 à 4, séparés par des virgules. » Le corrigé reste
+`1,8,27,64` ; cet échec est conservé. Les autres cas sont rapprochés du jeu guidé
+par leur ordre, leur réponse et leur nombre de jetons ; les rapports ne
+contiennent pas les consignes.
+
+L’utilisateur confirme ensuite la même réponse incorrecte quand cette consigne
+est envoyée en premier après déchargement et rechargement du même dossier,
+nouvelle conversation et budget 64. Cette confirmation textuelle ne fournit
+pas un nouveau relevé de mesures, mais la simple réutilisation de la
+conversation précédente ne suffit pas à expliquer l’erreur.
+
+Le tokenizer Swift épinglé produit également les mêmes **32 identifiants** que
+Python pour cette consigne des cubes et décode correctement les deux suites
+numériques. Ce contrôle hors iPhone ne prouve pas les identifiants réellement
+envoyés par le build installé. L’écart entre la référence CPU et le graphe
+compilé reste à isoler ; la correction de compression ne résout pas toute la
+fidélité numérique native.
+
+| Rapports du nouveau modèle | Entrée formatée | Sortie | Observation |
+| --- | ---: | ---: | --- |
+| 9 à 16, huit cas courts | 32 à 56 jetons | 9 à 23 jetons | 7/8 exacts, fin EOS ; cubes incorrects |
+| 17, texte 8K inchangé | 8 188 jetons | 64 jetons | Quatre premières lignes exactes sur six, fin `length` |
+| 18, texte 16K inchangé | 16 372 jetons | 64 jetons | Quatre premières lignes exactes sur six, fin `length` |
+| 19, texte près de 32K inchangé | 32 256 jetons | 64 jetons | Quatre premières lignes exactes sur six, fin `length` |
+
+Les onze essais demandent un budget de **64**. Les trois réponses longues
+complètes attendues font chacune **89 jetons avant EOS** avec le tokenizer
+exporté : elles ne peuvent pas tenir dans ce budget. Refaire uniquement ces
+textes inchangés avec **256 jetons de sortie**, une nouvelle conversation par
+texte et le même modèle 32K. Même à 32 256 jetons d’entrée, il reste 512 jetons
+dans la fenêtre de 32 768 ; ce réglage ne change pas la capacité du modèle.
+Les deux lignes manquantes restent non évaluées, pas déclarées correctes.
+
+Tous ces rapports reviennent à l’état `ready`. Ils recopient **un seul** relevé
+de chargement de 135,14 s, avec une empreinte physique après chargement de
+1 604 848 632 octets : ce ne sont pas onze chargements indépendants. Le maximum
+échantillonné atteint 2 216 694 072 octets pendant le cas près de 32K ; il reste
+une borne basse du pic réel. L’état du cache de spécialisation, le mode hors
+réseau de cette série, la répétabilité et l’usage ANE ne sont pas établis.
+Le nom du dossier ne remplace pas une empreinte du paquet installé.
+
+## Intégrité du paquet transféré
 
 Le paquet final comporte neuf fichiers, soit **3 763 087 387 octets**. Ses neuf
 fonctions et signatures de graphes sont vérifiées, ainsi que l’inventaire SHA-256
@@ -81,7 +128,8 @@ Le bug GPU de gather au-delà de 2³¹ éléments décrit dans
 [l’issue Apple 313](https://github.com/apple/coreai-models/issues/313) ne correspond
 pas à ce parcours : le PLE est extrait sur CPU et arrive au graphe en petites
 tranches. La différence de précision RMSNorm HF/iOS reste distincte ; elle n’est
-pas nécessaire pour reproduire cet échec avec les seuls poids compressés.
+pas nécessaire pour reproduire l’erreur initiale des carrés avec les seuls
+poids compressés.
 
 ## Contrôle de qualité avant transfert
 

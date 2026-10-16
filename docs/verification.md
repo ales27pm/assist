@@ -12,10 +12,16 @@ Le [diagnostic numérique](gemma-numeric-fidelity.md) reproduit ensuite exacteme
 l’erreur avec les seuls poids palettisés, dans la référence HF. Le tokenizer
 Swift épinglé, exécuté sous Linux, produit les mêmes 33 identifiants que Python.
 Le nouvel export 32K à groupes de 8 réussit 8/8 contrôles CPU figés, contre 5/8
-pour l’export initial avec le même script. Ses graphes, son inventaire et son
-archive sont vérifiés ; sa réimportation et sa génération iPhone restent à tester.
-Un seul essai est confirmé hors réseau par l’utilisateur. La qualification
-reste partielle ; la stabilité répétée et l’usage ANE sont non vérifiés.
+pour l’export initial avec le même script. Les
+[rapports 9 à 19](gemma-numeric-fidelity.md#contre-vérification-iphone--rapports-9-à-19)
+confirment ensuite son chargement et sa génération iPhone : 7/8 cas courts
+exacts, avec une erreur sur les cubes. Les trois textes longs donnent quatre
+premières lignes exactes, puis atteignent le budget demandé de 64 jetons ; leurs
+six lignes attendues nécessitent 89 jetons avant EOS. Les reprendre avec un
+budget de 256, en conservant le modèle 32K. Un seul essai de l’ancienne série
+est confirmé hors réseau par l’utilisateur ; celui de la nouvelle série n’est
+pas établi. La qualification reste partielle ; l’écart numérique natif, la
+stabilité répétée et l’usage ANE restent à vérifier.
 
 ## Crash de lancement TestFlight
 

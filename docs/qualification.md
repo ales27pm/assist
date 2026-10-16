@@ -41,7 +41,12 @@ un essai froid.
 3. **32K** : uniquement avec l’export 32K, répéter les cas courts puis tester des
    longueurs réelles autour de 8K, 16K et près de 32K. Le total entrée formatée +
    sortie doit rester dans la capacité effective. Ne jamais annoncer « testé à
-   32K » sur la seule base du réglage sélectionné.
+   32K » sur la seule base du réglage sélectionné. Pour le jeu guidé actuel,
+   utiliser **64 jetons de sortie pour les huit cas courts**, puis **256 pour
+   chacun des trois textes longs**, dans une nouvelle conversation à chaque
+   fois. Leurs six lignes attendues nécessitent 89 jetons avant EOS ; les
+   [rapports 17 à 19](gemma-numeric-fidelity.md#contre-vérification-iphone--rapports-9-à-19)
+   s’arrêtent à 64 et ne qualifient donc pas la réponse complète.
 4. **Répétabilité** : au moins trois répétitions par scénario pertinent,
    démarrage et réutilisation séparés. Conserver les échecs, pas seulement le
    meilleur passage. Réduire la charge si l’appareil chauffe ou devient instable.
