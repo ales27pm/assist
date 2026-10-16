@@ -195,6 +195,65 @@ struct InferencePolicyChecks {
         try expect(normalizedOutput.progressSnapshot(decode: normalize) == "Bonjour ", "initial tokenizer normalization is retained")
         normalizedOutput.append(1)
         try expect(normalizedOutput.snapshot(decode: normalize) == "Bonjour.", "full-prefix final decoding can normalize earlier text")
+
+        try expect(AssistNumericalDiagnostics.maxSteps == 16, "numeric diagnostics contain at most sixteen steps")
+        try expect(AssistNumericalDiagnostics.enabled(promptTokens: 1, budget: 1, temperature: 0), "small greedy request enables diagnostics")
+        try expect(AssistNumericalDiagnostics.enabled(promptTokens: 64, budget: 64, temperature: 0), "inclusive short-request upper bounds")
+        for (promptTokens, budget, temperature) in [
+            (0, 1, 0.0), (-1, 1, 0.0), (65, 1, 0.0),
+            (1, 0, 0.0), (1, -1, 0.0), (1, 65, 0.0),
+            (1, 1, 0.01), (1, 1, -1.0), (1, 1, Double.nan), (1, 1, Double.infinity)
+        ] {
+            try expect(!AssistNumericalDiagnostics.enabled(
+                promptTokens: promptTokens, budget: budget, temperature: temperature
+            ), "diagnostics reject invalid, long or sampled request")
+        }
+        let unavailable: [Float]? = nil
+        try expect(AssistNumericalDiagnostics.step(index: -1, tokenId: 106, logits: unavailable) == nil, "negative diagnostic index rejected")
+        try expect(AssistNumericalDiagnostics.step(index: 16, tokenId: 106, logits: unavailable) == nil, "seventeenth diagnostic step rejected")
+        try expect(AssistNumericalDiagnostics.step(index: Int.max, tokenId: 106, logits: unavailable) == nil, "oversized diagnostic index rejected")
+        let lastStep = AssistNumericalDiagnostics.step(index: 15, tokenId: 106, logits: unavailable)
+        try expect(lastStep?.step == 15 && lastStep?.tokenId == 106, "sixteenth step preserves index and EOS token")
+        func diagnostic<Scalar: BinaryFloatingPoint>(_ logits: [Scalar]?) throws -> AssistLogitStep {
+            guard let result = AssistNumericalDiagnostics.step(index: 0, tokenId: 106, logits: logits) else {
+                throw AssistInferenceError.invalid("FAIL: missing valid diagnostic step")
+            }
+            return result
+        }
+        let missingLogits = try diagnostic(unavailable)
+        try expect(!missingLogits.logitsAvailable && missingLogits.topCandidates.isEmpty && missingLogits.nonfiniteLogits == 0, "missing logits remain distinguishable from present logits")
+        let emptyLogits = try diagnostic([Float]())
+        try expect(emptyLogits.logitsAvailable && emptyLogits.topCandidates.isEmpty && emptyLogits.nonfiniteLogits == 0, "empty available logits have no invented candidates")
+        let negativeLogits = try diagnostic([Float(-9), -2, -7, -3])
+        try expect(negativeLogits.topCandidates.map(\.tokenId) == [1, 3], "all-negative scores select their true two maxima")
+        try expect(negativeLogits.topCandidates.map(\.logit) == [-2, -3], "negative scores retain exact values")
+        let tiedLogits = try diagnostic([Float(-9), 1, 1, 2, 2, 2])
+        try expect(tiedLogits.topCandidates.map(\.tokenId) == [3, 4], "equal maxima use ascending token IDs")
+        let allTied = try diagnostic([Float(7), 7, 7])
+        try expect(allTied.topCandidates.map(\.tokenId) == [0, 1], "ties never replace earlier token IDs")
+        let mixedLogits = try diagnostic([Float.nan, -.infinity, -6, .infinity, -2])
+        try expect(mixedLogits.topCandidates.map(\.tokenId) == [4, 2] && mixedLogits.nonfiniteLogits == 3, "NaN and both infinities are counted and excluded")
+        let oneFinite = try diagnostic([Float.nan, -3])
+        try expect(oneFinite.topCandidates.count == 1 && oneFinite.topCandidates.first?.logit == -3, "one finite value produces only one candidate")
+        let noFinite = try diagnostic([Float.nan, .infinity, -.infinity])
+        try expect(noFinite.logitsAvailable && noFinite.topCandidates.isEmpty && noFinite.nonfiniteLogits == 3, "all-nonfinite available logits remain reportable")
+        let halfLogits = try diagnostic([Float16(-2), 1.5, 1.5, .nan])
+        try expect(halfLogits.topCandidates.map(\.tokenId) == [1, 2] && halfLogits.topCandidates.map(\.logit) == [1.5, 1.5], "Float16 scores convert to exact finite Double candidates")
+        try expect(halfLogits.nonfiniteLogits == 1, "Float16 NaN is excluded")
+        let finiteExtremes = try diagnostic([Double.greatestFiniteMagnitude, -Double.greatestFiniteMagnitude])
+        try expect(finiteExtremes.topCandidates.count == 2 && finiteExtremes.nonfiniteLogits == 0, "finite Double extremes are preserved")
+        for report in [missingLogits, emptyLogits, negativeLogits, tiedLogits, mixedLogits, noFinite, halfLogits, finiteExtremes] {
+            let json = try AssistJSON.encode(report)
+            try expect(!json.contains("NaN") && !json.contains("Infinity"), "diagnostic JSON never serializes nonfinite scores")
+        }
+        let canonical = AssistNumericalDiagnostics.canonicalPromptBytes([0, 1, 255, 256, 65535, 65536, Int(Int32.max)])
+        try expect(Array(canonical) == [
+            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+            0xff, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0xff, 0xff, 0xff, 0x7f
+        ], "canonical prompt bytes use four little-endian bytes per validated token")
+        try expect(AssistNumericalDiagnostics.canonicalPromptBytes([]).isEmpty, "empty prompt has an empty canonical representation")
         print("PASS: \(checks) independent inference policy checks")
     }
 }

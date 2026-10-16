@@ -113,6 +113,41 @@ une borne basse du pic réel. L’état du cache de spécialisation, le mode hor
 réseau de cette série, la répétabilité et l’usage ANE ne sont pas établis.
 Le nom du dossier ne remplace pas une empreinte du paquet installé.
 
+## Diagnostic de l’écart restant
+
+Un contrôle CPU du parcours Apple iOS, avec les mêmes palettes et tables INT8,
+répond `1, 8, 27, 64` quand toutes ses normalisations utilisent l’ordre de
+calcul HF en FP32. Le contexte déclaré reste 32 768, le palier court 1 024 et
+les requêtes de huit positions reproduisent les masques, RoPE et caches du
+moteur statique. La projection finale est calculée par tranches de vocabulaire
+pour borner la mémoire ; dix petits contrôles ont vérifié l’égalité bit à bit
+avec la projection complète, et neuf comparaisons incrémentales synthétiques
+HF passent. Ce contrôle termine en 126 s, sans OOM ni arrêt de garde. Ce temps
+concerne le diagnostic sur l’hôte, pas l’iPhone.
+
+L’ablation HF en normalisations FP16 pures produit des jetons PAD, pas la
+réponse incorrecte de l’iPhone. Ces contrôles eager ne passent ni par les
+réécritures du compilateur Core AI ni par la spécialisation sur appareil. Ils
+ne démontrent donc pas qu’une modification de normalisation corrigerait le
+graphe livré.
+
+Le build de diagnostic **1.0.0 (4)** ajoute un champ optionnel
+`numericalDiagnostics` aux rapports des requêtes gloutonnes d’au plus 64 jetons
+d’entrée et 64 jetons de sortie. Il conserve les deux meilleurs scores finis
+et l’identifiant choisi pour les **16 premiers pas**, EOS inclus s’il survient
+avant cette limite. Les NaN/Inf sont comptés sans être sérialisés comme scores.
+L’entrée est représentée par le SHA-256 des identifiants UInt32 en little-endian,
+sans ajouter le texte de la consigne au rapport. Les scores proviennent du
+moteur ; sur le moteur statique épinglé ils sont après le softcap final. Ce
+diagnostic ne change pas l’échantillonnage et n’est pas activé sur les textes
+longs. Son coût fait partie des durées des petits essais instrumentés.
+
+Pour la consigne confirmée des cubes, l’empreinte attendue est
+`cb364516a49b4006b836b933fc11ca273cb5a659bc05ff0d20fdf5ec2e15fc99`.
+Après installation de ce build, reprendre cette même consigne en premier
+après rechargement, budget 64, puis partager le rapport. Les mesures natives
+restent nécessaires avant d’attribuer ou de corriger l’écart de calcul.
+
 ## Intégrité du paquet transféré
 
 Le paquet final comporte neuf fichiers, soit **3 763 087 387 octets**. Ses neuf

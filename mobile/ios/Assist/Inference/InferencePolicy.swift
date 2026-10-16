@@ -167,6 +167,76 @@ enum AssistJSON {
     }
 }
 
+struct AssistLogitCandidate: Encodable, Sendable {
+    let tokenId: Int
+    let logit: Double
+}
+
+struct AssistLogitStep: Encodable, Sendable {
+    let step: Int
+    let tokenId: Int
+    let topCandidates: [AssistLogitCandidate]
+    let nonfiniteLogits: Int
+    let logitsAvailable: Bool
+}
+
+/// Bounded observations of existing outputs; never changes logits or sampling.
+enum AssistNumericalDiagnostics {
+    static let maxSteps = 16
+
+    static func enabled(promptTokens: Int, budget: Int, temperature: Double) -> Bool {
+        (1...64).contains(promptTokens) && (1...64).contains(budget) && temperature == 0
+    }
+
+    static func step<Scalar: BinaryFloatingPoint>(
+        index: Int, tokenId: Int, logits: [Scalar]?
+    ) -> AssistLogitStep? {
+        guard (0..<maxSteps).contains(index) else { return nil }
+        guard let logits else {
+            return AssistLogitStep(
+                step: index, tokenId: tokenId, topCandidates: [],
+                nonfiniteLogits: 0, logitsAvailable: false
+            )
+        }
+        var first: AssistLogitCandidate?
+        var second: AssistLogitCandidate?
+        var nonfinite = 0
+        func precedes(_ candidate: AssistLogitCandidate, _ current: AssistLogitCandidate) -> Bool {
+            candidate.logit > current.logit
+                || (candidate.logit == current.logit && candidate.tokenId < current.tokenId)
+        }
+        for (id, value) in logits.enumerated() {
+            let score = Double(value)
+            // Float16/Float values fit in Double. Also keep wider generic scalar
+            // types from emitting an infinite Double into the JSON report.
+            guard value.isFinite, score.isFinite else { nonfinite += 1; continue }
+            let candidate = AssistLogitCandidate(tokenId: id, logit: score)
+            if first.map({ precedes(candidate, $0) }) ?? true {
+                second = first
+                first = candidate
+            } else if second.map({ precedes(candidate, $0) }) ?? true {
+                second = candidate
+            }
+        }
+        return AssistLogitStep(
+            step: index, tokenId: tokenId, topCandidates: [first, second].compactMap { $0 },
+            nonfiniteLogits: nonfinite, logitsAvailable: true
+        )
+    }
+
+    /// Hash input format: each caller-validated nonnegative Int32 token encoded
+    /// as one UInt32 in little-endian order, independent of native Int width.
+    static func canonicalPromptBytes(_ tokens: [Int]) -> Data {
+        var result = Data()
+        result.reserveCapacity(tokens.count * 4)
+        for token in tokens {
+            var word = UInt32(token).littleEndian
+            withUnsafeBytes(of: &word) { result.append(contentsOf: $0) }
+        }
+        return result
+    }
+}
+
 /// Full-prefix snapshots preserve byte-fallback UTF-8 and tokenizer normalization.
 /// Progress snapshots grow at least 1/64 beyond the last one, bounding cumulative
 /// decoded tokens to 65 times output length; the final snapshot adds one more pass.

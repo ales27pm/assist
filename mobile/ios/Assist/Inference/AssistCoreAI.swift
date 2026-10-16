@@ -1,5 +1,6 @@
 import CoreAI
 import CoreAILanguageModels
+import CryptoKit
 import Foundation
 import Tokenizers
 
@@ -113,6 +114,19 @@ private struct AssistGenerationResult: Encodable, Sendable {
     // The max of periodic samples is not the kernel's lifetime or true transient peak.
     let peakMemoryMethod = "sampled; transient peaks may be missed"
     let aneExecution = "unverified"
+    let numericalDiagnostics: AssistNumericalTrace?
+}
+
+/// Bounded local qualification evidence. The prompt itself is not added to reports.
+private struct AssistNumericalTrace: Encodable, Sendable {
+    let schemaVersion = 1
+    let promptTokenEncoding = "uint32-little-endian"
+    let promptTokenSHA256: String
+    let logitsDomain = "engine_returned"
+    let temperature: Double
+    let processedTokensBefore: Int
+    let processedTokensAtGenerationStart: Int
+    let steps: [AssistLogitStep]
 }
 
 /// Actor reentrancy does not serialize an entire async operation. The explicit busy
@@ -287,15 +301,33 @@ private actor AssistInferenceCoordinator {
         var peak = Self.physicalFootprint()
         var finishReason = "length"
         var lastProgress = started
+        let diagnosticsEnabled = engine.supportsLogits && AssistNumericalDiagnostics.enabled(
+            promptTokens: prompt.count, budget: budget, temperature: request.temperature
+        )
+        let promptFingerprint = diagnosticsEnabled
+            ? SHA256.hash(data: AssistNumericalDiagnostics.canonicalPromptBytes(prompt))
+                .map { String(format: "%02x", $0) }.joined()
+            : nil
+        let processedTokensBefore = engine.processedTokenCount
+        var processedTokensAtGenerationStart = processedTokensBefore
+        var diagnosticSteps: [AssistLogitStep] = []
         do {
             try Task.checkCancellation()
             let stream = try await engine.generate(
                 with: prompt.map(Int32.init),
                 samplingConfiguration: SamplingConfiguration(temperature: request.temperature),
-                inferenceOptions: InferenceOptions(maxTokens: budget)
+                inferenceOptions: InferenceOptions(maxTokens: budget, includeLogits: diagnosticsEnabled)
             )
+            processedTokensAtGenerationStart = engine.processedTokenCount
             for try await output in stream {
                 try Task.checkCancellation()
+                if diagnosticsEnabled,
+                    let step = AssistNumericalDiagnostics.step(
+                        index: diagnosticSteps.count, tokenId: Int(output.tokenId), logits: output.logits
+                    )
+                {
+                    diagnosticSteps.append(step)
+                }
                 if stopTokens.contains(output.tokenId) {
                     stream.setStopReason(.eos)
                     finishReason = "eos"
@@ -338,7 +370,15 @@ private actor AssistInferenceCoordinator {
             promptTokens: prompt.count, elapsedMs: Self.milliseconds(started.duration(to: clock.now)),
             ttftMs: ttft, finishReason: finishReason,
             requestedMaxTokens: request.maxTokens, effectiveMaxTokens: budget,
-            peakPhysicalFootprintBytes: peak
+            peakPhysicalFootprintBytes: peak,
+            numericalDiagnostics: promptFingerprint.map {
+                AssistNumericalTrace(
+                    promptTokenSHA256: $0, temperature: request.temperature,
+                    processedTokensBefore: processedTokensBefore,
+                    processedTokensAtGenerationStart: processedTokensAtGenerationStart,
+                    steps: diagnosticSteps
+                )
+            }
         )
     }
 

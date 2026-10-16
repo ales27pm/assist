@@ -30,6 +30,22 @@ export type GenerationResult = Progress & {
   peakPhysicalFootprintBytes?: number | null;
   requestedMaxTokens?: number | null;
   effectiveMaxTokens?: number;
+  numericalDiagnostics?: {
+    schemaVersion: 1;
+    promptTokenEncoding: 'uint32-little-endian';
+    promptTokenSHA256: string;
+    logitsDomain: 'engine_returned';
+    temperature: number;
+    processedTokensBefore: number;
+    processedTokensAtGenerationStart: number;
+    steps: {
+      step: number;
+      tokenId: number;
+      topCandidates: { tokenId: number; logit: number }[];
+      nonfiniteLogits: number;
+      logitsAvailable: boolean;
+    }[];
+  };
 };
 
 function object(json: string): Record<string, unknown> {
