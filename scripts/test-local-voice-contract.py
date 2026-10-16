@@ -45,6 +45,13 @@ class LocalVoiceSourceContractTests(unittest.TestCase):
         self.assertIn("emitOnVoiceEvent:", self.bridge)
         self.assertIn("[self->_voice invalidate]", self.bridge)
 
+    def test_exported_voice_protocol_is_imported_before_generated_swift_header(self):
+        # Regression from the real Xcode 27.1 Objective-C++ compile failure:
+        # Assist-Swift.h exports NSObject <AVSpeechSynthesizerDelegate>.
+        framework = self.bridge.index('#import <AVFoundation/AVFoundation.h>')
+        generated = self.bridge.index('#import "Assist-Swift.h"')
+        self.assertLess(framework, generated)
+
     def test_recognition_explicitly_requires_on_device_support(self):
         self.assertIn("supportsOnDeviceRecognition", self.voice)
         self.assertRegex(self.voice, r"\.requiresOnDeviceRecognition\s*=\s*true")
