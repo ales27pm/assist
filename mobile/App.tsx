@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import NativeAssist from './specs/NativeAssist';
+import { MonitoringPanel } from './src/MonitoringPanel';
+import { parseMonitoringSnapshot } from './src/monitoring';
 import {
   EngineState,
   GenerationResult,
@@ -25,6 +27,17 @@ import {
   parseResult,
   parseState,
 } from './src/protocol';
+
+async function monitoringForShare() {
+  try {
+    if (typeof NativeAssist?.getMonitoringSnapshot === 'function') {
+      return parseMonitoringSnapshot(await NativeAssist.getMonitoringSnapshot());
+    }
+  } catch {
+    // The optional sampler must not prevent sharing the original qualification evidence.
+  }
+  return null;
+}
 
 export function AssistantScreen() {
   const [engine, setEngine] = useState<EngineState>({
@@ -234,7 +247,7 @@ export function AssistantScreen() {
           {engine.loadElapsedMs != null && (
             <Text style={styles.muted}>
               Dernier chargement : {(engine.loadElapsedMs / 1000).toFixed(2)} s.
-              Le pic mémoire de chargement n’est pas mesuré.
+              Le pic réel de chargement n’est pas mesuré.
             </Text>
           )}
           <Text style={styles.muted}>
@@ -301,6 +314,7 @@ export function AssistantScreen() {
             }
           />
         </View>
+        <MonitoringPanel />
         <View style={styles.panel}>
           <Text style={styles.section}>Conversation</Text>
           <Text style={styles.muted}>
@@ -383,6 +397,7 @@ export function AssistantScreen() {
             onPress={async () => {
               if (report || engine.loadElapsedMs != null) {
                 try {
+                  const monitoring = await monitoringForShare();
                   await Share.share({
                     message: JSON.stringify(
                       {
@@ -390,6 +405,7 @@ export function AssistantScreen() {
                         kind: 'assistQualification',
                         engine,
                         generation: report,
+                        runtimeMonitoring: monitoring,
                       },
                       null,
                       2,
@@ -441,8 +457,13 @@ export function AssistantScreen() {
             onPress={async () => {
               if (probeReport) {
                 try {
+                  const monitoring = await monitoringForShare();
                   await Share.share({
-                    message: JSON.stringify(probeReport, null, 2),
+                    message: JSON.stringify(
+                      { ...probeReport, runtimeMonitoring: monitoring },
+                      null,
+                      2,
+                    ),
                   });
                 } catch (e) {
                   setError(errorMessage(e));

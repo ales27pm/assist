@@ -18,6 +18,7 @@ jest.mock('../specs/NativeAssist', () => ({
   __esModule: true,
   default: {
     getStatus: jest.fn(),
+    getMonitoringSnapshot: jest.fn(),
     selectModel: jest.fn(),
     loadModel: jest.fn(),
     loadBundledModel: jest.fn(),
@@ -30,6 +31,24 @@ jest.mock('../specs/NativeAssist', () => ({
   },
 }));
 const native = jest.mocked(NativeAssist!);
+const monitoringReport = {
+  schemaVersion: 1,
+  kind: 'assistRuntimeMonitoring',
+  aneExecution: 'unverified',
+  nativeBuild: '7',
+  osVersion: 'test',
+  measurementMethods: { memory: 'sampled physical footprint' },
+  current: {
+    phase: 'idle',
+    sessionElapsedMs: 1000,
+    thermalState: 'unknown',
+    memoryPressure: 'unknown',
+    lowPowerMode: false,
+  },
+  history: [],
+  events: [],
+  diagnostic: null,
+};
 const primitiveReport = {
   schemaVersion: 1,
   kind: 'assistPrimitiveQualification',
@@ -44,6 +63,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   phase = 'idle';
   bundledModelAvailable = false;
+  native.getMonitoringSnapshot.mockResolvedValue(JSON.stringify(monitoringReport));
   native.getStatus.mockImplementation(async () =>
     JSON.stringify({
       phase,
@@ -97,7 +117,10 @@ test('runs and shares a separate primitive diagnostic without enabling Gemma gen
   await user.press(
     screen.getByRole('button', { name: 'Partager le diagnostic' }),
   );
-  expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual(primitiveReport);
+  expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual({
+    ...primitiveReport,
+    runtimeMonitoring: monitoringReport,
+  });
   share.mockRestore();
 });
 
@@ -109,6 +132,23 @@ test('requires unloading Gemma before running the primitive diagnostic', async (
   expect(button).toBeDisabled();
   await user.press(button);
   expect(native.runNumericalProbe).not.toHaveBeenCalled();
+});
+
+test('shares the original failed diagnostic when runtime monitoring is unavailable', async () => {
+  native.getMonitoringSnapshot.mockRejectedValue(new Error('Sampler unavailable'));
+  const share = jest.spyOn(Share, 'share').mockResolvedValue({
+    action: Share.sharedAction,
+    activityType: undefined,
+  });
+  const user = userEvent.setup();
+  await renderAsync(<AssistantScreen />);
+  await user.press(screen.getByRole('button', { name: 'Tester le calcul natif' }));
+  await user.press(screen.getByRole('button', { name: 'Partager le diagnostic' }));
+  expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual({
+    ...primitiveReport,
+    runtimeMonitoring: null,
+  });
+  share.mockRestore();
 });
 
 test('serializes the diagnostic and restores controls after a native failure', async () => {

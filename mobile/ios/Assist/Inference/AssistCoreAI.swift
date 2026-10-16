@@ -8,7 +8,33 @@ import Tokenizers
 /// Requires pinned CoreAILM and Core AI SDK APIs; Gemma execution requires iOS 27.2+.
 @objc(AssistCoreAI)
 final class AssistCoreAI: NSObject {
-    private let coordinator = AssistInferenceCoordinator()
+    private let monitor: AssistRuntimeMonitor
+    private let coordinator: AssistInferenceCoordinator
+
+    override init() {
+        let monitor = AssistRuntimeMonitor()
+        self.monitor = monitor
+        self.coordinator = AssistInferenceCoordinator(monitor: monitor)
+        super.init()
+    }
+
+    @objc(monitoringSnapshot:)
+    func monitoringSnapshot(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        let monitor = monitor
+        Task { @concurrent in
+            do { completion(try await monitor.snapshotJSON(), nil) }
+            catch { completion(nil, error as NSError) }
+        }
+    }
+
+    @objc(shutdownMonitoring:)
+    func shutdownMonitoring(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        let monitor = monitor
+        Task { @concurrent in
+            await monitor.shutdown()
+            completion("{}", nil)
+        }
+    }
 
     @objc(status:)
     func status(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
@@ -141,6 +167,7 @@ private struct AssistNumericalTrace: Encodable, Sendable {
 /// Actor reentrancy does not serialize an entire async operation. The explicit busy
 /// latch remains held across every await; only status and cooperative cancel enter.
 private actor AssistInferenceCoordinator {
+    private let monitor: AssistRuntimeMonitor
     private var phase = AssistPhase.idle
     private var operationInFlight = false
     private var cancellationWaiters = 0
@@ -154,6 +181,10 @@ private actor AssistInferenceCoordinator {
     private var loadElapsedMs: Double?
     private var beforeLoadFootprint: UInt64?
     private var afterLoadFootprint: UInt64?
+
+    init(monitor: AssistRuntimeMonitor) {
+        self.monitor = monitor
+    }
 
     private var busy: Bool { operationInFlight || cancellationWaiters > 0 }
 
@@ -172,6 +203,7 @@ private actor AssistInferenceCoordinator {
         }
         operationInFlight = true
         phase = .loading
+        await monitor.transition(phase: phase.rawValue, code: "MODEL_LOAD_STARTED")
         lastError = nil
         let loadClock = ContinuousClock()
         let loadStarted = loadClock.now
@@ -235,6 +267,8 @@ private actor AssistInferenceCoordinator {
             phase = .ready
             loadElapsedMs = Self.milliseconds(loadStarted.duration(to: loadClock.now))
             afterLoadFootprint = Self.physicalFootprint()
+            await monitor.setContextCapacity(capacity)
+            await monitor.transition(phase: phase.rawValue, code: "MODEL_LOAD_COMPLETED")
             return try statusJSON()
         } catch {
             clearResidentIdentity()
@@ -242,6 +276,8 @@ private actor AssistInferenceCoordinator {
             lastError = error.localizedDescription
             loadElapsedMs = Self.milliseconds(loadStarted.duration(to: loadClock.now))
             afterLoadFootprint = Self.physicalFootprint()
+            await monitor.setContextCapacity(nil)
+            await monitor.transition(phase: phase.rawValue, code: "MODEL_LOAD_FAILED", severity: "critical")
             throw error
         }
     }
@@ -257,7 +293,17 @@ private actor AssistInferenceCoordinator {
         // Capturing this actor inherits its executor; tokenizer access stays on it.
         let task = Task { try await self.runGeneration(request, onProgress: onProgress) }
         generationTask = task
-        return try await task.value
+        do {
+            let result = try await task.value
+            // runGeneration's defer has restored the actual engine phase before this point.
+            return result
+        } catch {
+            if engine == nil { await monitor.setContextCapacity(nil) }
+            await monitor.transition(phase: engine == nil ? "failed" : "ready",
+                                     code: engine == nil ? "GENERATION_FAILED" : "GENERATION_REJECTED",
+                                     severity: engine == nil ? "critical" : "warning")
+            throw error
+        }
     }
 
     private func runGeneration(
@@ -278,11 +324,20 @@ private actor AssistInferenceCoordinator {
         guard prompt.allSatisfy({ $0 >= 0 && $0 <= Int(Int32.max) }) else {
             throw AssistInferenceError.invalid("Jeton hors de la plage native.")
         }
+        await monitor.beginGeneration(
+            requestId: request.requestId, promptTokens: prompt.count, contextCapacity: capacity,
+            elapsedMs: Self.milliseconds(started.duration(to: ContinuousClock.now))
+        )
         do {
             let result = try await Self.consumeGeneration(
                 request: request, prompt: prompt, budget: budget, capacity: capacity,
                 modelName: modelName, engine: engine, tokenizer: tokenizer,
-                stopTokens: stopTokens, started: started, onProgress: onProgress
+                stopTokens: stopTokens, started: started, monitor: monitor, onProgress: onProgress
+            )
+            await monitor.endGeneration(
+                requestId: request.requestId, promptTokens: result.promptTokens,
+                generatedTokens: result.generatedTokens, elapsedMs: result.elapsedMs,
+                ttftMs: result.ttftMs, finishReason: result.finishReason
             )
             return try AssistJSON.encode(result)
         } catch {
@@ -301,6 +356,7 @@ private actor AssistInferenceCoordinator {
         request: AssistGenerationRequest, prompt: [Int], budget: Int, capacity: Int,
         modelName: String?, engine: any InferenceEngine, tokenizer: any Tokenizer,
         stopTokens: Set<Int32>, started: ContinuousClock.Instant,
+        monitor: AssistRuntimeMonitor,
         onProgress: @escaping @Sendable (String) -> Void
     ) async throws -> AssistGenerationResult {
         let clock = ContinuousClock()
@@ -353,6 +409,11 @@ private actor AssistInferenceCoordinator {
                         requestId: request.requestId, text: text, generatedTokens: generated.count,
                         promptTokens: prompt.count, elapsedMs: Self.milliseconds(started.duration(to: clock.now))
                     )))
+                    await monitor.progress(
+                        requestId: request.requestId, promptTokens: prompt.count,
+                        generatedTokens: generated.count,
+                        elapsedMs: Self.milliseconds(started.duration(to: clock.now)), ttftMs: ttft
+                    )
                     lastProgress = clock.now
                 }
             }
@@ -403,9 +464,11 @@ private actor AssistInferenceCoordinator {
             if cancellationWaiters == 0, !operationInFlight { phase = engine == nil ? .failed : .ready }
         }
         task.cancel()
+        await monitor.transition(phase: phase.rawValue, code: "CANCELLATION_REQUESTED")
         try await engine?.cancel()
         // Acknowledgement means the operation has stopped, not merely that a flag was set.
         _ = await task.result
+        await monitor.transition(phase: engine == nil ? "failed" : "ready", code: "PHASE_CHANGED")
         return try AssistJSON.encode(AssistStatus(
             phase: engine == nil ? .failed : .ready,
             contextCapacity: capacity, modelName: modelName, error: lastError,
@@ -424,7 +487,17 @@ private actor AssistInferenceCoordinator {
         }
         operationInFlight = true
         defer { operationInFlight = false }
-        return try await AssistNumericalProbe.run()
+        await monitor.beginDiagnostic(total: 48)
+        do {
+            let result = try await AssistNumericalProbe.run { [monitor] variant, mode, function, passed in
+                await monitor.diagnosticCase(variant: variant, mode: mode, function: function, passed: passed)
+            }
+            await monitor.endDiagnostic(phase: phase.rawValue)
+            return result
+        } catch {
+            await monitor.transition(phase: phase.rawValue, code: "DIAGNOSTIC_FAILED", severity: "warning")
+            throw error
+        }
     }
 
     func reset() async throws -> String {
@@ -436,11 +509,14 @@ private actor AssistInferenceCoordinator {
             try await engine.reset(to: 0)
             phase = .ready
             lastError = nil
+            await monitor.transition(phase: phase.rawValue, code: "CONVERSATION_RESET")
             return try statusJSON()
         } catch {
             clearResidentIdentity()
             phase = .failed
             lastError = error.localizedDescription
+            await monitor.setContextCapacity(nil)
+            await monitor.transition(phase: phase.rawValue, code: "CONVERSATION_RESET_FAILED", severity: "critical")
             throw error
         }
     }
@@ -450,10 +526,17 @@ private actor AssistInferenceCoordinator {
         operationInFlight = true
         defer { operationInFlight = false }
         // Never mutate/reset an engine while a stream may still reference it.
-        if let engine { try await engine.cancel() }
+        do {
+            if let engine { try await engine.cancel() }
+        } catch {
+            await monitor.transition(phase: phase.rawValue, code: "MODEL_UNLOAD_FAILED", severity: "warning")
+            throw error
+        }
         clearResidentIdentity()
         lastError = nil
         phase = .idle
+        await monitor.setContextCapacity(nil)
+        await monitor.transition(phase: phase.rawValue, code: "MODEL_UNLOADED")
         return try statusJSON()
     }
 

@@ -159,7 +159,9 @@ enum AssistNumericalProbe {
     }
 
     @concurrent
-    static func run() async throws -> String {
+    static func run(
+        onCase: @escaping @Sendable (String, String, String, Bool) async -> Void = { _, _, _, _ in }
+    ) async throws -> String {
         guard #available(iOS 27.2, *) else {
             throw ProbeError.invalid("Le contrôle numérique nécessite iOS 27.2.")
         }
@@ -183,7 +185,7 @@ enum AssistNumericalProbe {
             for mode in [Mode.neuralEnginePreferred, .cpuOnly] {
                 try Task.checkCancellation()
                 // Each variant/mode releases its model before the next one is loaded.
-                results += try await runMode(mode, asset: asset)
+                results += try await runMode(mode, asset: asset, onCase: onCase)
             }
         }
         let baseline = assets[0].identity
@@ -268,7 +270,10 @@ enum AssistNumericalProbe {
         }
     }
 
-    private static func runMode(_ mode: Mode, asset: PreparedAsset) async throws -> [CaseResult] {
+    private static func runMode(
+        _ mode: Mode, asset: PreparedAsset,
+        onCase: @Sendable (String, String, String, Bool) async -> Void
+    ) async throws -> [CaseResult] {
         let fixtures = asset.fixtures
         let loadStarted = ContinuousClock.now
         let model: AIModel
@@ -281,9 +286,13 @@ enum AssistNumericalProbe {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            return fixtures.map {
+            let failures = fixtures.map {
                 failure($0.fixture, variant: asset.variant, mode: mode, error: error, elapsedMs: elapsed(loadStarted))
             }
+            for result in failures {
+                await onCase(result.variant, result.mode, result.function, result.passed)
+            }
+            return failures
         }
         var results: [CaseResult] = []
         for prepared in fixtures {
@@ -297,6 +306,9 @@ enum AssistNumericalProbe {
             } catch {
                 results.append(failure(prepared.fixture, variant: asset.variant, mode: mode,
                                        error: error, elapsedMs: elapsed(started)))
+            }
+            if let result = results.last {
+                await onCase(result.variant, result.mode, result.function, result.passed)
             }
         }
         return results

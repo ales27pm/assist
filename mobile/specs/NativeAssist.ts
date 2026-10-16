@@ -8,6 +8,7 @@ export type ProgressEvent = {
 /** Native owns model paths, lifecycle, cancellation, and local inference. */
 export interface Spec extends TurboModule {
   getStatus(): Promise<string>;
+  getMonitoringSnapshot(): Promise<string>;
   selectModel(): Promise<string>;
   loadModel(): Promise<string>;
   loadBundledModel(): Promise<string>;

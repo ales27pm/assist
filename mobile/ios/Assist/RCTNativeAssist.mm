@@ -156,6 +156,15 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   });
 }
 
+- (void)getMonitoringSnapshot:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    // Read-only telemetry has its own actor and remains available while the
+    // inference adapter holds its load/generation/diagnostic operation gate.
+    [self->_engine monitoringSnapshot:AssistPromise(resolve, reject)];
+  });
+}
+
 - (void)selectModel:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepare:reject]) { return; }
@@ -319,6 +328,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)invalidate {
   dispatch_async(dispatch_get_main_queue(), ^{
     self->_invalidated = YES;
+    [self->_engine shutdownMonitoring:^(NSString *result, NSError *error) {}];
     if (!self->_loaded) {
       // If selection is open this settles it; never release a loading model's
       // directory before its completion. Picker cancellation is handled below.
