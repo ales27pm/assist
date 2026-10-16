@@ -584,10 +584,31 @@ occupent ensemble **6,55 Go**, auxquels s’ajoutera le cache de compilation,
 dont la taille reste inconnue. La relecture HTTP depuis l’hôte ne vérifie pas
 la réception sur l’iPhone.
 
-Le chargement et la réponse de ce nouveau dossier restent à qualifier sur
-iPhone avec le build **7**, une nouvelle conversation et un budget de **64**.
-La réponse attendue aux cubes reste `1, 8, 27, 64`. L’exécution ANE, la qualité
-en contexte long et les performances du modèle compilé restent non vérifiées.
+Le chargement de ce nouveau dossier **échoue ensuite sur iPhone**, avec le
+build **7** sous iOS 27.2 (24B5110a). Le propriétaire confirme le dossier
+`gemma4-e2b-32k-group8-rms-fp32io`. Le rapport du 16 octobre à 08:11:11 EDT survient
+environ 50,6 s après le lancement de l’app ; ce n’est pas une mesure de la
+durée du chargement.
+
+Le thread fautif porte un `SIGABRT` et une assertion Metal lors de
+`GPU::MemrefBufferizer::createMemrefHeap`, pendant `AIModel.loadFunction` dans
+`StaticShapeEngine.warmup`, avant la génération. Il ne donne ni le message
+exact de l’assertion, ni la taille du tas demandé, ni l’empreinte mémoire au
+moment de l’échec. Il n’établit pas une terminaison jetsam ou un manque de RAM.
+
+Le préchauffage Apple épinglé charge et conserve les six fonctions, même avec
+`queryLength: 1`. L’ordre est `extend_1024_8`, `extend_32768_8`, `extend_8192_8`,
+`prompt_opt_1024_64`, `prompt_opt_32768_64`, `prompt_opt_8192_64`. La pile pointe
+sur la même ligne à chaque itération : la fonction fautive reste inconnue.
+Le passage par Metal n’établit pas le placement de l’ensemble du modèle.
+
+La recommandation d’essai et le téléchargement de ce candidat sont **suspendus** ;
+les requêtes GET/HEAD du ZIP et de son empreinte renvoient HTTP 410. Les fichiers
+et preuves précédents sont conservés. Les contrôles CPU et synthétiques restent
+valides dans leur portée, mais le modèle entier échoue au chargement natif ;
+les cubes, l’ANE et le contexte long ne sont pas qualifiés pour ce dossier.
+Le prochain [diagnostic de chargement](model-load-diagnostic.md) garde le modèle
+32K inchangé et conserve une trace avant l’appel d’une fonction sélectionnée.
 
 ## Intégrité du paquet transféré
 

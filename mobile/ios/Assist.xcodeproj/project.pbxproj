@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A55400000000000000000001 /* AssistModelLoadProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55400000000000000000011 /* AssistModelLoadProbe.swift */; };
 		A55100000000000000000001 /* AssistNumericalProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55100000000000000000011 /* AssistNumericalProbe.swift */; };
 		A55100000000000000000002 /* NumericalProbe in Resources */ = {isa = PBXBuildFile; fileRef = A55100000000000000000012 /* NumericalProbe */; };
 		A55200000000000000000002 /* NumericalProbeFP32 in Resources */ = {isa = PBXBuildFile; fileRef = A55200000000000000000012 /* NumericalProbeFP32 */; };
@@ -26,6 +27,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A55400000000000000000011 /* AssistModelLoadProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistModelLoadProbe.swift; sourceTree = "<group>"; };
 		A55100000000000000000011 /* AssistNumericalProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistNumericalProbe.swift; sourceTree = "<group>"; };
 		A55100000000000000000012 /* NumericalProbe */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Assist/NumericalProbe; sourceTree = "<group>"; };
 		A55200000000000000000012 /* NumericalProbeFP32 */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Assist/NumericalProbeFP32; sourceTree = "<group>"; };
@@ -74,6 +76,7 @@
 				A55100000000000000000012 /* NumericalProbe */,
 				A55200000000000000000012 /* NumericalProbeFP32 */,
 				A55300000000000000000011 /* AssistRuntimeMonitor.swift */,
+				A55400000000000000000011 /* AssistModelLoadProbe.swift */,
 				A55300000000000000000012 /* MonitoringAttribution.txt */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
@@ -313,6 +316,7 @@
 				A55000000000000000000001 /* RCTNativeAssist.mm in Sources */,
 				A55000000000000000000002 /* ModelDirectoryPicker.swift in Sources */,
 				A55000000000000000000003 /* AssistCoreAI.swift in Sources */,
+				A55400000000000000000001 /* AssistModelLoadProbe.swift in Sources */,
 				A55000000000000000000004 /* InferencePolicy.swift in Sources */,
 				A55100000000000000000001 /* AssistNumericalProbe.swift in Sources */,
 				A55300000000000000000001 /* AssistRuntimeMonitor.swift in Sources */,
@@ -329,7 +333,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
@@ -361,7 +365,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
 				LD_RUNPATH_SEARCH_PATHS = (

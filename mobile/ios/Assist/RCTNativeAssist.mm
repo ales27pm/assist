@@ -246,6 +246,35 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   });
 }
 
+- (void)getLastModelLoadProbe:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    [self->_engine lastModelLoadProbe:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)runModelLoadProbe:(NSString *)functionName
+                 resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    if (self->_loaded) {
+      AssistReject(reject, AssistError(@"E_MODEL_LOADED", @"Décharge le modèle avant le diagnostic de chargement."));
+      return;
+    }
+    NSString *operation = [self beginOperation:reject];
+    if (!operation) { return; }
+    AssistCompletion completion = [self completionForOperation:operation resolve:resolve reject:reject
+                                                     cleanup:^(BOOL succeeded) {
+      [self->_picker releaseAccess];
+    }];
+    [self->_picker withSelectedPath:^(NSString *path, NSError *error) {
+      if (error || !path) { completion(nil, error); return; }
+      [self->_engine runModelLoadProbe:path functionName:functionName completion:completion];
+    }];
+  });
+}
+
 - (void)generate:(NSString *)requestJSON
          resolve:(RCTPromiseResolveBlock)resolve
           reject:(RCTPromiseRejectBlock)reject {

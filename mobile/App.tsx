@@ -13,6 +13,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import NativeAssist from './specs/NativeAssist';
 import { MonitoringPanel } from './src/MonitoringPanel';
+import { ModelLoadProbePanel } from './src/ModelLoadProbePanel';
 import { parseMonitoringSnapshot } from './src/monitoring';
 import {
   EngineState,
@@ -315,6 +316,12 @@ export function AssistantScreen() {
           />
         </View>
         <MonitoringPanel />
+        <ModelLoadProbePanel
+          selected={selected}
+          busy={busy}
+          modelLoaded={ready}
+          perform={perform}
+        />
         <View style={styles.panel}>
           <Text style={styles.section}>Conversation</Text>
           <Text style={styles.muted}>

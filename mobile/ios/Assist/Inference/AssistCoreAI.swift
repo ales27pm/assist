@@ -102,6 +102,26 @@ final class AssistCoreAI: NSObject {
             catch { completion(nil, error as NSError) }
         }
     }
+
+    @objc(lastModelLoadProbe:)
+    func lastModelLoadProbe(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        Task { @concurrent in
+            do { completion(try AssistModelLoadProbe.lastReportJSON(), nil) }
+            catch { completion(nil, error as NSError) }
+        }
+    }
+
+    @objc(runModelLoadProbe:functionName:completion:)
+    func runModelLoadProbe(
+        _ path: String, functionName: String,
+        completion: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        let coordinator = coordinator
+        Task { @concurrent in
+            do { completion(try await coordinator.runModelLoadProbe(path: path, functionName: functionName), nil) }
+            catch { completion(nil, error as NSError) }
+        }
+    }
 }
 
 private enum AssistPhase: String, Codable, Sendable {
@@ -496,6 +516,31 @@ private actor AssistInferenceCoordinator {
             return result
         } catch {
             await monitor.transition(phase: phase.rawValue, code: "DIAGNOSTIC_FAILED", severity: "warning")
+            throw error
+        }
+    }
+
+    func runModelLoadProbe(path: String, functionName: String) async throws -> String {
+        guard !busy else { throw AssistInferenceError.busy }
+        guard engine == nil else {
+            throw AssistInferenceError.invalid("Décharge le modèle avant le diagnostic de chargement.")
+        }
+        guard #available(iOS 27.2, *) else {
+            throw AssistInferenceError.invalid("Ce diagnostic nécessite iOS 27.2 ou une version ultérieure.")
+        }
+        operationInFlight = true
+        defer { operationInFlight = false }
+        await monitor.transition(phase: "diagnosing", code: "LOAD_PROBE_STARTED")
+        do {
+            let result = try await AssistModelLoadProbe.run(path: path, functionName: functionName)
+            let report = try JSONDecoder().decode(AssistModelLoadProbe.Report.self, from: Data(result.utf8))
+            let failed = report.stage == .failed
+            await monitor.transition(phase: phase.rawValue,
+                                     code: failed ? "LOAD_PROBE_FAILED" : "LOAD_PROBE_COMPLETED",
+                                     severity: failed ? "warning" : "info")
+            return result
+        } catch {
+            await monitor.transition(phase: phase.rawValue, code: "LOAD_PROBE_FAILED", severity: "warning")
             throw error
         }
     }
