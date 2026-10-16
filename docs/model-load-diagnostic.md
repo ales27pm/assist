@@ -126,3 +126,62 @@ le contrôle utile, mais ne permet pas d’attribuer son erreur à l’absence d
 embeddings sans connaître l’erreur native. L’[exemple public de chargement Apple](https://developer.apple.com/documentation/coreai/integrating-on-device-ai-models-in-your-app-with-core-ai)
 utilise lui aussi l’initialisation du modèle suivie de `loadFunction(named:)`.
 Aucun nouvel export ni changement de contexte ne découle de ces seules traces.
+
+## Contrôle F16 du build 9
+
+Le rapport reçu le 16 octobre confirme l'exécution du build 9 sur l'iPhone.
+La sonde conserve cette fois l'identité de l'essai et l'erreur native pour
+`gemma4-e2b-32k-group8-rmscomposite`, toujours sur `extend_1024_8` avec le
+contexte déclaré de 32K. La préparation retourne, puis le chargement de la
+fonction échoue avec `E_FUNCTION_LOAD_FAILED`. Les observations encadrent cet
+appel à 247,66 ms et 267,80 ms, soit **20,15 ms**, persistance et mesures
+comprises. L'empreinte finale observée est de **41 043 808 octets**, le budget
+d'allocation restant de **3 498 948 768 octets** et le total Metal reste à
+**81 920 octets**. Ces instantanés ne mesurent pas le pic de l'appel.
+
+L'unique erreur exportée porte le domaine et le type
+`Foundation._GenericObjCError`, avec le code `0`. Dans le
+[source public de Swift](https://github.com/swiftlang/swift/blob/swift-5.0-RELEASE/stdlib/public/SDK/Foundation/NSError.swift#L31-L52),
+ce type représente un échec Objective-C sans objet `NSError` fourni. Le code
+zéro de cet objet de remplacement ne signifie pas une réussite et ne décrit
+pas une panne Core AI précise. Le rapport ne donne aucune erreur sous-jacente
+supplémentaire ; exporter une description plus longue ne garantit donc pas
+une cause supplémentaire. Ce résultat récupérable ne reproduit pas à lui seul
+l'assertion Metal observée avec le candidat FP32.
+
+L'utilisateur a ensuite essayé le chargement normal du **même dossier F16 dans
+le même build 9**, sans génération. Il rapporte également un message
+`Foundation._GenericObjCError`. Le défaut ne se limite donc pas à la sonde
+directe. Le message du parcours normal ne permet toutefois pas de situer son
+appel fautif : les deux erreurs affichées ne prouvent pas une cause interne
+identique. Le dossier est annoncé dans « Sur mon iPhone » ; la lecture complète
+de ses fichiers par Core AI n'est pas vérifiée par cette indication.
+
+Une relecture des deux fichiers `main.mlirb` sources confirme les SHA-256
+stockés dans leurs `main.hash`, avec des identités différentes :
+
+| Export source | Octets `main.mlirb` | SHA-256 |
+| --- | ---: | --- |
+| F16 `rmscomposite` | 1 381 786 497 | `bd71bc0793677c4c4789b78109426b96afa2af7fc4df332f0c88695a43967362` |
+| FP32 `rms-fp32io` | 1 381 891 930 | `bc457ddb599c0bf21c5c65b6b9042f5bd1c9bbcba8d3833d96d3dde08200daf3` |
+
+Ces empreintes concernent les sources conservées sur l'ordinateur. Le rapport
+du build 9 n'inclut pas l'empreinte du modèle sélectionné sur le téléphone ;
+le nom issu des métadonnées ne remplace pas une vérification de cette copie.
+Le JSON physique reçu passe sans perte de champ le parseur TypeScript et le
+décodage, la validation puis le réencodage Foundation Swift 6 strict.
+
+La preuve suivante recherchée est le journal système autour d'un échec F16,
+afin de chercher une cause que l'erreur Swift ne transmet pas. Avec un Mac,
+[Console permet de consulter les messages d'un iPhone connecté](https://support.apple.com/guide/console/log-messages-cnsl1012/mac) :
+sélectionner l'iPhone, démarrer le flux, effectuer un seul chargement F16,
+puis arrêter le flux après l'erreur et conserver les messages de cette fenêtre
+avec leur heure, processus, sous-système et texte complet. Examiner les
+messages d'Assist et ceux liés à Core AI, ANE et MPSGraph ; limiter d'emblée
+la collecte au seul processus Assist pourrait omettre un service système.
+Cette collecte ne garantit pas que le framework journalise une cause.
+
+Aucune dépendance aux embeddings, corruption de cache, insuffisance de mémoire
+ou erreur de placement n'est établie à ce stade. La réussite antérieure d'un
+autre build ne remplace pas le contrôle du build 9, et ce contrôle ne qualifie
+pas le modèle FP32.
