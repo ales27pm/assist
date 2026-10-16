@@ -75,24 +75,29 @@ Le contexte reste **32 768 jetons**. Les options hors ligne empêchent une réso
 silencieuse de fichiers manquants depuis une autre révision.
 
 ```sh
+ASSIST_EXPORT_ATTEMPT=gemma32k-group8-essai-01
+ASSIST_EXPORT_OUTPUT="../../exports/$ASSIST_EXPORT_ATTEMPT"
+ASSIST_EXPORT_PALETTES="../../exports/${ASSIST_EXPORT_ATTEMPT}-finalized-weights"
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --offline python \
   "$ASSIST_EXPORT_WRAPPER" \
   --exporter "$PWD/export.py" \
-  --palettes ../../exports/gemma32k-group8/finalized-weights -- \
+  --palettes "$ASSIST_EXPORT_PALETTES" -- \
   --model google/gemma-4-E2B-it \
   --max-context-length 32768 \
   --compression-config "$ASSIST_EXPORT_RECIPE" \
-  --output-dir ../../exports/gemma32k-group8 \
+  --output-dir "$ASSIST_EXPORT_OUTPUT" \
   --output-name gemma4-e2b-32k-group8
 shasum -a 256 -c ../../gemma-source.sha256
 ```
 
 Ne pas ajouter `--overwrite` pour contourner un échec. Préserver le journal et
-utiliser un nouveau nom d’export après diagnostic. L’exporteur peut laisser des
+choisir un nouvel identifiant `ASSIST_EXPORT_ATTEMPT` après diagnostic : les
+répertoires de sortie et de palettes doivent tous deux être nouveaux. Le wrapper
+refuse un répertoire de palettes déjà présent. L’exporteur peut laisser des
 ressources partielles : la présence d’un dossier n’est pas une réussite.
 
 Le wrapper conserve les LUT/indices via l’argument `mmap_dir` de l’API Core AI
-et utilise un seul worker de clustering. Le répertoire `finalized-weights`
+et utilise un seul worker de clustering. Le répertoire de palettes
 reste séparé du bundle à transférer. L’exporteur Apple seul ne conserve pas ces
 fichiers, nécessaires au contrôle CPU. Ce wrapper ne reprend pas les adaptations
 mémoire de l’essai Linux documenté ; prévoir les ressources de l’exporteur amont.
@@ -100,7 +105,7 @@ mémoire de l’essai Linux documenté ; prévoir les ressources de l’exporteu
 ## Bundle à transférer
 
 Transférer le **dossier complet** produit, par exemple
-`exports/gemma32k-group8/gemma4-e2b-32k-group8/`, avec `metadata.json`, l’asset `.aimodel`, le
+`exports/gemma32k-group8-essai-01/gemma4-e2b-32k-group8/`, avec `metadata.json`, l’asset `.aimodel`, le
 dossier `tokenizer/` et le sidecar PLE. Ne pas transférer seulement `.aimodel`.
 Rendre tous les fichiers disponibles localement dans Fichiers avant l’import ;
 un placeholder iCloud n’est pas une ressource hors ligne. Pour ce prototype,

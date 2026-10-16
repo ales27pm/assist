@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import time
 
+from gemma_contracts import checkpoint_manifest, diagnostic_suite, finalized_palette_paths
+
 
 def compact(text):
     return ''.join(text.split())
@@ -42,9 +44,7 @@ def replace_palettes(model, directory):
     import torch
     from safetensors import safe_open
 
-    paths = sorted(directory.glob('*.safetensors'))
-    if len(paths) != 275:
-        raise ValueError('Expected all 275 finalized parameters of the pinned E2B recipe')
+    paths = finalized_palette_paths(directory)
     for path in paths:
         prefix = 'extend.model.'
         name = path.name.removesuffix('.safetensors')
@@ -106,25 +106,39 @@ def replace_embeddings(model, ple_path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--checkpoint', type=Path, required=True)
-    parser.add_argument('--checkpoint-sha256', required=True)
+    parser.add_argument('--checkpoint-sha256', help='Trusted SHA-256 of model.safetensors')
+    parser.add_argument('--checkpoint-manifest-sha256', help='Trusted complete checkpoint inventory SHA-256')
+    parser.add_argument('--print-checkpoint-manifest', action='store_true',
+                        help='Print the inventory and its digest without loading a model; does not authenticate the source')
     parser.add_argument('--palettes', type=Path)
     parser.add_argument('--ple', type=Path, help='Also simulate the recipe INT8 main embedding and this PLE sidecar')
     parser.add_argument('--cases', type=Path,
                         default=Path(__file__).resolve().parent / 'fixtures/gemma-quality.json')
-    parser.add_argument('--output', type=Path, required=True, help='New result file; existing files are refused')
+    parser.add_argument('--output', type=Path, help='New result file; required for inference, existing files are refused')
     args = parser.parse_args()
-    if args.output.exists():
-        parser.error('Refusing to overwrite an earlier result')
-    digest = sha256(args.checkpoint / 'model.safetensors')
+    if not args.print_checkpoint_manifest:
+        if not args.output or not args.checkpoint_sha256 or not args.checkpoint_manifest_sha256:
+            parser.error('Inference requires --output, --checkpoint-sha256 and --checkpoint-manifest-sha256')
+        if args.output.exists():
+            parser.error('Refusing to overwrite an earlier result')
+    try:
+        manifest, manifest_digest = checkpoint_manifest(args.checkpoint)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.print_checkpoint_manifest:
+        print(json.dumps({'checkpoint_manifest': manifest,
+                          'checkpoint_manifest_sha256': manifest_digest}, indent=2))
+        return
+    if manifest_digest != args.checkpoint_manifest_sha256:
+        parser.error('Complete checkpoint manifest SHA-256 mismatch')
+    digest = next(row['sha256'] for row in manifest['files'] if row['file'] == 'model.safetensors')
     if digest != args.checkpoint_sha256:
         parser.error('Checkpoint SHA-256 mismatch')
-    suite_bytes = args.cases.read_bytes()
-    suite = json.loads(suite_bytes)
+    try:
+        suite, suite_digest = diagnostic_suite(args.cases)
+    except ValueError as exc:
+        parser.error(str(exc))
     cases = suite['cases']
-    if (suite['schema_version'] != 1 or not cases or len(cases) != suite['case_count']
-            or len({case['id'] for case in cases}) != len(cases)
-            or suite['sampling'] != {'do_sample': False, 'temperature': 0, 'max_new_tokens': 64}):
-        parser.error('Unexpected diagnostic suite contract')
     for key in ('HF_TOKEN', 'HUGGING_FACE_HUB_TOKEN', 'HUGGINGFACE_HUB_TOKEN'):
         os.environ.pop(key, None)
     os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
@@ -136,7 +150,7 @@ def main():
     torch.set_num_threads(2)
     torch.set_num_interop_threads(2)
     palette_inventory = ([{'file': path.name, 'sha256': sha256(path)}
-                          for path in sorted(args.palettes.glob('*.safetensors'))]
+                          for path in finalized_palette_paths(args.palettes)]
                          if args.palettes else [])
     ple_sha256 = sha256(args.ple) if args.ple else None
     model = Gemma4ForConditionalGeneration.from_pretrained(
@@ -164,7 +178,8 @@ def main():
         results.append(row)
         print(json.dumps(row, ensure_ascii=False), flush=True)
     result = {'scope': 'CPU HF forward; compiled Core AI and iPhone remain unverified',
-              'checkpoint_sha256': digest, 'suite_sha256': hashlib.sha256(suite_bytes).hexdigest(),
+              'checkpoint_sha256': digest, 'checkpoint_manifest': manifest,
+              'checkpoint_manifest_sha256': manifest_digest, 'suite_sha256': suite_digest,
               'palettes': args.palettes is not None, 'int8_embeddings': args.ple is not None,
               'palette_inventory': palette_inventory, 'ple_sha256': ple_sha256,
               'torch_version': torch.__version__, 'transformers_version': transformers.__version__,

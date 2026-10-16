@@ -65,7 +65,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   phase = 'idle';
   bundledModelAvailable = false;
-  native.getMonitoringSnapshot.mockResolvedValue(JSON.stringify(monitoringReport));
+  native.getMonitoringSnapshot.mockResolvedValue(
+    JSON.stringify(monitoringReport),
+  );
   native.getStatus.mockImplementation(async () =>
     JSON.stringify({
       phase,
@@ -119,7 +121,9 @@ test('routes the graph diagnostic through its own native method in the full scre
       { stage: 'before_function_load', elapsedMs: 10, thermalState: 'nominal' },
       { stage: 'after_function_load', elapsedMs: 20, thermalState: 'nominal' },
     ],
-    measurementMethods: { scope: 'Synthetic native boundary for screen routing' },
+    measurementMethods: {
+      scope: 'Synthetic native boundary for screen routing',
+    },
   };
   native.runModelLoadProbe.mockImplementation(async () => {
     native.getLastModelLoadProbe.mockResolvedValue(JSON.stringify(report));
@@ -127,12 +131,17 @@ test('routes the graph diagnostic through its own native method in the full scre
   });
   const user = userEvent.setup();
   await renderAsync(<AssistantScreen />);
-  expect(screen.getByRole('button', { name: 'Tester ce graphe' })).toBeDisabled();
+  expect(
+    screen.getByRole('button', { name: 'Tester ce graphe' }),
+  ).toBeDisabled();
   await user.press(
     screen.getByRole('button', { name: 'Choisir un dossier exporté' }),
   );
   await user.press(
-    await screen.findByRole('button', { name: 'Tester ce graphe', disabled: false }),
+    await screen.findByRole('button', {
+      name: 'Tester ce graphe',
+      disabled: false,
+    }),
   );
   expect(await screen.findByText(/Ce graphe a été chargé/)).toBeOnTheScreen();
   expect(native.runModelLoadProbe).toHaveBeenCalledTimes(1);
@@ -180,15 +189,21 @@ test('requires unloading Gemma before running the primitive diagnostic', async (
 });
 
 test('shares the original failed diagnostic when runtime monitoring is unavailable', async () => {
-  native.getMonitoringSnapshot.mockRejectedValue(new Error('Sampler unavailable'));
+  native.getMonitoringSnapshot.mockRejectedValue(
+    new Error('Sampler unavailable'),
+  );
   const share = jest.spyOn(Share, 'share').mockResolvedValue({
     action: Share.sharedAction,
     activityType: undefined,
   });
   const user = userEvent.setup();
   await renderAsync(<AssistantScreen />);
-  await user.press(screen.getByRole('button', { name: 'Tester le calcul natif' }));
-  await user.press(screen.getByRole('button', { name: 'Partager le diagnostic' }));
+  await user.press(
+    screen.getByRole('button', { name: 'Tester le calcul natif' }),
+  );
+  await user.press(
+    screen.getByRole('button', { name: 'Partager le diagnostic' }),
+  );
   expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual({
     ...primitiveReport,
     runtimeMonitoring: null,
@@ -427,37 +442,44 @@ test('unloading clears the response from the shareable report', async () => {
   }
 });
 
-test('an empty EOS result remains retryable without an empty assistant turn', async () => {
-  native.generate.mockImplementation(async raw => {
-    const request = JSON.parse(raw);
-    if (
-      request.messages.some((message: { content: string }) => !message.content)
-    ) {
-      throw new Error('Conversation invalide');
-    }
-    const text =
-      native.generate.mock.calls.length === 1 ? '' : 'Réponse suivante';
-    return JSON.stringify({
-      requestId: request.requestId,
-      text,
-      generatedTokens: text ? 2 : 0,
-      promptTokens: 50,
-      elapsedMs: 200,
-      finishReason: 'eos',
-      aneExecution: 'unverified',
+test.each(['', ' \n\t '])(
+  'a blank EOS result %j remains retryable without an empty assistant turn',
+  async firstText => {
+    native.generate.mockImplementation(async raw => {
+      const request = JSON.parse(raw);
+      if (
+        request.messages.some(
+          (message: { content: string }) => !message.content.trim(),
+        )
+      ) {
+        throw new Error('Conversation invalide');
+      }
+      const text =
+        native.generate.mock.calls.length === 1
+          ? firstText
+          : 'Réponse suivante';
+      return JSON.stringify({
+        requestId: request.requestId,
+        text,
+        generatedTokens: text ? 2 : 0,
+        promptTokens: 50,
+        elapsedMs: 200,
+        finishReason: 'eos',
+        aneExecution: 'unverified',
+      });
     });
-  });
-  const user = await load();
-  await user.type(screen.getByLabelText('Message'), 'Bonjour');
-  await user.press(screen.getByRole('button', { name: 'Envoyer' }));
-  expect(screen.queryByText('ASSIST')).not.toBeOnTheScreen();
-  expect(screen.getByLabelText('Message')).toHaveDisplayValue('Bonjour');
-  await user.press(screen.getByRole('button', { name: 'Envoyer' }));
-  expect(await screen.findByText('Réponse suivante')).toBeOnTheScreen();
-  expect(JSON.parse(native.generate.mock.calls[1][0]).messages).toEqual([
-    { role: 'user', content: 'Bonjour' },
-  ]);
-});
+    const user = await load();
+    await user.type(screen.getByLabelText('Message'), 'Bonjour');
+    await user.press(screen.getByRole('button', { name: 'Envoyer' }));
+    expect(screen.queryByText('ASSIST')).not.toBeOnTheScreen();
+    expect(screen.getByLabelText('Message')).toHaveDisplayValue('Bonjour');
+    await user.press(screen.getByRole('button', { name: 'Envoyer' }));
+    expect(await screen.findByText('Réponse suivante')).toBeOnTheScreen();
+    expect(JSON.parse(native.generate.mock.calls[1][0]).messages).toEqual([
+      { role: 'user', content: 'Bonjour' },
+    ]);
+  },
+);
 
 test('forwards budgets above 32 unchanged', async () => {
   const user = await load();

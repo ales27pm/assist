@@ -157,11 +157,11 @@ struct RuntimeMonitorChecks {
 
         let monitor = AssistRuntimeMonitor()
         let first = try await report(monitor)
-        let second = try await report(monitor)
+        _ = try await report(monitor)
         check(first["kind"] as? String == "assistRuntimeMonitoring" && first["schemaVersion"] as? Int == 1,
               "The public monitoring envelope is stable.")
         check(first["diagnostic"] is NSNull, "Unknown diagnostic status encodes explicit null.")
-        check((second["history"] as! [Any]).count == 1, "Immediate native snapshots share one system sample.")
+        check((first["history"] as! [Any]).count == 1, "The first native snapshot contains one system sample.")
         await monitor.beginDiagnostic(total: 48)
         await monitor.diagnosticCase(variant: "private prompt", mode: "/path", function: "raw error", passed: false)
         await monitor.shutdown()

@@ -117,6 +117,7 @@ export function SpecializationRepairPanel({
               );
               if (saved && canUpdate()) {
                 setEvidence(saved);
+                setError('');
               }
             } catch {
               if (canUpdate()) {

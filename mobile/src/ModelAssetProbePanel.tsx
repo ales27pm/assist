@@ -9,6 +9,7 @@ import {
 
 type Props = {
   selected: boolean;
+  selectionVersion?: number;
   busy: boolean;
   modelLoaded: boolean;
   perform: (action: () => Promise<void>) => Promise<void>;
@@ -24,6 +25,7 @@ const failureMessages: Record<AssetProbeErrorCode, string> = {
 
 export function ModelAssetProbePanel({
   selected,
+  selectionVersion = 0,
   busy,
   modelLoaded,
   perform,
@@ -32,6 +34,7 @@ export function ModelAssetProbePanel({
   const [error, setError] = useState('');
   const alive = useRef(true);
   const version = useRef(0);
+  const selection = useRef({ selected, selectionVersion });
   const available =
     typeof NativeAssist?.runModelAssetProbe === 'function' &&
     typeof NativeAssist?.getLastModelAssetProbe === 'function';
@@ -39,25 +42,49 @@ export function ModelAssetProbePanel({
 
   useEffect(() => {
     alive.current = true;
+    let current = true;
     const requestedVersion = version.current;
     if (available) {
       NativeAssist!
         .getLastModelAssetProbe()
         .then(json => {
-          if (alive.current && version.current === requestedVersion) {
+          if (
+            current &&
+            alive.current &&
+            version.current === requestedVersion
+          ) {
             setReport(parseAssetProbeReport(json));
           }
         })
         .catch(() => {
-          if (alive.current && version.current === requestedVersion) {
+          if (
+            current &&
+            alive.current &&
+            version.current === requestedVersion
+          ) {
             setError('Le rapport d’identité enregistré est indisponible.');
           }
         });
     }
     return () => {
+      current = false;
       alive.current = false;
     };
   }, [available]);
+
+  useEffect(() => {
+    if (
+      selection.current.selected !== selected ||
+      selection.current.selectionVersion !== selectionVersion
+    ) {
+      selection.current = { selected, selectionVersion };
+      // Saved reports do not identify the selected folder. A new selection
+      // invalidates both visible evidence and pending restores/manual results.
+      version.current += 1;
+      setReport(null);
+      setError('');
+    }
+  }, [selected, selectionVersion]);
 
   async function run() {
     if (disabled) {

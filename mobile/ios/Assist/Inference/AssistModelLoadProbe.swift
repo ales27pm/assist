@@ -399,6 +399,14 @@ enum AssistModelLoadProbe {
 
     static func lastReportJSON() throws -> String { try Store.applicationSupport().readJSON() }
 
+    static func validatedRoot(_ path: String, validate: (URL) throws -> Void) throws -> URL {
+        guard (path as NSString).isAbsolutePath else { throw Failure.invalidBundle }
+        let selected = URL(fileURLWithPath: path, isDirectory: true)
+        // Validate the selected entry before canonicalization can hide a root symlink.
+        try validate(selected)
+        return selected.resolvingSymlinksInPath().standardizedFileURL
+    }
+
     /// Factories are injected solely for bounded Foundation checks of persistence-before-call and lifetime.
     static func execute<Prepared: Sendable, Loaded>(
         report initial: Report, store: Store,
@@ -448,9 +456,7 @@ enum AssistModelLoadProbe {
         let assetURL: URL
         let sourceFunctionNames: Set<String>
         do {
-            guard (path as NSString).isAbsolutePath else { throw Failure.invalidBundle }
-            let root = URL(fileURLWithPath: path, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
-            try validateLocalDirectory(root)
+            let root = try validatedRoot(path, validate: validateLocalDirectory)
             bundle = try LanguageModelBundle(at: root)
             try AssistInferencePolicy.validateModel(tokenizer: bundle.tokenizer, context: bundle.maxContextLength,
                                                     embeddedTokenizer: bundle.hasEmbeddedTokenizer)

@@ -237,12 +237,19 @@ struct InferencePolicyChecks {
         try expect(oneFinite.topCandidates.count == 1 && oneFinite.topCandidates.first?.logit == -3, "one finite value produces only one candidate")
         let noFinite = try diagnostic([Float.nan, .infinity, -.infinity])
         try expect(noFinite.logitsAvailable && noFinite.topCandidates.isEmpty && noFinite.nonfiniteLogits == 3, "all-nonfinite available logits remain reportable")
+        // Swift has no Float16 arithmetic on Intel macOS; iOS/ARM64 and Linux cover this case.
+        #if !(os(macOS) && arch(x86_64))
         let halfLogits = try diagnostic([Float16(-2), 1.5, 1.5, .nan])
         try expect(halfLogits.topCandidates.map(\.tokenId) == [1, 2] && halfLogits.topCandidates.map(\.logit) == [1.5, 1.5], "Float16 scores convert to exact finite Double candidates")
         try expect(halfLogits.nonfiniteLogits == 1, "Float16 NaN is excluded")
+        #endif
         let finiteExtremes = try diagnostic([Double.greatestFiniteMagnitude, -Double.greatestFiniteMagnitude])
         try expect(finiteExtremes.topCandidates.count == 2 && finiteExtremes.nonfiniteLogits == 0, "finite Double extremes are preserved")
-        for report in [missingLogits, emptyLogits, negativeLogits, tiedLogits, mixedLogits, noFinite, halfLogits, finiteExtremes] {
+        var diagnosticReports = [missingLogits, emptyLogits, negativeLogits, tiedLogits, mixedLogits, noFinite, finiteExtremes]
+        #if !(os(macOS) && arch(x86_64))
+        diagnosticReports.append(halfLogits)
+        #endif
+        for report in diagnosticReports {
             let json = try AssistJSON.encode(report)
             try expect(!json.contains("NaN") && !json.contains("Infinity"), "diagnostic JSON never serializes nonfinite scores")
         }

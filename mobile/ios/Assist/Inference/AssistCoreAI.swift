@@ -238,6 +238,7 @@ private actor AssistInferenceCoordinator {
     private var operationInFlight = false
     private var cancellationWaiters = 0
     private var generationTask: Task<String, any Error>?
+    private var repairTask: Task<String, any Error>?
     private var engine: (any InferenceEngine)?
     private var tokenizer: (any Tokenizer)?
     private var stopTokens = Set<Int32>()
@@ -351,15 +352,15 @@ private actor AssistInferenceCoordinator {
     func generate(_ json: String, onProgress: @escaping @Sendable (String) -> Void) async throws -> String {
         guard !busy else { throw AssistInferenceError.busy }
         guard engine != nil, tokenizer != nil else { throw AssistInferenceError.notLoaded }
-        let request = try JSONDecoder().decode(AssistGenerationRequest.self, from: Data(json.utf8))
-        try request.validate()
-        operationInFlight = true
-        phase = .generating
-        lastError = nil
-        // Capturing this actor inherits its executor; tokenizer access stays on it.
-        let task = Task { try await self.runGeneration(request, onProgress: onProgress) }
-        generationTask = task
         do {
+            let request = try JSONDecoder().decode(AssistGenerationRequest.self, from: Data(json.utf8))
+            try request.validate()
+            operationInFlight = true
+            phase = .generating
+            lastError = nil
+            // Capturing this actor inherits its executor; tokenizer access stays on it.
+            let task = Task { try await self.runGeneration(request, onProgress: onProgress) }
+            generationTask = task
             let result = try await task.value
             // runGeneration's defer has restored the actual engine phase before this point.
             return result
@@ -519,6 +520,16 @@ private actor AssistInferenceCoordinator {
     }
 
     func cancel() async throws -> String {
+        if let task = repairTask {
+            cancellationWaiters += 1
+            defer { cancellationWaiters -= 1 }
+            task.cancel()
+            await monitor.transition(phase: "cancelling", code: "CANCELLATION_REQUESTED")
+            // Keep the exclusive latch until cooperative cancellation and persistence drain.
+            _ = await task.result
+            await monitor.transition(phase: phase.rawValue, code: "PHASE_CHANGED")
+            return try statusJSON()
+        }
         guard let task = generationTask else {
             guard !busy else { throw AssistInferenceError.busy }
             return try statusJSON()
@@ -601,22 +612,11 @@ private actor AssistInferenceCoordinator {
         guard #available(iOS 27.2, *) else {
             throw AssistInferenceError.invalid("Cette réparation nécessite iOS 27.2 ou une version ultérieure.")
         }
-        operationInFlight = true
-        defer { operationInFlight = false }
-        await monitor.transition(phase: "diagnosing", code: "SPECIALIZATION_REPAIR_STARTED")
-        await monitor.beginDiagnostic(total: 48)
-        do {
-            let monitor = monitor
-            let result = try await Self.repairNumericalSpecialization { variant, mode, function, passed in
+        let monitor = monitor
+        return try await runRepair(diagnosticCases: 48) {
+            try await Self.repairNumericalSpecialization { variant, mode, function, passed in
                 await monitor.diagnosticCase(variant: variant, mode: mode, function: function, passed: passed)
             }
-            await monitor.endDiagnostic(phase: phase.rawValue)
-            await monitor.transition(phase: phase.rawValue, code: "SPECIALIZATION_REPAIR_COMPLETED")
-            return result
-        } catch {
-            await monitor.transition(phase: phase.rawValue, code: "DIAGNOSTIC_FAILED", severity: "warning")
-            await monitor.transition(phase: phase.rawValue, code: "SPECIALIZATION_REPAIR_FAILED", severity: "warning")
-            throw error
         }
     }
 
@@ -630,17 +630,38 @@ private actor AssistInferenceCoordinator {
         }
         // Keep the first repair bounded to the function whose failure was captured.
         guard functionName == "extend_1024_8" else { throw AssistModelLoadProbe.Failure.invalidRequest }
-        operationInFlight = true
-        defer { operationInFlight = false }
-        await monitor.transition(phase: "diagnosing", code: "SPECIALIZATION_REPAIR_STARTED")
-        do {
-            let result = try await Self.repairSelectedSpecialization(path: path, functionName: functionName)
-            await monitor.transition(phase: phase.rawValue, code: "SPECIALIZATION_REPAIR_COMPLETED")
-            return result
-        } catch {
-            await monitor.transition(phase: phase.rawValue, code: "SPECIALIZATION_REPAIR_FAILED", severity: "warning")
-            throw error
+        return try await runRepair {
+            try await Self.repairSelectedSpecialization(path: path, functionName: functionName)
         }
+    }
+
+    private func runRepair(
+        diagnosticCases: Int? = nil, operation: @escaping @Sendable () async throws -> String
+    ) async throws -> String {
+        operationInFlight = true
+        // Register before the first suspension so cancel can always find the active repair.
+        let task = Task {
+            defer {
+                repairTask = nil
+                operationInFlight = false
+            }
+            await monitor.transition(phase: "diagnosing", code: "SPECIALIZATION_REPAIR_STARTED")
+            if let diagnosticCases { await monitor.beginDiagnostic(total: diagnosticCases) }
+            do {
+                let result = try await operation()
+                if diagnosticCases != nil { await monitor.endDiagnostic(phase: phase.rawValue) }
+                await monitor.transition(phase: phase.rawValue, code: "SPECIALIZATION_REPAIR_COMPLETED")
+                return result
+            } catch {
+                if diagnosticCases != nil {
+                    await monitor.transition(phase: phase.rawValue, code: "DIAGNOSTIC_FAILED", severity: "warning")
+                }
+                await monitor.transition(phase: phase.rawValue, code: "SPECIALIZATION_REPAIR_FAILED", severity: "warning")
+                throw error
+            }
+        }
+        repairTask = task
+        return try await task.value
     }
 
     @concurrent

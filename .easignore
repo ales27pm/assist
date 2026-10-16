@@ -1,4 +1,4 @@
-# EAS receives source, build scripts and synthetic diagnostics, never Gemma weights or personal data.
+# EAS receives source and diagnostics; only the explicitly staged Gemma bundle may include weights.
 /*
 !/mobile/
 !/scripts/
@@ -15,6 +15,14 @@
 **/.gradle/
 **/.idea/
 **/xcuserdata/
+**/*.aimodel/
+!/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/
+!/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/**
+!/mobile/ios/Assist/NumericalProbeFP32/RMSNormProbe.aimodel/
+!/mobile/ios/Assist/NumericalProbeFP32/RMSNormProbe.aimodel/**
+!/mobile/ios/Assist/BundledModels/Gemma/
+!/mobile/ios/Assist/BundledModels/Gemma/**
+# Keep secrets and unconverted checkpoints excluded even inside the staged bundle.
 **/.xcode.env.local
 **/.env
 **/.env.*
@@ -29,14 +37,10 @@
 **/*.ipa
 **/*.ips
 **/*.jsbundle
-**/*.aimodel/
-!/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/
-!/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/**
-!/mobile/ios/Assist/NumericalProbeFP32/RMSNormProbe.aimodel/
-!/mobile/ios/Assist/NumericalProbeFP32/RMSNormProbe.aimodel/**
 **/*.mlmodelc/
 **/*.mlpackage/
 **/*.safetensors
+!/mobile/ios/Assist/BundledModels/Gemma/*_ple.safetensors
 **/*.gguf
 **/models/
 **/artifacts/

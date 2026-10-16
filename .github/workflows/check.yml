@@ -24,8 +24,10 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: python3 ../scripts/test-ios-launch.py
+      - run: python3 ../scripts/test-export-contracts.py
       - run: bash ../scripts/test-preflight.sh
       - run: node --test ../scripts/test-bundle-gemma.mjs
+      - run: node --test ../scripts/test-eas-archive.mjs
   swift-policy:
     runs-on: macos-15
     timeout-minutes: 10
@@ -33,12 +35,5 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - name: Foundation-only policy (does not compile Core AI)
-        run: |
-          CHECK_DIR="$(mktemp -d)"
-          xcrun swiftc -swift-version 6 -strict-concurrency=complete \
-            -D ASSIST_POLICY_CHECKS \
-            mobile/ios/Assist/Inference/InferencePolicy.swift \
-            mobile/ios/Assist/Inference/InferencePolicyChecks.swift \
-            -o "$CHECK_DIR/policy-checks"
-          "$CHECK_DIR/policy-checks"
+      - name: Foundation and CryptoKit contracts (does not compile Core AI)
+        run: bash scripts/check-swift.sh

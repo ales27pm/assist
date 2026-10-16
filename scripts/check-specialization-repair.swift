@@ -214,7 +214,7 @@ struct SpecializationRepairChecks {
               "After a successful cache call, a persistence failure still forbids additional work.")
 
         // Cancellation is checked before verification, deletion and qualification.
-        for boundary in ["before-verification", "before-deletion", "before-qualification"] {
+        for boundary in ["before-verification", "before-deletion", "before-qualification", "during-qualification"] {
             let cancellationStore = Repair.Store(directory: temporary.appendingPathComponent(boundary))
             let cancellationCounts = Counts()
             let task = Task {
@@ -227,11 +227,16 @@ struct SpecializationRepairChecks {
                     }, invalidate: { _ in
                         cancellationCounts.add("delete")
                         if boundary == "before-qualification" { withUnsafeCurrentTask { $0?.cancel() } }
-                    }, qualify: { cancellationCounts.add("qualify"); return original })
+                    }, qualify: {
+                        cancellationCounts.add("qualify")
+                        if boundary == "during-qualification" { withUnsafeCurrentTask { $0?.cancel() } }
+                        return original
+                    })
             }
             await failed(.cancelled) { try await task.value }
-            check(cancellationCounts.get("qualify") == 0, "Cancellation never runs the diagnostic afterward.")
-            check(cancellationCounts.get("delete") == (boundary == "before-qualification" ? 1 : 0),
+            check(cancellationCounts.get("qualify") == (boundary == "during-qualification" ? 1 : 0),
+                  "Cancellation never starts a later diagnostic or accepts a cancelled result.")
+            check(cancellationCounts.get("delete") == (["before-qualification", "during-qualification"].contains(boundary) ? 1 : 0),
                   "Cancellation prevents the next cache effect.")
             check(try report(cancellationStore).errorCode == Repair.Failure.cancelled.rawValue, "Persist cancellation without an automatic retry.")
         }

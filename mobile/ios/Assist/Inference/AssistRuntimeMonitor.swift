@@ -584,9 +584,14 @@ actor AssistRuntimeMonitor {
                 task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
             }
         }
+        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+        let availableMemory = UInt64(os_proc_available_memory())
+        #else
+        let availableMemory: UInt64? = nil
+        #endif
         return AssistRuntimeSystemReading(
             physicalFootprintBytes: result == KERN_SUCCESS ? info.phys_footprint : nil,
-            availableMemoryBytes: UInt64(os_proc_available_memory()), cumulativeCPUSeconds: cpu,
+            availableMemoryBytes: availableMemory, cumulativeCPUSeconds: cpu,
             thermalState: thermalState(), lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
         )
         #else

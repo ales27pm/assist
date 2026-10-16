@@ -381,7 +381,10 @@ enum AssistSpecializationRepair {
         do { try Task.checkCancellation() }
         catch { try recordFailure(.cancelled, error); throw Failure.cancelled }
         let raw: String
-        do { raw = try await qualify() }
+        do {
+            raw = try await qualify()
+            try Task.checkCancellation()
+        }
         catch {
             let failure: Failure = error is CancellationError ? .cancelled : .qualificationFailed
             try recordFailure(failure, error)
