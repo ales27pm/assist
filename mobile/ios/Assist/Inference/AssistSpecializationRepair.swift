@@ -16,15 +16,34 @@ enum AssistSpecializationRepair {
         "nativeErrors": "At most three sanitized NSError domains, signed codes and Swift type names; descriptions and userInfo are omitted",
         "completion": "Completed means the original diagnostic returned a JSON object; it does not assert numerical qualification, generation readiness or accelerator placement",
     ]
+    static let abliteratedMeasurementMethods: [String: String] = {
+        var methods = measurementMethods
+        methods["source"] = "The injected source verifier completes before invalidation; the selected abliterated source is pinned independently; source files are not modified"
+        return methods
+    }()
 
     enum Target: String, Codable, Sendable {
         case bundledF16 = "bundled_f16_neural_engine"
         case selectedGemmaF16 = "selected_f16_neural_engine"
+        case selectedAbliteratedGemmaF16 = "selected_abliterated_f16_neural_engine"
+
+        static func selected(modelName: String) throws -> Target {
+            guard let target = [Self.selectedGemmaF16, .selectedAbliteratedGemmaF16].first(where: { $0.modelName == modelName }) else {
+                throw Failure.invalidRequest
+            }
+            return target
+        }
+
+        var measurementMethods: [String: String] {
+            self == .selectedAbliteratedGemmaF16 ? AssistSpecializationRepair.abliteratedMeasurementMethods
+                : AssistSpecializationRepair.measurementMethods
+        }
 
         var modelName: String {
             switch self {
             case .bundledF16: return "rmsnorm-f16-boundary"
             case .selectedGemmaF16: return "gemma4-e2b-32k-group8-rmscomposite"
+            case .selectedAbliteratedGemmaF16: return "gemma4-e2b-32k-group8-abliterated-rmscomposite"
             }
         }
 
@@ -32,6 +51,7 @@ enum AssistSpecializationRepair {
             switch self {
             case .bundledF16: return "46932657bf6ea3e4a3e99abba91b377b1ddbfb731a8553a4d5728fc414f54c8c"
             case .selectedGemmaF16: return "bd71bc0793677c4c4789b78109426b96afa2af7fc4df332f0c88695a43967362"
+            case .selectedAbliteratedGemmaF16: return "a46f84f3bf569ac06da3b86eb24400c31b367da5b831566da0786987f863c8f0"
             }
         }
     }
@@ -164,6 +184,7 @@ enum AssistSpecializationRepair {
             self.target = target
             modelName = target.modelName
             sourceAssetSHA256 = target.sourceAssetSHA256
+            measurementMethods = target.measurementMethods
             self.nativeBuild = nativeBuild
             self.osVersion = osVersion
             attempt = .current()
@@ -191,7 +212,7 @@ enum AssistSpecializationRepair {
                   scope == "single_model_neural_engine_cache_entry", modelName == target.modelName,
                   sourceAssetSHA256 == target.sourceAssetSHA256, computePreference == "neural_engine_preferred",
                   Self.safeVersion(nativeBuild), Self.safeVersion(osVersion), (1...6).contains(steps.count),
-                  measurementMethods == AssistSpecializationRepair.measurementMethods else { throw Failure.corruptReport }
+                  measurementMethods == target.measurementMethods else { throw Failure.corruptReport }
             try attempt.validate()
             let prefix: [Stage] = [.verifyingSource, .invalidatingEntry, .entryInvalidated, .qualifying, .completed]
             let observed = steps.map(\.stage)

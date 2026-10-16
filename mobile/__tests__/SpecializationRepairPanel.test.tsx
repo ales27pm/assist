@@ -10,6 +10,7 @@ import NativeAssist from '../specs/NativeAssist';
 import { SpecializationRepairPanel } from '../src/SpecializationRepairPanel';
 import {
   repairTargets,
+  repairMeasurementMethodsForTarget,
   specializationRepairMeasurementMethods,
 } from '../src/specializationRepair';
 
@@ -125,14 +126,20 @@ function numericWrapper(nativeErrors = 0, deviations = 0) {
     },
   };
 }
-function gemmaWrapper(stage: 'completed' | 'failed') {
+function gemmaWrapper(
+  stage: 'completed' | 'failed',
+  target:
+    | 'selected_f16_neural_engine'
+    | 'selected_abliterated_f16_neural_engine' = 'selected_f16_neural_engine',
+) {
   return {
     schemaVersion: 1,
     kind: 'assistSpecializationRepairResult',
     repair: {
       ...repair,
-      target: 'selected_f16_neural_engine',
-      ...repairTargets.selected_f16_neural_engine,
+      target,
+      ...repairTargets[target],
+      measurementMethods: repairMeasurementMethodsForTarget(target),
     },
     diagnostic: {
       schemaVersion: 1,
@@ -141,7 +148,7 @@ function gemmaWrapper(stage: 'completed' | 'failed') {
       aneExecution: 'unverified',
       nativeBuild: '11',
       osVersion: 'iOS 27.2',
-      modelName: repairTargets.selected_f16_neural_engine.modelName,
+      modelName: repairTargets[target].modelName,
       contextCapacity: 32768,
       functionName: 'extend_1024_8',
       stage,
@@ -285,11 +292,16 @@ test('reports all produced outputs separately from the twelve known numerical de
   ).toBeOnTheScreen();
 });
 
-test.each(['completed', 'failed'] as const)(
-  'requests the fixed Gemma function once and displays load %s separately',
-  async stage => {
+test.each([
+  ['completed', 'selected_f16_neural_engine'],
+  ['failed', 'selected_f16_neural_engine'],
+  ['completed', 'selected_abliterated_f16_neural_engine'],
+  ['failed', 'selected_abliterated_f16_neural_engine'],
+] as const)(
+  'requests the fixed Gemma function once and displays load %s separately for %s',
+  async (stage, target) => {
     native.repairModelLoadProbe.mockResolvedValue(
-      JSON.stringify(gemmaWrapper(stage)),
+      JSON.stringify(gemmaWrapper(stage, target)),
     );
     const user = userEvent.setup();
     await renderAsync(
@@ -312,6 +324,9 @@ test.each(['completed', 'failed'] as const)(
     expect(native.repairModelLoadProbe).toHaveBeenCalledWith('extend_1024_8');
     expect(native.runModelLoadProbe).not.toHaveBeenCalled();
     expect(native.loadModel).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(new RegExp(repairTargets[target].modelName)),
+    ).toBeOnTheScreen();
   },
 );
 

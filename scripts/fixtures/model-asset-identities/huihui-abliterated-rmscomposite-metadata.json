@@ -1,0 +1,49 @@
+{
+  "metadata_version": "0.2",
+  "kind": "llm",
+  "name": "gemma4-e2b-32k-group8-abliterated-rmscomposite",
+  "assets": {
+    "main": "gemma4-e2b-32k-group8-abliterated-rmscomposite.aimodel"
+  },
+  "language": {
+    "tokenizer": "google/gemma-4-E2B-it",
+    "vocab_size": 262144,
+    "max_context_length": 32768,
+    "embedded_tokenizer": true,
+    "function_map": {
+      "main": [
+        "main"
+      ]
+    },
+    "overrides": {
+      "sliding_window": 512,
+      "rope": {
+        "sliding_head_dim": 256,
+        "global_head_dim": 512,
+        "sliding_rope_theta": 10000.0,
+        "global_rope_theta": 1000000.0,
+        "partial_rotary_factor": 0.25
+      },
+      "final_logit_softcapping": 30.0
+    },
+    "eos_token_ids": [
+      1,
+      106,
+      50
+    ]
+  },
+  "source": {
+    "model_definition": "torch",
+    "hf_model_id": "huihui-ai/Huihui-gemma-4-E2B-it-abliterated",
+    "revision": "3d1e3d50d7a04585ce4ded197b2fd7a90c04647c",
+    "export_alias": "google/gemma-4-E2B-it"
+  },
+  "compression": "4bit_palettized_group8",
+  "compilation": {
+    "date": "2026-10-16T18:29:13.023684+00:00",
+    "targets": []
+  },
+  "auxiliary_assets": {
+    "per_layer_embeddings": "gemma4-e2b-32k-group8-abliterated-rmscomposite_ple.safetensors"
+  }
+}

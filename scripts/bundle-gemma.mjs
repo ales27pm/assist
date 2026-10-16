@@ -10,6 +10,11 @@ export const SOURCE_MODEL = Object.freeze({
   repository: 'google/gemma-4-E2B-it',
   revision: '3e22461f65e89153144f8adb70e3b8c2cc9845a7',
 });
+export const ABLITERATED_SOURCE_MODEL = Object.freeze({
+  repository: 'huihui-ai/Huihui-gemma-4-E2B-it-abliterated',
+  revision: '3d1e3d50d7a04585ce4ded197b2fd7a90c04647c',
+});
+const APPROVED_SOURCE_MODELS = Object.freeze([SOURCE_MODEL, ABLITERATED_SOURCE_MODEL]);
 export const EXPORTER = Object.freeze({
   repository: 'apple/coreai-models',
   revision: '9db747612f972001279f02adb04d3ef982310d0e',
@@ -120,9 +125,16 @@ async function readJSON(file, expected) {
 
 function validateLock(lock) {
   requireCondition(lock?.schemaVersion === 1, 'Unsupported Gemma lock schema');
-  for (const [field, expected] of [['model', SOURCE_MODEL], ['export', EXPORTER]]) {
-    requireCondition(Object.entries(expected).every(([key, value]) => lock[field]?.[key] === value),
-      `Unapproved ${field} provenance in Gemma lock`);
+  const matchesProvenance = (actual, expected) =>
+    Object.entries(expected).every(([key, value]) => actual?.[key] === value);
+  const model = APPROVED_SOURCE_MODELS.find(expected => matchesProvenance(lock.model, expected));
+  requireCondition(model, 'Unapproved model provenance in Gemma lock');
+  requireCondition(matchesProvenance(lock.export, EXPORTER), 'Unapproved export provenance in Gemma lock');
+  // Existing baseline locks remain valid. Derived weights must identify the
+  // separately verified canonical tokenizer rather than imply a new tokenizer.
+  if (model === ABLITERATED_SOURCE_MODEL || Object.hasOwn(lock, 'tokenizer')) {
+    requireCondition(matchesProvenance(lock.tokenizer, SOURCE_MODEL),
+      'Unapproved tokenizer provenance in Gemma lock');
   }
   requireCondition([8192, 32768].includes(lock.export.contextLength), 'Unsupported Gemma context length');
   requireCondition(Array.isArray(lock.files) && lock.files.length > 0, 'Gemma inventory must not be empty');
@@ -163,6 +175,10 @@ function validateMetadata(metadata, lock, records) {
     (language.embedded_tokenizer == null || language.embedded_tokenizer === true) &&
     metadata.vision == null && language.vision == null && Object.keys(metadata.assets ?? {}).join() === 'main' &&
     Object.keys(metadata.auxiliary_assets ?? {}).join() === 'per_layer_embeddings', 'Unsupported Gemma bundle metadata');
+  if (lock.model.repository === ABLITERATED_SOURCE_MODEL.repository) {
+    requireCondition(metadata.source?.hf_model_id === lock.model.repository &&
+      metadata.source.revision === lock.model.revision, 'Gemma metadata source differs from model provenance');
+  }
   const main = relativePath(metadata.assets.main);
   const ple = relativePath(metadata.auxiliary_assets.per_layer_embeddings);
   requireCondition(main.endsWith('.aimodel'), 'Expected an uncompiled .aimodel asset');

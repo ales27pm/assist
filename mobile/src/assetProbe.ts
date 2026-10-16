@@ -29,6 +29,47 @@ export const assetProbeExpectedFiles = [
   },
 ] as const;
 
+export const abliteratedAssetProbeExpectedFiles = [
+  {
+    role: 'bundle_metadata',
+    relativePath: 'metadata.json',
+    expectedBytes: 1254,
+    expectedSHA256:
+      'b91f1f01ac034431a73ea3de2ae7cf085d0b95e42cfcf20217e0e5c6b42ad609',
+  },
+  {
+    role: 'asset_metadata',
+    relativePath:
+      'gemma4-e2b-32k-group8-abliterated-rmscomposite.aimodel/metadata.json',
+    expectedBytes: 541,
+    expectedSHA256:
+      '2aa87f8b98e2c715a0c977a6a4e4a2f39c07aaf828a1b36f87ad68b036013943',
+  },
+  {
+    role: 'stored_main_hash',
+    relativePath:
+      'gemma4-e2b-32k-group8-abliterated-rmscomposite.aimodel/main.hash',
+    expectedBytes: 32,
+    expectedSHA256:
+      'd4e97fee1fe0516e35aa445dd62c7e25b337d5d32b84543609b2edca89e177f5',
+  },
+  {
+    role: 'main_bytecode',
+    relativePath:
+      'gemma4-e2b-32k-group8-abliterated-rmscomposite.aimodel/main.mlirb',
+    expectedBytes: 1381786507,
+    expectedSHA256:
+      'a46f84f3bf569ac06da3b86eb24400c31b367da5b831566da0786987f863c8f0',
+  },
+] as const;
+
+export const assetProbeIdentities = {
+  'gemma4-e2b-32k-group8-rmscomposite': assetProbeExpectedFiles,
+  'gemma4-e2b-32k-group8-abliterated-rmscomposite':
+    abliteratedAssetProbeExpectedFiles,
+} as const;
+export type AssetProbeModelName = keyof typeof assetProbeIdentities;
+
 export const assetProbeMeasurementMethods = {
   scope:
     'Hashes four pinned F16 asset files only; no Core AI APIs, inference, specialization, cache inspection or model writes',
@@ -66,7 +107,7 @@ export type ModelAssetProbeReport = {
   schemaVersion: 1;
   kind: 'assistModelAssetDiagnostic';
   scope: 'selected_f16_asset_identity_only_no_coreai';
-  expectedModelName: 'gemma4-e2b-32k-group8-rmscomposite';
+  expectedModelName: AssetProbeModelName;
   contextCapacity: 32768;
   nativeBuild: string;
   osVersion: string;
@@ -133,7 +174,11 @@ export function parseAssetProbeReport(
     value.schemaVersion !== 1 ||
     value.kind !== 'assistModelAssetDiagnostic' ||
     value.scope !== 'selected_f16_asset_identity_only_no_coreai' ||
-    value.expectedModelName !== 'gemma4-e2b-32k-group8-rmscomposite' ||
+    typeof value.expectedModelName !== 'string' ||
+    !Object.prototype.hasOwnProperty.call(
+      assetProbeIdentities,
+      value.expectedModelName,
+    ) ||
     value.contextCapacity !== 32768 ||
     typeof value.stage !== 'string' ||
     !['checking_files', 'completed', 'failed'].includes(value.stage) ||
@@ -142,6 +187,8 @@ export function parseAssetProbeReport(
   ) {
     return invalid();
   }
+  const modelName = value.expectedModelName as AssetProbeModelName;
+  const expectedFiles = assetProbeIdentities[modelName];
   const attempt = record(value.attempt);
   const id = text(attempt.id, 36);
   const startedAtUTC = text(attempt.startedAtUTC, 24);
@@ -162,7 +209,7 @@ export function parseAssetProbeReport(
   }
   const files = value.files.map((item, index): AssetProbeFile => {
     const file = record(item);
-    const expected = assetProbeExpectedFiles[index];
+    const expected = expectedFiles[index];
     if (
       file.role !== expected.role ||
       file.relativePath !== expected.relativePath ||
@@ -211,7 +258,7 @@ export function parseAssetProbeReport(
     schemaVersion: 1,
     kind: 'assistModelAssetDiagnostic',
     scope: 'selected_f16_asset_identity_only_no_coreai',
-    expectedModelName: 'gemma4-e2b-32k-group8-rmscomposite',
+    expectedModelName: modelName,
     contextCapacity: 32768,
     nativeBuild: text(value.nativeBuild, 32),
     osVersion: text(value.osVersion, 160),
@@ -234,7 +281,7 @@ export function parseAssetProbeReport(
       return invalid();
     }
   } else {
-    const currentIndex = assetProbeExpectedFiles.findIndex(
+    const currentIndex = expectedFiles.findIndex(
       file => file.role === value.currentFileRole,
     );
     if (
@@ -248,7 +295,7 @@ export function parseAssetProbeReport(
     ) {
       return invalid();
     }
-    result.currentFileRole = assetProbeExpectedFiles[currentIndex].role;
+    result.currentFileRole = expectedFiles[currentIndex].role;
   }
   if (value.storedMainHashMatches !== undefined) {
     if (

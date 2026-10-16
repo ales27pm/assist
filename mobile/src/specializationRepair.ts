@@ -12,8 +12,24 @@ export const repairTargets = {
     sourceAssetSHA256:
       'bd71bc0793677c4c4789b78109426b96afa2af7fc4df332f0c88695a43967362',
   },
+  selected_abliterated_f16_neural_engine: {
+    modelName: 'gemma4-e2b-32k-group8-abliterated-rmscomposite',
+    sourceAssetSHA256:
+      'a46f84f3bf569ac06da3b86eb24400c31b367da5b831566da0786987f863c8f0',
+  },
 } as const;
 export type RepairTarget = keyof typeof repairTargets;
+
+/** The existing selected-folder action can return either pinned selected identity. */
+export function repairMatchesAction(
+  requested: RepairTarget,
+  actual: RepairTarget,
+): boolean {
+  return requested === 'bundled_f16_neural_engine'
+    ? actual === requested
+    : actual !== 'bundled_f16_neural_engine';
+}
+
 export const specializationRepairMeasurementMethods = {
   scope:
     'One manually selected model and Neural Engine preference; no other model or compute-option cache entries are deleted',
@@ -32,6 +48,20 @@ export const specializationRepairMeasurementMethods = {
   completion:
     'Completed means the original diagnostic returned a JSON object; it does not assert numerical qualification, generation readiness or accelerator placement',
 } as const;
+
+export const abliteratedSpecializationRepairMeasurementMethods = {
+  ...specializationRepairMeasurementMethods,
+  source:
+    'The injected source verifier completes before invalidation; the selected abliterated source is pinned independently; source files are not modified',
+} as const;
+
+export function repairMeasurementMethodsForTarget(
+  target: RepairTarget,
+): Record<string, string> {
+  return target === 'selected_abliterated_f16_neural_engine'
+    ? abliteratedSpecializationRepairMeasurementMethods
+    : specializationRepairMeasurementMethods;
+}
 const recordedErrors = [
   'E_SPECIALIZATION_REPAIR_SOURCE_FAILED',
   'E_SPECIALIZATION_REPAIR_INVALIDATION_FAILED',
@@ -193,7 +223,7 @@ function parseRepair(
     measurementMethods[key] = text(method, 2048);
   }
   for (const [key, method] of Object.entries(
-    specializationRepairMeasurementMethods,
+    repairMeasurementMethodsForTarget(target),
   )) {
     if (measurementMethods[key] !== method) {
       return invalid();

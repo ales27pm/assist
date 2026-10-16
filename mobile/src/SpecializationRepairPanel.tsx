@@ -4,6 +4,7 @@ import NativeAssist from '../specs/NativeAssist';
 import {
   numericRepairCounts,
   parseSpecializationRepair,
+  repairMatchesAction,
   RepairPrimitiveReport,
   RepairTarget,
   SpecializationRepairEvidence,
@@ -96,7 +97,11 @@ export function SpecializationRepairPanel({
             parsed?.kind === 'assistSpecializationRepairResult'
               ? parsed.repair
               : parsed;
-          if (!parsed || repair?.target !== target) {
+          if (
+            !parsed ||
+            !repair ||
+            !repairMatchesAction(target, repair.target)
+          ) {
             throw new Error('Rapport absent.');
           }
           received = true;

@@ -1,4 +1,5 @@
 import {
+  abliteratedAssetProbeExpectedFiles,
   assetProbeMeasurementMethods,
   parseAssetProbeReport,
 } from '../src/assetProbe';
@@ -70,6 +71,61 @@ test('restores pending markers and requires all four hashes for completion', () 
   expect(parseAssetProbeReport('null')).toBeNull();
   expect(parseAssetProbeReport(JSON.stringify(report))).toEqual(report);
   expect(parseAssetProbeReport(JSON.stringify(completed))).toEqual(completed);
+});
+
+test('rejects an unreviewed model name even when all historical file hashes are valid', () => {
+  expect(() =>
+    parseAssetProbeReport(
+      JSON.stringify({
+        ...completed,
+        expectedModelName:
+          'gemma4-e2b-32k-group8-abliterated-rmscomposite-unreviewed',
+      }),
+    ),
+  ).toThrow();
+});
+
+test('accepts the real abliterated identity and rejects mixed source pins', () => {
+  const abliterated = {
+    ...completed,
+    expectedModelName: 'gemma4-e2b-32k-group8-abliterated-rmscomposite',
+    files: abliteratedAssetProbeExpectedFiles.map(file => ({
+      ...file,
+      bytesRead: file.expectedBytes,
+      sha256: file.expectedSHA256,
+      matchesExpected: true,
+    })),
+  };
+  expect(abliterated.files[3].expectedBytes).toBe(1381786507);
+  expect(abliterated.files[3].expectedSHA256).toBe(
+    'a46f84f3bf569ac06da3b86eb24400c31b367da5b831566da0786987f863c8f0',
+  );
+  expect(parseAssetProbeReport(JSON.stringify(abliterated))).toEqual(
+    abliterated,
+  );
+  expect(() =>
+    parseAssetProbeReport(
+      JSON.stringify({ ...abliterated, files: completed.files }),
+    ),
+  ).toThrow();
+  expect(() =>
+    parseAssetProbeReport(
+      JSON.stringify({
+        ...abliterated,
+        expectedModelName: completed.expectedModelName,
+      }),
+    ),
+  ).toThrow();
+  expect(() =>
+    parseAssetProbeReport(
+      JSON.stringify({
+        ...abliterated,
+        files: abliterated.files.map((file, index) =>
+          index === 3 ? { ...file, expectedSHA256: '0'.repeat(64) } : file,
+        ),
+      }),
+    ),
+  ).toThrow();
 });
 
 test.each(['E_ASSET_IDENTITY_IO', 'E_ASSET_IDENTITY_CHANGED'])(

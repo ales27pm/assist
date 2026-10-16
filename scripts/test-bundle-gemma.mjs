@@ -61,6 +61,75 @@ test('valid pinned exact inventory verifies', async t => {
   assert.equal(result.lock.export.contextLength, 8192);
 });
 
+const abliteratedSource = {
+  repository: 'huihui-ai/Huihui-gemma-4-E2B-it-abliterated',
+  revision: '3d1e3d50d7a04585ce4ded197b2fd7a90c04647c',
+};
+
+async function abliteratedFixture(t) {
+  const f = await fixture(t);
+  f.lock.model = {...abliteratedSource};
+  f.lock.tokenizer = {...SOURCE_MODEL};
+  await f.changeMetadata(metadata => {
+    metadata.source = {hf_model_id: abliteratedSource.repository, revision: abliteratedSource.revision,
+      export_alias: SOURCE_MODEL.repository};
+  });
+  return f;
+}
+
+test('pinned abliterated source verifies with separate canonical tokenizer provenance', async t => {
+  const f = await abliteratedFixture(t);
+  const result = await verifyBundle(f.root);
+  assert.deepEqual(result.lock.model, abliteratedSource);
+  assert.deepEqual(result.lock.tokenizer, SOURCE_MODEL);
+  assert.equal(f.metadata.language.tokenizer, SOURCE_MODEL.repository);
+  assert.equal(result.records.size, 6);
+});
+
+test('rejects an unapproved revision of the abliterated source', async t => {
+  const f = await fixture(t);
+  f.lock.model = {...abliteratedSource, revision: '0'.repeat(40)};
+  f.lock.tokenizer = {...SOURCE_MODEL};
+  await f.saveLock();
+  await assert.rejects(verifyBundle(f.root), /Unapproved model provenance/);
+});
+
+test('rejects an unapproved derived repository at the approved revision', async t => {
+  const f = await fixture(t);
+  f.lock.model = {...abliteratedSource, repository: 'other/gemma-4-E2B-it-abliterated'};
+  f.lock.tokenizer = {...SOURCE_MODEL};
+  await f.saveLock();
+  await assert.rejects(verifyBundle(f.root), /Unapproved model provenance/);
+});
+
+for (const tokenizer of [undefined, {...SOURCE_MODEL, revision: '0'.repeat(40)}, {...abliteratedSource}]) {
+  test(`rejects abliterated source with unapproved tokenizer provenance ${JSON.stringify(tokenizer)}`, async t => {
+    const f = await fixture(t);
+    f.lock.model = {...abliteratedSource};
+    f.lock.tokenizer = tokenizer;
+    await f.saveLock();
+    await assert.rejects(verifyBundle(f.root), /Unapproved tokenizer provenance/);
+  });
+}
+
+test('abliterated source still requires the canonical tokenizer in bundle metadata', async t => {
+  const f = await abliteratedFixture(t);
+  await f.changeMetadata(metadata => { metadata.language.tokenizer = abliteratedSource.repository; });
+  await assert.rejects(verifyBundle(f.root), /metadata/);
+});
+
+for (const [label, source] of [
+  ['missing source', undefined],
+  ['Google source label', {hf_model_id: SOURCE_MODEL.repository, revision: SOURCE_MODEL.revision}],
+  ['wrong source revision', {hf_model_id: abliteratedSource.repository, revision: '0'.repeat(40)}],
+]) {
+  test(`rejects abliterated metadata with ${label} despite a matching digest`, async t => {
+    const f = await abliteratedFixture(t);
+    await f.changeMetadata(metadata => { metadata.source = source; });
+    await assert.rejects(verifyBundle(f.root), /Gemma metadata source differs from model provenance/);
+  });
+}
+
 test('rejects a nonempty .aimodel file instead of a model directory', async t => {
   const f = await fixture(t);
   const record = f.lock.files.find(entry => entry.path === 'gemma.aimodel/weights.bin');

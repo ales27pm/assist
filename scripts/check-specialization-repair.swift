@@ -61,8 +61,9 @@ struct SpecializationRepairChecks {
         ])
     }
 
-    static func success(_ store: Repair.Store, counts: Counts = Counts()) async throws -> String {
-        try await Repair.run(target: .bundledF16, nativeBuild: "11", osVersion: "Version 27.2 (test)", store: store,
+    static func success(_ store: Repair.Store, counts: Counts = Counts(), target: Repair.Target = .bundledF16,
+                        diagnostic: String = original) async throws -> String {
+        try await Repair.run(target: target, nativeBuild: "11", osVersion: "Version 27.2 (test)", store: store,
             verifySource: {
                 counts.add("verify")
                 check(try report(store).stage == .verifyingSource, "Persist before verifying source bytes.")
@@ -80,7 +81,7 @@ struct SpecializationRepairChecks {
                 check(try report(store).stage == .qualifying, "Persist invalidation return and qualification boundary first.")
                 check(counts.get("delete") == 1 && counts.get("verify") == 1, "Exactly one verified deletion precedes qualification.")
                 counts.add("qualify")
-                return original
+                return diagnostic
             })
     }
 
@@ -93,6 +94,13 @@ struct SpecializationRepairChecks {
         check(try store.readJSON() == "null", "Absence is null and never starts an operation.")
         check(Repair.Target.bundledF16.sourceAssetSHA256 == "46932657bf6ea3e4a3e99abba91b377b1ddbfb731a8553a4d5728fc414f54c8c", "Pin the tiny F16 source.")
         check(Repair.Target.selectedGemmaF16.sourceAssetSHA256 == "bd71bc0793677c4c4789b78109426b96afa2af7fc4df332f0c88695a43967362", "Pin the selected Gemma F16 source.")
+        check(try Repair.Target.selected(modelName: "gemma4-e2b-32k-group8-rmscomposite") == .selectedGemmaF16,
+              "Resolve the historical selected source to its original v1 target.")
+        rejected(.invalidRequest) { _ = try Repair.Target.selected(modelName: "unreviewed-model") }
+        check(try Repair.Target.selected(modelName: "gemma4-e2b-32k-group8-abliterated-rmscomposite")
+              == .selectedAbliteratedGemmaF16 && Repair.Target.selectedAbliteratedGemmaF16.sourceAssetSHA256
+              == "a46f84f3bf569ac06da3b86eb24400c31b367da5b831566da0786987f863c8f0",
+              "Resolve the separately pinned abliterated source without changing the historical target.")
 
         let counts = Counts()
         let wrapped = try await success(store, counts: counts)
@@ -115,6 +123,18 @@ struct SpecializationRepairChecks {
         let permissions = try manager.attributesOfItem(atPath: savedURL.path)[.posixPermissions] as? NSNumber
         check(permissions?.intValue == 0o600, "The saved repair marker is private.")
         check(try manager.contentsOfDirectory(atPath: savedURL.deletingLastPathComponent().path) == ["specialization-repair.json"], "Use one fixed marker file only.")
+        let abliteratedStore = Repair.Store(directory: temporary.appendingPathComponent("abliterated"))
+        let abliteratedCounts = Counts()
+        let loadDiagnostic = #"{"kind":"assistModelLoadDiagnostic","modelName":"gemma4-e2b-32k-group8-abliterated-rmscomposite","functionName":"extend_1024_8","stage":"completed","aneExecution":"unverified"}"#
+        let abliteratedResult = try await success(abliteratedStore, counts: abliteratedCounts,
+            target: .selectedAbliteratedGemmaF16, diagnostic: loadDiagnostic)
+        let abliteratedSaved = try report(abliteratedStore)
+        check(abliteratedSaved.target == .selectedAbliteratedGemmaF16 && abliteratedSaved.stage == .completed &&
+              abliteratedSaved.measurementMethods == Repair.abliteratedMeasurementMethods &&
+              abliteratedCounts.get("delete") == 1 && abliteratedCounts.get("qualify") == 1,
+              "The manual abliterated repair preserves one verified invalidation and one original diagnostic.")
+        check((try object(abliteratedResult)["diagnostic"] as? NSDictionary) == (try object(loadDiagnostic) as NSDictionary),
+              "Preserve the abliterated diagnostic without claiming device or ANE qualification.")
         let loadSentinel = savedURL.deletingLastPathComponent().appendingPathComponent("model-load-diagnostic.json")
         let assetSentinel = savedURL.deletingLastPathComponent().appendingPathComponent("model-asset-diagnostic.json")
         let sentinel = Data(#"{"preserved":true}"#.utf8)
@@ -176,6 +196,23 @@ struct SpecializationRepairChecks {
               && nativeReport.nativeErrors?.first?.code == nil, "Redact unsafe domains and omit inexact JSON integer codes.")
         let privateErrorJSON = try errors.readJSON()
         check(!privateErrorJSON.contains("secret prompt") && !privateErrorJSON.contains("credential"), "Never retain NSError descriptions or userInfo.")
+
+        let rejectedSelection = Repair.Store(directory: temporary.appendingPathComponent("rejected-selection"))
+        try rejectedSelection.save(completed)
+        let metadataSelection: Result<URL, any Error> = .failure(nativeFailure())
+        let selectionCounts = Counts()
+        await failed(.sourceFailed) {
+            try await Repair.run(target: .selectedGemmaF16, nativeBuild: "11", osVersion: "test", store: rejectedSelection,
+                verifySource: { try metadataSelection.get() },
+                invalidate: { _ in selectionCounts.add("delete") },
+                qualify: { selectionCounts.add("qualify"); return original })
+        }
+        let rejectedReport = try report(rejectedSelection)
+        check(rejectedReport.attempt.id != completed.attempt.id && rejectedReport.target == .selectedGemmaF16 &&
+              rejectedReport.stage == .failed && rejectedReport.steps.map(\.stage) == [.verifyingSource, .failed],
+              "A rejected metadata selection replaces an earlier success with a fresh source-failed attempt.")
+        check(selectionCounts.get("delete") == 0 && selectionCounts.get("qualify") == 0,
+              "Rejected metadata selection never deletes a cache entry or loads a model.")
 
         await failed(.invalidationFailed) {
             try await Repair.run(target: .bundledF16, nativeBuild: "11", osVersion: "test", store: errors,

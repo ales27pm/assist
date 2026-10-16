@@ -1,6 +1,8 @@
 import {
   numericRepairCounts,
   parseSpecializationRepair,
+  repairMatchesAction,
+  repairMeasurementMethodsForTarget,
   repairTargets,
   specializationRepairMeasurementMethods,
   RepairPrimitiveReport,
@@ -81,6 +83,45 @@ function parse(value: unknown) {
   return parseSpecializationRepair(JSON.stringify(value));
 }
 
+test('a selected-folder action cannot accept a primitive repair result', () => {
+  expect(
+    repairMatchesAction(
+      'selected_f16_neural_engine',
+      'selected_f16_neural_engine',
+    ),
+  ).toBe(true);
+  expect(
+    repairMatchesAction(
+      'selected_f16_neural_engine',
+      'bundled_f16_neural_engine',
+    ),
+  ).toBe(false);
+  expect(
+    repairMatchesAction(
+      'bundled_f16_neural_engine',
+      'selected_f16_neural_engine',
+    ),
+  ).toBe(false);
+  expect(
+    repairMatchesAction(
+      'bundled_f16_neural_engine',
+      'bundled_f16_neural_engine',
+    ),
+  ).toBe(true);
+  expect(
+    repairMatchesAction(
+      'selected_f16_neural_engine',
+      'selected_abliterated_f16_neural_engine',
+    ),
+  ).toBe(true);
+  expect(
+    repairMatchesAction(
+      'bundled_f16_neural_engine',
+      'selected_abliterated_f16_neural_engine',
+    ),
+  ).toBe(false);
+});
+
 test('restores pending and failed markers without claiming qualification', () => {
   expect(parseSpecializationRepair('null')).toBeNull();
   const pending = {
@@ -158,44 +199,87 @@ test('retains the original numerical diagnostic and monitoring without conflatin
   });
 });
 
-test('retains a returned Gemma load failure separately from repair completion', () => {
-  const result = {
-    ...wrapper,
-    repair: {
-      ...repair,
-      target: 'selected_f16_neural_engine',
-      ...repairTargets.selected_f16_neural_engine,
-    },
-    diagnostic: {
-      schemaVersion: 1,
-      kind: 'assistModelLoadDiagnostic',
-      scope: 'single_function_load_only_no_generation',
-      aneExecution: 'unverified',
-      nativeBuild: '11',
-      osVersion: 'iOS 27.2',
-      modelName: repairTargets.selected_f16_neural_engine.modelName,
-      contextCapacity: 32768,
-      functionName: 'extend_1024_8',
-      stage: 'failed',
-      errorCode: 'E_FUNCTION_LOAD_FAILED',
-      samples: [
-        { stage: 'before_prepare', elapsedMs: 0, thermalState: 'nominal' },
-        {
-          stage: 'before_function_load',
-          elapsedMs: 1,
-          thermalState: 'nominal',
-        },
-        { stage: 'failed', elapsedMs: 2, thermalState: 'nominal' },
-      ],
-      measurementMethods: { cache: 'Original single function diagnostic.' },
-    },
+test.each([
+  'selected_f16_neural_engine',
+  'selected_abliterated_f16_neural_engine',
+] as const)(
+  'retains a returned Gemma load failure separately from repair completion: %s',
+  target => {
+    const result = {
+      ...wrapper,
+      repair: {
+        ...repair,
+        target,
+        ...repairTargets[target],
+        measurementMethods: repairMeasurementMethodsForTarget(target),
+      },
+      diagnostic: {
+        schemaVersion: 1,
+        kind: 'assistModelLoadDiagnostic',
+        scope: 'single_function_load_only_no_generation',
+        aneExecution: 'unverified',
+        nativeBuild: '11',
+        osVersion: 'iOS 27.2',
+        modelName: repairTargets[target].modelName,
+        contextCapacity: 32768,
+        functionName: 'extend_1024_8',
+        stage: 'failed',
+        errorCode: 'E_FUNCTION_LOAD_FAILED',
+        samples: [
+          { stage: 'before_prepare', elapsedMs: 0, thermalState: 'nominal' },
+          {
+            stage: 'before_function_load',
+            elapsedMs: 1,
+            thermalState: 'nominal',
+          },
+          { stage: 'failed', elapsedMs: 2, thermalState: 'nominal' },
+        ],
+        measurementMethods: { cache: 'Original single function diagnostic.' },
+      },
+    };
+    expect(parse(result)).toEqual(result);
+    expect(() =>
+      parse({
+        ...result,
+        diagnostic: { ...result.diagnostic, functionName: 'extend_8192_8' },
+      }),
+    ).toThrow();
+  },
+);
+
+test('keeps abliterated source pins and measurement methods separate from historical v1', () => {
+  const target = 'selected_abliterated_f16_neural_engine';
+  const abliterated = {
+    ...repair,
+    target,
+    ...repairTargets[target],
+    measurementMethods: repairMeasurementMethodsForTarget(target),
   };
-  expect(parse(result)).toEqual(result);
+  expect(abliterated.sourceAssetSHA256).toBe(
+    'a46f84f3bf569ac06da3b86eb24400c31b367da5b831566da0786987f863c8f0',
+  );
+  expect(parse(abliterated)).toEqual(abliterated);
   expect(() =>
     parse({
-      ...result,
-      diagnostic: { ...result.diagnostic, functionName: 'extend_8192_8' },
+      ...abliterated,
+      sourceAssetSHA256:
+        repairTargets.selected_f16_neural_engine.sourceAssetSHA256,
     }),
+  ).toThrow();
+  expect(() =>
+    parse({
+      ...abliterated,
+      modelName: repairTargets.selected_f16_neural_engine.modelName,
+    }),
+  ).toThrow();
+  expect(() =>
+    parse({
+      ...abliterated,
+      measurementMethods: specializationRepairMeasurementMethods,
+    }),
+  ).toThrow();
+  expect(() =>
+    parse({ ...repair, measurementMethods: abliterated.measurementMethods }),
   ).toThrow();
 });
 

@@ -7,6 +7,8 @@ réussis des tests iPhone restant à effectuer. Une
 a ensuite été reproduite : utiliser la recette à groupes de 8 ci-dessous et
 contrôler les réponses avant transfert. Les commandes ci-dessous décrivent
 la préparation, sans constituer une qualification sur appareil.
+Le [candidat abliterated](gemma-abliterated.md) reprend cette recette group8
+avec une provenance de poids distincte et le tokenizer canonique conservé.
 Ne pas lancer de conversion lourde sur l’iPhone. Pour le parcours macOS ci-dessous,
 utiliser un Mac Apple Silicon avec l’environnement Core AI compatible,
 suffisamment de RAM et d’espace libre pour les poids, les tenseurs temporaires,

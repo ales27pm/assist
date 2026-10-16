@@ -42,6 +42,35 @@ Le succès de ce chargement isolé ne prouve ni la génération normale, ni la
 fidélité numérique de Gemma, ni son placement matériel. Ces étapes restent
 séparées.
 
+## Résultat physique retrouvé — build 11
+
+La conversation `01a145cf-8562-71a3-8628-63d4914353c0` contient ensuite le
+rapport physique de cette réparation sur le modèle Google `rmscomposite`
+épinglé, sous iOS 27.2 (24B5110a). La suppression ciblée revient, puis le
+diagnostic `extend_1024_8` termine avec l’état `completed` : préparation en
+108,677 s, chargement de fonction en 94,16 ms. Une seconde sonde, dans le même
+processus, termine aussi : préparation 5,96 ms et chargement 64,32 ms.
+
+Ces deux essais sont compatibles avec une préparation coûteuse suivie d’une
+réutilisation. Ils ne démontrent pas qu’une ancienne entrée était corrompue,
+ni que le cache persiste après relancement. L’utilisateur confirme ensuite les
+réponses attendues des tests courts proposés ; cette confirmation ne comporte
+pas de nouveaux rapports natifs de génération. Les cubes, le contexte long et
+l’ANE ne sont donc pas qualifiés par ces seules pièces.
+
+Le [dérivé abliterated RMScomposite](gemma-abliterated-rmscomposite.md) conserve ses propres poids et
+empreintes : la réussite de la réparation du modèle Google ne lui est pas
+attribuée. Le code source admet désormais l'identité indépendante de ce bundle
+validé, sous la cible `selected_abliterated_f16_neural_engine`. Le choix repose
+sur les octets des métadonnées épinglées, puis les quatre fichiers sont relus
+avant l'appel unique de suppression. Le chemin de l'asset provient de cette
+même identité. Une erreur de sélection laisse une nouvelle trace d'échec de
+vérification et n'autorise aucune suppression.
+
+Cette extension exige un nouveau build de l'application ; le build 11 déjà
+installé conserve son ancienne liste. Aucun rapport physique du dérivé n'est
+encore disponible.
+
 ## Trace et limites
 
 Le rapport `assistSpecializationRepair`, schéma 1, est sauvegardé atomiquement

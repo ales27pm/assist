@@ -661,12 +661,24 @@ private actor AssistInferenceCoordinator {
 
     @concurrent
     private static func repairSelectedSpecialization(path: String, functionName: String) async throws -> String {
+        // Retain selection errors until the orchestrator has persisted a fresh source-verification marker.
+        let selected: Result<(AssistModelAssetProbe.Identity, AssistSpecializationRepair.Target), any Error> = Result {
+            let identity = try AssistModelAssetProbe.selectedIdentity(path: path)
+            return (identity, try AssistSpecializationRepair.Target.selected(modelName: identity.modelName))
+        }
+        let target: AssistSpecializationRepair.Target
+        switch selected {
+        case .success(let source): target = source.1
+        case .failure: target = .selectedGemmaF16
+        }
         return try await AssistSpecializationRepair.run(
-            target: .selectedGemmaF16,
+            target: target,
             nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
             osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
             verifySource: {
+                let identity = try selected.get().0
                 let initial = AssistModelAssetProbe.Report(
+                    identity: identity,
                     nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
                     osVersion: ProcessInfo.processInfo.operatingSystemVersionString)
                 let result = try AssistModelAssetProbe.execute(
@@ -674,7 +686,7 @@ private actor AssistInferenceCoordinator {
                 let verified = try JSONDecoder().decode(AssistModelAssetProbe.Report.self, from: Data(result.utf8))
                 guard verified.stage == .completed else { throw AssistModelLoadProbe.Failure.invalidBundle }
                 return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
-                    .appendingPathComponent("gemma4-e2b-32k-group8-rmscomposite.aimodel", isDirectory: true)
+                    .appendingPathComponent(identity.modelName + ".aimodel", isDirectory: true)
             }, invalidate: { assetURL in
                 try AIModelCache.default.deleteEntry(
                     for: assetURL, options: SpecializationOptions(preferredComputeUnitKind: .neuralEngine))

@@ -46,6 +46,44 @@ struct ModelAssetProbeChecks {
               "Exactly four pinned F16 files are allowed.")
         check(Probe.expectedFiles.last?.bytes == 1_381_786_497 && Probe.expectedFiles.last?.sha256
               == "bd71bc0793677c4c4789b78109426b96afa2af7fc4df332f0c88695a43967362", "Pinned source identity drifted.")
+        check(try Probe.identity(named: Probe.modelName).files.map(\.relativePath) == Probe.expectedFiles.map(\.relativePath),
+              "The original v1 identity remains pinned.")
+        rejected(.corruptReport) { _ = try Probe.identity(named: "unreviewed-model") }
+        rejected(.localOnly) { _ = try Probe.selectedIdentity(path: "relative-path") }
+        let metadataFixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("fixtures/model-asset-identities/google-rmscomposite-metadata.json")
+        let pinnedMetadata = try Data(contentsOf: metadataFixture)
+        try pinnedMetadata.write(to: file)
+        check(try Probe.selectedIdentity(path: root.path).modelName == Probe.modelName,
+              "Choose the real pinned metadata bytes even when the selected directory has another name.")
+        var changedMetadata = pinnedMetadata
+        changedMetadata[changedMetadata.count - 1] = 32
+        try changedMetadata.write(to: file)
+        rejected(.mismatch) { _ = try Probe.selectedIdentity(path: root.path) }
+        let metadataOutside = temporary.appendingPathComponent("pinned-metadata", isDirectory: false)
+        try pinnedMetadata.write(to: metadataOutside)
+        try manager.removeItem(at: file)
+        try manager.createSymbolicLink(at: file, withDestinationURL: metadataOutside)
+        rejected(.localOnly) { _ = try Probe.selectedIdentity(path: root.path) }
+        try manager.removeItem(at: file)
+        let abliteratedMetadataFixture = metadataFixture.deletingLastPathComponent()
+            .appendingPathComponent("huihui-abliterated-rmscomposite-metadata.json")
+        try Data(contentsOf: abliteratedMetadataFixture).write(to: file)
+        let abliteratedIdentity = try Probe.selectedIdentity(path: root.path)
+        check(abliteratedIdentity.modelName == "gemma4-e2b-32k-group8-abliterated-rmscomposite" &&
+              abliteratedIdentity.files.last?.bytes == 1_381_786_507 && abliteratedIdentity.files.last?.sha256
+              == "a46f84f3bf569ac06da3b86eb24400c31b367da5b831566da0786987f863c8f0",
+              "Recognize only the actual independently validated abliterated asset identity.")
+        let abliteratedReport = Probe.Report(identity: abliteratedIdentity, nativeBuild: "11", osVersion: "test")
+        try abliteratedReport.validate()
+        check(abliteratedReport.files[1].relativePath == abliteratedIdentity.modelName + ".aimodel/metadata.json",
+              "Resolve all asset paths from the selected pinned identity.")
+        var borrowedIdentity = abliteratedReport
+        borrowedIdentity.files = Probe.expectedFiles.map(Probe.FileResult.init)
+        rejected(.corruptReport) { try borrowedIdentity.validate() }
+        try pinnedMetadata.write(to: file)
+        check(try Probe.selectedIdentity(path: root.path).modelName == Probe.modelName,
+              "Adding the derivative preserves recognition of the historical metadata.")
 
         // Published SHA-256 vectors and an independently computed multi-chunk fixture.
         try Data("abc".utf8).write(to: file)
@@ -214,4 +252,5 @@ struct ModelAssetProbeChecks {
         }
         print("PASS: SHA-256 vectors/chunks; mutation/path replacement; symlink/nonregular rejection; binary main.hash; bounded private report persistence; mismatch versus IO; no selected-model writes")
     }
+
 }

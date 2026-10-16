@@ -49,6 +49,47 @@ enum AssistModelAssetProbe {
                      sha256: "bd71bc0793677c4c4789b78109426b96afa2af7fc4df332f0c88695a43967362"),
     ]
 
+    struct Identity: Sendable {
+        let modelName: String
+        let files: [ExpectedFile]
+    }
+
+    static let baselineIdentity = Identity(modelName: modelName, files: expectedFiles)
+    static let abliteratedModelName = "gemma4-e2b-32k-group8-abliterated-rmscomposite"
+    static let abliteratedIdentity = Identity(modelName: abliteratedModelName, files: [
+        ExpectedFile(role: .bundleMetadata, relativePath: "metadata.json", bytes: 1_254,
+                     sha256: "b91f1f01ac034431a73ea3de2ae7cf085d0b95e42cfcf20217e0e5c6b42ad609"),
+        ExpectedFile(role: .assetMetadata, relativePath: abliteratedModelName + ".aimodel/metadata.json", bytes: 541,
+                     sha256: "2aa87f8b98e2c715a0c977a6a4e4a2f39c07aaf828a1b36f87ad68b036013943"),
+        ExpectedFile(role: .storedMainHash, relativePath: abliteratedModelName + ".aimodel/main.hash", bytes: 32,
+                     sha256: "d4e97fee1fe0516e35aa445dd62c7e25b337d5d32b84543609b2edca89e177f5"),
+        ExpectedFile(role: .mainBytecode, relativePath: abliteratedModelName + ".aimodel/main.mlirb", bytes: 1_381_786_507,
+                     sha256: "a46f84f3bf569ac06da3b86eb24400c31b367da5b831566da0786987f863c8f0"),
+    ])
+    // New identities require the four real exported file sizes and SHA-256 digests.
+    static let identities = [baselineIdentity, abliteratedIdentity]
+
+    static func identity(named name: String) throws -> Identity {
+        guard let identity = identities.first(where: { $0.modelName == name }) else { throw Failure.corruptReport }
+        return identity
+    }
+
+    /// Select only by an allowlisted metadata byte identity, never by a directory name or untrusted JSON field.
+    static func selectedIdentity(path: String) throws -> Identity {
+        guard (path as NSString).isAbsolutePath, !path.utf8.contains(0) else { throw Failure.localOnly }
+        let root = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        for identity in identities {
+            guard let expected = identity.files.first, expected.role == .bundleMetadata else { throw Failure.corruptReport }
+            do {
+                let actual = try readFile(root: root, expected: expected)
+                if actual.sha256 == expected.sha256 { return identity }
+            } catch let failure as ReadFailure where failure.code == .mismatch {
+                continue
+            }
+        }
+        throw Failure.mismatch
+    }
+
     enum Stage: String, Codable, Sendable { case checkingFiles = "checking_files", completed, failed }
 
     enum Failure: String, Error, LocalizedError, Codable, Sendable {
@@ -132,7 +173,9 @@ enum AssistModelAssetProbe {
         var posixErrno: Int32?
         var measurementMethods = AssistModelAssetProbe.measurementMethods
 
-        init(nativeBuild: String, osVersion: String) {
+        init(identity: Identity = baselineIdentity, nativeBuild: String, osVersion: String) {
+            expectedModelName = identity.modelName
+            files = identity.files.map(FileResult.init)
             self.nativeBuild = Self.label(nativeBuild, maximumBytes: 32)
             self.osVersion = Self.label(osVersion, maximumBytes: 160)
         }
@@ -144,8 +187,10 @@ enum AssistModelAssetProbe {
         }
 
         func validate() throws {
+            let identity = try AssistModelAssetProbe.identity(named: expectedModelName)
+            let expectedFiles = identity.files
             guard schemaVersion == 1, kind == "assistModelAssetDiagnostic",
-                  scope == "selected_f16_asset_identity_only_no_coreai", expectedModelName == modelName,
+                  scope == "selected_f16_asset_identity_only_no_coreai",
                   contextCapacity == 32_768, nativeBuild == Self.label(nativeBuild, maximumBytes: 32),
                   osVersion == Self.label(osVersion, maximumBytes: 160),
                   measurementMethods == AssistModelAssetProbe.measurementMethods,
@@ -438,8 +483,20 @@ enum AssistModelAssetProbe {
     @concurrent
     static func run(path: String) async throws -> String {
         let store = try Store.applicationSupport()
-        let report = Report(nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+        var report = Report(nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
                             osVersion: ProcessInfo.processInfo.operatingSystemVersionString)
+        try store.save(report)
+        do {
+            let identity = try selectedIdentity(path: path)
+            report.expectedModelName = identity.modelName
+            report.files = identity.files.map(FileResult.init)
+        } catch {
+            let failure = error as? ReadFailure
+            report.stage = .failed
+            report.errorCode = failure?.code ?? (error as? Failure) ?? .io
+            report.posixErrno = failure?.posixErrno
+            return try store.save(report)
+        }
         return try execute(path: path, report: report, store: store)
     }
 
@@ -447,6 +504,7 @@ enum AssistModelAssetProbe {
     static func execute(path: String, report initial: Report, store: Store) throws -> String {
         var report = initial
         try store.save(report)
+        let identity = try identity(named: report.expectedModelName)
         guard (path as NSString).isAbsolutePath, !path.utf8.contains(0) else {
             report.stage = .failed
             report.errorCode = .localOnly
@@ -454,7 +512,7 @@ enum AssistModelAssetProbe {
         }
         let root = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
         var storedDigest: String?
-        for (index, expected) in expectedFiles.enumerated() {
+        for (index, expected) in identity.files.enumerated() {
             report.currentFileRole = expected.role
             try store.save(report)
             do {

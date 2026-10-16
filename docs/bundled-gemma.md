@@ -61,6 +61,13 @@ fichiers altérés ne constitue pas un contrôle indépendant. Le dépôt conser
 verrou approuvé ; les gros fichiers restent hors de Git mais doivent être
 présents dans l’archive de construction EAS lorsque Gemma est requis.
 
+Le [dérivé abliterated épinglé](gemma-abliterated.md) est également accepté.
+Son verrou déclare `model.repository` et `model.revision` pour Huihui, ainsi
+qu’un champ `tokenizer` contenant le dépôt et la révision Google ci-dessus.
+Les métadonnées doivent déclarer la même provenance Huihui dans `source`,
+tandis que `language.tokenizer` reste canonique. Les autres révisions et
+tokenizers restent refusés ; ce support ne qualifie pas le modèle sur iPhone.
+
 La vérification refuse un inventaire vide, incomplet ou comportant des extras,
 les empreintes incorrectes, les chemins absolus/traversants, les liens
 symboliques et les fichiers spéciaux. Les fichiers tokenizer, l’asset Core AI
