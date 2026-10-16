@@ -176,7 +176,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         switch AVAudioApplication.shared.recordPermission {
         case .granted: beginCapture(token)
         case .undetermined:
-            AVAudioApplication.requestRecordPermission(AssistVoiceCallbacks.microphone { [weak self] allowed in
+            AVAudioApplication.requestRecordPermission(completionHandler: AssistVoiceCallbacks.microphone { [weak self] allowed in
                 guard let self, self.generation == token, self.phase == "requesting" else { return }
                 if allowed { self.beginCapture(token) }
                 else { self.fail("La permission du microphone est requise.", code: "E_VOICE_MIC_PERMISSION") }
