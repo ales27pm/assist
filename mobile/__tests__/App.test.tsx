@@ -22,6 +22,7 @@ jest.mock('../specs/NativeAssist', () => ({
     loadModel: jest.fn(),
     loadBundledModel: jest.fn(),
     unloadModel: jest.fn(),
+    runNumericalProbe: jest.fn(),
     generate: jest.fn(),
     cancel: jest.fn(),
     reset: jest.fn(),
@@ -29,6 +30,14 @@ jest.mock('../specs/NativeAssist', () => ({
   },
 }));
 const native = jest.mocked(NativeAssist!);
+const primitiveReport = {
+  schemaVersion: 1,
+  kind: 'assistPrimitiveQualification',
+  scope: 'primitive_only_gemma_unqualified',
+  aneExecution: 'unverified',
+  summary: { cases: 24, failed: 3, nonfinite: 0, maxULP: 4 },
+  results: [{ fixture: 'synthetic', passed: false }],
+};
 let phase: string;
 let bundledModelAvailable: boolean;
 beforeEach(() => {
@@ -43,6 +52,7 @@ beforeEach(() => {
     }),
   );
   native.onProgress.mockReturnValue({ remove: jest.fn() });
+  native.runNumericalProbe.mockResolvedValue(JSON.stringify(primitiveReport));
   native.selectModel.mockResolvedValue(
     '{"phase":"selected","modelName":"gemma"}',
   );
@@ -67,6 +77,66 @@ beforeEach(() => {
       aneExecution: 'unverified',
     });
   });
+});
+
+test('runs and shares a separate primitive diagnostic without enabling Gemma generation', async () => {
+  const share = jest
+    .spyOn(Share, 'share')
+    .mockResolvedValue({ action: Share.sharedAction, activityType: undefined });
+  const user = userEvent.setup();
+  await renderAsync(<AssistantScreen />);
+  await user.press(
+    screen.getByRole('button', { name: 'Tester le calcul natif' }),
+  );
+  expect(
+    await screen.findByText(/24 contrôles · 3 échecs · 0 valeurs non finies/),
+  ).toBeOnTheScreen();
+  expect(native.runNumericalProbe).toHaveBeenCalledTimes(1);
+  expect(native.loadModel).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Envoyer' })).toBeDisabled();
+  await user.press(
+    screen.getByRole('button', { name: 'Partager le diagnostic' }),
+  );
+  expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual(primitiveReport);
+  share.mockRestore();
+});
+
+test('requires unloading Gemma before running the primitive diagnostic', async () => {
+  phase = 'ready';
+  const user = userEvent.setup();
+  await renderAsync(<AssistantScreen />);
+  const button = screen.getByRole('button', { name: 'Tester le calcul natif' });
+  expect(button).toBeDisabled();
+  await user.press(button);
+  expect(native.runNumericalProbe).not.toHaveBeenCalled();
+});
+
+test('serializes the diagnostic and restores controls after a native failure', async () => {
+  let fail: (error: Error) => void;
+  native.runNumericalProbe.mockImplementation(
+    () =>
+      new Promise((_, reject) => {
+        fail = reject;
+      }),
+  );
+  const user = userEvent.setup();
+  await renderAsync(<AssistantScreen />);
+  const button = screen.getByRole('button', { name: 'Tester le calcul natif' });
+  await user.press(button);
+  expect(button).toBeDisabled();
+  expect(
+    screen.getByRole('button', { name: 'Choisir un dossier exporté' }),
+  ).toBeDisabled();
+  await user.press(button);
+  expect(native.runNumericalProbe).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    fail(new Error('Diagnostic indisponible'));
+  });
+  expect(await screen.findByText('Diagnostic indisponible')).toBeOnTheScreen();
+  expect(button).toBeEnabled();
+  expect(
+    screen.getByRole('button', { name: 'Partager le diagnostic' }),
+  ).toBeDisabled();
 });
 
 test('does not claim Gemma is included when its packaged metadata is absent', async () => {

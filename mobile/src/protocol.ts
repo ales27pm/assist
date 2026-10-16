@@ -106,6 +106,42 @@ export function parseResult(json: string): GenerationResult {
   }
   return value as GenerationResult;
 }
+
+export type PrimitiveReport = {
+  schemaVersion: 1;
+  kind: 'assistPrimitiveQualification';
+  scope: 'primitive_only_gemma_unqualified';
+  aneExecution: 'unverified';
+  summary: {
+    cases: number;
+    failed: number;
+    nonfinite: number;
+    maxULP: number | null;
+  };
+};
+
+export function parsePrimitiveReport(json: string): PrimitiveReport {
+  const value = object(json);
+  const summary = value.summary as Record<string, unknown> | undefined;
+  const count = (item: unknown): item is number =>
+    finite(item) && Number.isSafeInteger(item);
+  if (
+    value.schemaVersion !== 1 ||
+    value.kind !== 'assistPrimitiveQualification' ||
+    value.scope !== 'primitive_only_gemma_unqualified' ||
+    value.aneExecution !== 'unverified' ||
+    !summary ||
+    !count(summary.cases) ||
+    summary.cases !== 24 ||
+    !count(summary.failed) ||
+    summary.failed > summary.cases ||
+    !count(summary.nonfinite) ||
+    (summary.maxULP !== null && !count(summary.maxULP))
+  ) {
+    throw new Error('Diagnostic natif invalide.');
+  }
+  return value as PrimitiveReport;
+}
 // Empty means real remaining context, never an implicit 32-token cap.
 export function outputBudget(input: string): number | null {
   if (!input.trim()) {

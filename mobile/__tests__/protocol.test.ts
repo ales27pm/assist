@@ -2,8 +2,30 @@ import {
   outputBudget,
   parseProgress,
   parseResult,
+  parsePrimitiveReport,
   parseState,
 } from '../src/protocol';
+
+test('primitive report preserves failures and extra evidence without qualifying Gemma', () => {
+  const report = {
+    schemaVersion: 1,
+    kind: 'assistPrimitiveQualification',
+    scope: 'primitive_only_gemma_unqualified',
+    aneExecution: 'unverified',
+    summary: { cases: 24, failed: 2, nonfinite: 1, maxULP: 7 },
+    results: [{ error: 'One controlled native failure' }],
+  };
+  expect(parsePrimitiveReport(JSON.stringify(report))).toEqual(report);
+  for (const invalid of [
+    { ...report, aneExecution: 'verified' },
+    { ...report, scope: 'gemma_qualified' },
+    { ...report, summary: { ...report.summary, cases: 0 } },
+    { ...report, summary: { ...report.summary, failed: 25 } },
+    { ...report, summary: { ...report.summary, maxULP: -1 } },
+  ]) {
+    expect(() => parsePrimitiveReport(JSON.stringify(invalid))).toThrow();
+  }
+});
 test('no artificial output cap', () => {
   expect(outputBudget('')).toBeNull();
   expect(outputBudget(' ')).toBeNull();

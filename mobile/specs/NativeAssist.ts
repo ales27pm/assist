@@ -15,6 +15,7 @@ export interface Spec extends TurboModule {
   cancel(): Promise<string>;
   reset(): Promise<string>;
   unloadModel(): Promise<string>;
+  runNumericalProbe(): Promise<string>;
   readonly onProgress: CodegenTypes.EventEmitter<ProgressEvent>;
 }
 

@@ -426,6 +426,56 @@ natif de ce candidat reste non mesuré. Le prochain contrôle est son
 chargement dans le build TestFlight existant, suivi des cubes en nouvelle
 conversation avec un budget de 64 ; les essais longs attendent ce résultat.
 
+Le contrôle physique suivant charge ce dossier en **110,14 s**, avec
+**1 601 850 336 octets** après chargement. Les deux rapports reçus reprennent
+ce même relevé : ils représentent un seul chargement réussi. Avec un budget
+de 64, l’empreinte des 32 jetons est celle de la consigne figée des cubes,
+les deux curseurs sont à zéro et la température est nulle. Les douze pas,
+EOS inclus, ont des scores finis et sélectionnent leur premier candidat,
+mais produisent encore **`1, 4, 9, 16`**. La génération prend 1,19 s,
+dont 0,59 s avant le premier jeton ; son maximum échantillonné est
+**1 670 253 824 octets**, sans mesure du pic réel.
+
+Au pas 3, `4` vaut **15,328125** contre **15,296875** pour `8` : la marge
+est **0,03125**, soit quatre ULP FP16 à cette amplitude. Les scores changent
+par rapport au group8 précédent, sans corriger le classement. Le candidat
+échoue donc au contrôle numérique, malgré ce chargement réussi ; l’opérateur
+responsable, les octets installés et l’exécution ANE restent non établis.
+
+Une extraction en lecture seule de la table INT8 réellement sérialisée,
+**402 653 184 octets**, produit la même empreinte dans le group8 de référence,
+le candidat et le contrôle CPU :
+`ec53c1c501cff5e54ff5a5dfd40ae1b0a6fb786e1b637066be005867368eba40`.
+Les échelles FP16 du candidat dans les deux gathers et les trois graphes
+`extend` ont aussi les bits attendus `811c` (little-endian). Ce contrôle
+ne compare pas encore tous les LUT/indices sérialisés et ne mesure pas les
+entrées ou les opérations effectives sur l’iPhone.
+
+Le build 5 ajoute un diagnostic natif distinct pour les six formes RMSNorm
+du palier de requête 8, chacune avec une échelle non uniforme et une échelle
+de un. Les données sont synthétiques : elles couvrent notamment le
+débordement d’un carré FP16 et l’arrondi prématuré d’epsilon. Une référence
+FP64 arrondie en FP16 est vérifiée indépendamment par `math.fsum` ; ses douze
+résultats correspondent exactement aux fichiers stockés. L’opération CPU
+publique reste à au plus un ULP, seuil conservé pour le diagnostic natif.
+
+Les 32 fichiers occupent **1 149 268 octets**, dont 20 125 pour l’asset source
+contenant douze fonctions publiques et six corps composites. Son SHA-256 est
+`46932657bf6ea3e4a3e99abba91b377b1ddbfb731a8553a4d5728fc414f54c8c`.
+Le [générateur](../scripts/export-rmsnorm-probe.py) refuse l’écrasement d’un
+dossier existant et relit les octets, contrats, poids et références. Quatre
+corruptions contrôlées sont rejetées, y compris un résultat altéré dont
+l’empreinte avait été recalculée.
+
+Dans le build 5, laisser Gemma déchargé, puis utiliser **Tester le calcul
+natif**, après la section Conversation, et **Partager le diagnostic**.
+Les douze fixtures tournent avec la préférence Neural Engine du moteur
+actuel, puis en mode CPU seul. Le rapport conserve les 24 résultats,
+les écarts ULP, valeurs non finies et erreurs de chargement ou d’exécution.
+La préférence ne prouve pas l’usage ANE. Ces petits contrôles doivent
+orienter l’enquête avant une autre modification du modèle entier ; même
+réussis, ils ne qualifient pas Gemma. Son contexte reste 32K.
+
 ## Intégrité du paquet transféré
 
 Le paquet group8 de référence comporte neuf fichiers, soit

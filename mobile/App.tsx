@@ -17,9 +17,11 @@ import {
   GenerationResult,
   Message,
   Progress,
+  PrimitiveReport,
   errorMessage,
   outputBudget,
   parseProgress,
+  parsePrimitiveReport,
   parseResult,
   parseState,
 } from './src/protocol';
@@ -37,6 +39,7 @@ export function AssistantScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [report, setReport] = useState<GenerationResult | null>(null);
+  const [probeReport, setProbeReport] = useState<PrimitiveReport | null>(null);
   const active = useRef<string | null>(null);
   const operation = useRef(false);
   const mounted = useRef(true);
@@ -402,6 +405,51 @@ export function AssistantScreen() {
             Le rapport peut contenir la réponse générée : vérifie son contenu
             avant de le partager.
           </Text>
+        </View>
+        <View style={styles.panel}>
+          <Text style={styles.section}>Diagnostic de calcul</Text>
+          <Text style={styles.muted}>
+            Petit contrôle indépendant de Gemma. Décharge le modèle et garde
+            l’app au premier plan pendant ce diagnostic.
+          </Text>
+          <Action
+            label="Tester le calcul natif"
+            disabled={busy || ready || !NativeAssist}
+            onPress={() =>
+              perform(async () => {
+                setProbeReport(null);
+                const result = parsePrimitiveReport(
+                  await NativeAssist!.runNumericalProbe(),
+                );
+                if (mounted.current) {
+                  setProbeReport(result);
+                }
+              })
+            }
+          />
+          {probeReport && (
+            <Text selectable style={styles.body}>
+              {probeReport.summary.cases} contrôles ·{' '}
+              {probeReport.summary.failed} échecs ·{' '}
+              {probeReport.summary.nonfinite} valeurs non finies. Ce résultat ne
+              qualifie pas les réponses de Gemma ni l’usage ANE.
+            </Text>
+          )}
+          <Action
+            label="Partager le diagnostic"
+            disabled={!probeReport || busy}
+            onPress={async () => {
+              if (probeReport) {
+                try {
+                  await Share.share({
+                    message: JSON.stringify(probeReport, null, 2),
+                  });
+                } catch (e) {
+                  setError(errorMessage(e));
+                }
+              }
+            }}
+          />
         </View>
       </ScrollView>
     </SafeAreaView>

@@ -3,6 +3,8 @@ artifacts/
 models/
 /mobile/ios/Assist/BundledModels/
 *.aimodel/
+!/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/
+!/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/**
 *.mlmodelc/
 *.mlpackage/
 *.safetensors

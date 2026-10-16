@@ -223,6 +223,20 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   });
 }
 
+- (void)runNumericalProbe:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    if (self->_loaded) {
+      AssistReject(reject, AssistError(@"E_MODEL_LOADED", @"Décharge le modèle avant le diagnostic de calcul."));
+      return;
+    }
+    NSString *operation = [self beginOperation:reject];
+    if (!operation) { return; }
+    [self->_engine runNumericalProbe:[self completionForOperation:operation resolve:resolve reject:reject
+                                                      cleanup:^(BOOL succeeded) {}]];
+  });
+}
+
 - (void)generate:(NSString *)requestJSON
          resolve:(RCTPromiseResolveBlock)resolve
           reject:(RCTPromiseRejectBlock)reject {

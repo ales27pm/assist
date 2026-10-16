@@ -1,4 +1,4 @@
-# EAS receives source and build scripts only, never model weights or personal data.
+# EAS receives source, build scripts and synthetic diagnostics, never Gemma weights or personal data.
 /*
 !/mobile/
 !/scripts/
@@ -30,6 +30,8 @@
 **/*.ips
 **/*.jsbundle
 **/*.aimodel/
+!/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/
+!/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/**
 **/*.mlmodelc/
 **/*.mlpackage/
 **/*.safetensors

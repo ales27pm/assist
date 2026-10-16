@@ -67,6 +67,15 @@ final class AssistCoreAI: NSObject {
             catch { completion(nil, error as NSError) }
         }
     }
+
+    @objc(runNumericalProbe:)
+    func runNumericalProbe(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        let coordinator = coordinator
+        Task { @concurrent in
+            do { completion(try await coordinator.runNumericalProbe(), nil) }
+            catch { completion(nil, error as NSError) }
+        }
+    }
 }
 
 private enum AssistPhase: String, Codable, Sendable {
@@ -403,6 +412,19 @@ private actor AssistInferenceCoordinator {
             loadElapsedMs: loadElapsedMs, beforeLoadPhysicalFootprintBytes: beforeLoadFootprint,
             afterLoadPhysicalFootprintBytes: afterLoadFootprint
         ))
+    }
+
+    func runNumericalProbe() async throws -> String {
+        guard !busy else { throw AssistInferenceError.busy }
+        guard engine == nil else {
+            throw AssistInferenceError.invalid("Décharge le modèle avant le diagnostic de calcul.")
+        }
+        guard #available(iOS 27.2, *) else {
+            throw AssistInferenceError.invalid("Ce diagnostic nécessite iOS 27.2 ou une version ultérieure.")
+        }
+        operationInFlight = true
+        defer { operationInFlight = false }
+        return try await AssistNumericalProbe.run()
     }
 
     func reset() async throws -> String {
