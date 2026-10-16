@@ -47,6 +47,10 @@
 	</dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Assist utilise le microphone pour dicter votre message sur cet iPhone, sans transmettre l’audio à un serveur.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Assist reconnaît votre dictée en français canadien sur cet iPhone. La dictée reste désactivée si la reconnaissance locale est indisponible.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 	  <!-- Do not change NSAllowsArbitraryLoads to true, or you will risk app rejection! -->

@@ -64,6 +64,8 @@ const failed = {
 const perform = jest.fn(async (action: () => Promise<void>) => action());
 const runLabel = 'Vérifier l’asset F16';
 const shareLabel = 'Partager le rapport d’identité F16';
+const historicalLabel =
+  'Rapport précédent. Il ne prouve pas l’identité du dossier actuellement sélectionné.';
 
 beforeEach(() => {
   jest.restoreAllMocks();
@@ -101,6 +103,7 @@ test('restores and shares a pending report without selection, engine change or r
   expect(
     screen.getByText(/Essai du 2026-10-16T17:00:00.123Z/),
   ).toBeOnTheScreen();
+  expect(screen.getByText(historicalLabel)).toBeOnTheScreen();
   expect(
     screen.getByText(
       /embeddings par couche et le tokenizer ne sont pas vérifiés/,
@@ -176,6 +179,77 @@ test('runs the no-path identity action only on a manual press inside perform', a
   expect(perform).toHaveBeenCalledTimes(1);
   expect(native.loadModel).not.toHaveBeenCalled();
   expect(native.runModelLoadProbe).not.toHaveBeenCalled();
+});
+
+test('marks restored evidence as historical for an already selected folder until a fresh verification succeeds', async () => {
+  native.getLastModelAssetProbe.mockResolvedValue(JSON.stringify(completed));
+  const fresh = {
+    ...completed,
+    attempt: {
+      ...completed.attempt,
+      id: 'c41bb982-cff8-4c07-a49b-093b1330895e',
+      startedAtUTC: '2026-10-16T18:00:00.123Z',
+    },
+  };
+  native.runModelAssetProbe.mockImplementation(async () => {
+    native.getLastModelAssetProbe.mockResolvedValue(JSON.stringify(fresh));
+    return JSON.stringify(fresh);
+  });
+  const user = userEvent.setup();
+  await renderAsync(
+    <ModelAssetProbePanel
+      selected
+      selectionVersion={1}
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  expect(screen.getByText(historicalLabel)).toBeOnTheScreen();
+  expect(native.runModelAssetProbe).not.toHaveBeenCalled();
+
+  await user.press(screen.getByRole('button', { name: runLabel }));
+  expect(
+    await screen.findByText(/Essai du 2026-10-16T18:00:00.123Z/),
+  ).toBeOnTheScreen();
+  expect(screen.queryByText(historicalLabel)).toBeNull();
+
+  await screen.rerenderAsync(
+    <ModelAssetProbePanel
+      selected
+      selectionVersion={2}
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  expect(screen.queryByText(/Les quatre fichiers correspondent/)).toBeNull();
+  expect(screen.queryByText(historicalLabel)).toBeNull();
+  expect(screen.queryByRole('button', { name: shareLabel })).toBeNull();
+});
+
+test('keeps a saved fallback historical when a rejected action cannot associate it with the current verification', async () => {
+  native.getLastModelAssetProbe.mockResolvedValue(JSON.stringify(completed));
+  native.runModelAssetProbe.mockRejectedValue(
+    new Error('Native action failed'),
+  );
+  const user = userEvent.setup();
+  await renderAsync(
+    <ModelAssetProbePanel
+      selected
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  await user.press(screen.getByRole('button', { name: runLabel }));
+  expect(screen.getByText(historicalLabel)).toBeOnTheScreen();
+  expect(
+    screen.getByText(
+      'La vérification n’a pas retourné de rapport exploitable.',
+    ),
+  ).toBeOnTheScreen();
+  expect(native.runModelAssetProbe).toHaveBeenCalledTimes(1);
 });
 
 test('shares a failed result and numeric errno without adding a diagnosis or retry', async () => {
@@ -307,6 +381,7 @@ test('prevents an older restoration request from replacing the manual result', a
   expect(
     screen.getByText(/Les quatre fichiers correspondent/),
   ).toBeOnTheScreen();
+  expect(screen.queryByText(historicalLabel)).toBeNull();
   expect(screen.queryByText(/Dernière étape enregistrée/)).toBeNull();
 });
 
@@ -323,6 +398,7 @@ test('hides a restored success when a folder is selected and does not restore it
   expect(
     screen.getByText(/Les quatre fichiers correspondent/),
   ).toBeOnTheScreen();
+  expect(screen.getByText(historicalLabel)).toBeOnTheScreen();
   await screen.rerenderAsync(
     <ModelAssetProbePanel
       selected
@@ -332,6 +408,7 @@ test('hides a restored success when a folder is selected and does not restore it
     />,
   );
   expect(screen.queryByText(/Les quatre fichiers correspondent/)).toBeNull();
+  expect(screen.queryByText(historicalLabel)).toBeNull();
   expect(screen.queryByRole('button', { name: shareLabel })).toBeNull();
   expect(native.getLastModelAssetProbe).toHaveBeenCalledTimes(1);
 });

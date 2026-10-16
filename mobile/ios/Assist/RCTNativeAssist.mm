@@ -54,6 +54,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 @implementation RCTNativeAssist {
   AssistCoreAI *_engine;
   AssistModelDirectoryPicker *_picker;
+  AssistVoice *_voice;
   NSString *_operation;
   BOOL _loaded;
   BOOL _invalidated;
@@ -87,6 +88,58 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   }
   _operation = NSUUID.UUID.UUIDString;
   return _operation;
+}
+
+// Voice has its own lifecycle: recording and playback must remain stoppable
+// while the language engine is generating or cancelling.
+- (BOOL)prepareVoice:(RCTPromiseRejectBlock)reject {
+  if (![self prepare:reject]) { return NO; }
+  if (!_voice) {
+    _voice = [AssistVoice new];
+    __weak RCTNativeAssist *weakSelf = self;
+    [_voice setEventHandler:^(NSString *json) {
+      RCTNativeAssist *strongSelf = weakSelf;
+      if (!strongSelf || strongSelf->_invalidated) { return; }
+      [strongSelf emitOnVoiceEvent:@{ @"json": json }];
+    }];
+  }
+  return YES;
+}
+
+- (void)getVoiceStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice status:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)startListening:(NSString *)sessionId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice startListening:sessionId completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)stopListening:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice stopListening:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)cancelVoice:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice cancel:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)speak:(NSString *)text utteranceId:(NSString *)utteranceId
+      resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice speak:text utteranceId:utteranceId completion:AssistPromise(resolve, reject)];
+  });
 }
 
 - (AssistCompletion)refreshResidentStateOnFailure:(AssistCompletion)completion {
@@ -427,6 +480,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)invalidate {
   dispatch_async(dispatch_get_main_queue(), ^{
     self->_invalidated = YES;
+    [self->_voice invalidate];
     [self->_engine shutdownMonitoring:^(NSString *result, NSError *error) {}];
     if (!self->_loaded) {
       // If selection is open this settles it; never release a loading model's

@@ -1,5 +1,45 @@
 Ce dossier contient le prototype Assist. Les [instructions spécifiques iOS/Core AI](../docs/ios-build.md) et l’[état de vérification](../docs/verification.md) priment sur les instructions génériques du template ci-dessous. L’app cible Xcode/SDK 27.1+, mais son chargeur Gemma exige iOS 27.2+ à l’exécution ; Android n’a pas encore de moteur d’inférence.
 
+## Aperçu de l’interface dans un navigateur
+
+Depuis ce dossier, exécuter `npm install`, puis `npm run preview` et ouvrir
+<http://127.0.0.1:5173>. Si ce port est occupé, choisir explicitement un autre
+port, par exemple `npm run preview -- --port 5174`.
+Cet aperçu de développement rend le même `App.tsx`
+avec React Native for Web. Le moteur natif est explicitement absent : aucun
+modèle, résultat ou état d’inférence n’est simulé. Les commandes nécessitant
+Core AI restent indisponibles.
+
+Le bouton **Réglages** regroupe le modèle, la limite de réponse et l’apparence.
+La ligne **Apparence** propose **Natif clair**, **Graphite** et **Bleu profond**
+pour toute l’app. Ces choix sont conservés pendant la session.
+**Voir un exemple** affiche un échange explicitement illustratif : il reste
+séparé de l’historique réel, des requêtes au moteur et des rapports partagés.
+**Préparer mon assistant** ouvre le parcours du modèle. L’import d’un export
+compatible et ses exigences se trouvent sous **Importer un modèle** ; les
+diagnostics sont accessibles depuis cet écran. Les panneaux techniques sont
+initialisés à la demande puis conservés en mémoire pendant cette session,
+y compris leurs rapports détaillés. Le suivi visuel se suspend lorsqu’on
+quitte les diagnostics.
+
+La [direction d’ensemble et les captures vérifiées](../design/whole-system-redesign.md)
+documentent les parcours et les limites de validation native.
+
+Sur iOS, **Dicter** remplit le brouillon avec Apple Speech en mode local
+obligatoire `fr-CA`. **Envoyer** reste explicite. L’option **Lire les réponses**
+active la voix système canadienne après une réponse Gemma terminée; la lecture
+peut être arrêtée. Le micro est fermé pendant la lecture. Les capacités et
+permissions sont vérifiées à l’exécution, sans repli distant. Voir le
+[parcours et les essais physiques à effectuer](../docs/local-voice.md).
+L’aperçu web ne fournit pas de micro ni de voix simulée.
+L’[affinage depuis la référence partagée](../design/shared-reference-refinement.md) décrit la révision actuelle, son identité cercle et graine et les différences nécessaires avec la planche.
+
+`npm run preview:build` vérifie la compilation web et écrit dans
+`build/preview/`, un dossier ignoré par Git. La configuration est isolée dans
+`preview/` et ne modifie pas Metro ni les builds iOS/Android. Un contrôle dans
+ce navigateur vérifie le rendu et les interactions locales ; le clavier,
+les safe areas et l’inférence sur appareil iOS demandent une validation native.
+
 This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
 
 # Getting Started

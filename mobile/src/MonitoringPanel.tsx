@@ -8,6 +8,8 @@ import {
   View,
 } from 'react-native';
 import NativeAssist from '../specs/NativeAssist';
+import { AssistTheme, useAppearance } from './appearance';
+import { uiGrammar } from './uiGrammar';
 import {
   MonitoringPhase,
   MonitoringSnapshot,
@@ -107,6 +109,8 @@ function duration(milliseconds: number): string {
 }
 
 export function MonitoringPanel() {
+  const { theme } = useAppearance();
+  const styles = createStyles(theme);
   const [snapshot, setSnapshot] = useState<MonitoringSnapshot | null>(null);
   const [foreground, setForeground] = useState(
     AppState.currentState === 'active',
@@ -443,6 +447,8 @@ function Sparkline({
   values: (number | null)[];
   unit: string;
 }) {
+  const { theme } = useAppearance();
+  const styles = createStyles(theme);
   const known = values.filter((value): value is number => value !== null);
   if (!known.length) {
     return <Text style={styles.muted}>{title} · historique indisponible.</Text>;
@@ -473,53 +479,66 @@ function Sparkline({
   );
 }
 
-const styles = StyleSheet.create({
-  panel: {
-    padding: 18,
-    gap: 12,
-    borderRadius: 18,
-    backgroundColor: '#142126',
-    borderWidth: 1,
-    borderColor: '#304148',
-  },
-  title: { fontSize: 20, fontWeight: '600', color: '#f0f4ef' },
-  subtitle: { fontSize: 16, fontWeight: '600', color: '#f0f4ef' },
-  body: { fontSize: 16, lineHeight: 24, color: '#f0f4ef' },
-  muted: { fontSize: 14, lineHeight: 21, color: '#a6b7b7' },
-  warning: { color: '#ffca99' },
-  group: { gap: 6 },
-  event: {
-    gap: 2,
-    borderLeftWidth: 2,
-    borderLeftColor: '#607676',
-    paddingLeft: 10,
-  },
-  chart: { height: 44, flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
-  bar: { flex: 1, maxWidth: 12, borderRadius: 2, backgroundColor: '#93bfb4' },
-  track: {
-    height: 8,
-    backgroundColor: '#304148',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progress: { height: 8, backgroundColor: '#b2d9c5' },
-  button: {
-    minHeight: 48,
-    padding: 14,
-    borderRadius: 10,
-    backgroundColor: '#b2d9c5',
-    justifyContent: 'center',
-  },
-  buttonText: {
-    color: '#10251e',
-    textAlign: 'center',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  secondaryButton: {
-    minHeight: 48,
-    paddingVertical: 12,
-    justifyContent: 'center',
-  },
-  disabled: { opacity: 0.35 },
-});
+const createStyles = (theme: AssistTheme) =>
+  StyleSheet.create({
+    panel: {
+      gap: 12,
+    },
+    title: {
+      ...uiGrammar.type.body,
+      fontWeight: '600',
+      color: theme.colors.text,
+    },
+    subtitle: {
+      ...uiGrammar.type.body,
+      fontWeight: '600',
+      color: theme.colors.text,
+    },
+    body: { ...uiGrammar.type.body, color: theme.colors.text },
+    muted: { ...uiGrammar.type.label, color: theme.colors.muted },
+    warning: { color: theme.colors.danger },
+    group: { gap: 8 },
+    event: {
+      gap: 4,
+      borderLeftWidth: 2,
+      borderLeftColor: theme.colors.border,
+      paddingLeft: 12,
+    },
+    chart: { height: 44, flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
+    bar: {
+      flex: 1,
+      maxWidth: 12,
+      borderRadius: 2,
+      backgroundColor: theme.colors.accent,
+    },
+    track: {
+      height: 8,
+      backgroundColor: theme.colors.chip,
+      borderRadius: 4,
+      overflow: 'hidden',
+    },
+    progress: { height: 8, backgroundColor: theme.colors.accent },
+    button: {
+      minHeight: 52,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: uiGrammar.radius.control,
+      backgroundColor: theme.colors.accent,
+      justifyContent: 'center',
+    },
+    buttonText: {
+      ...uiGrammar.type.label,
+      color: theme.colors.onAccent,
+      textAlign: 'center',
+      fontWeight: '600',
+    },
+    secondaryButton: {
+      minHeight: 52,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: uiGrammar.radius.control,
+      backgroundColor: theme.colors.chip,
+      justifyContent: 'center',
+    },
+    disabled: { opacity: 0.35 },
+  });
