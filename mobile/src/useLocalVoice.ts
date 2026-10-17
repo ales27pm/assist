@@ -41,6 +41,7 @@ export function useLocalVoice({
   const [diagnostics, setDiagnostics] = useState<VoiceInputDiagnostics | null>(
     null,
   );
+  const [audioDiagnostics, setAudioDiagnostics] = useState<string[]>([]);
   const mounted = useRef(true);
   const visible = useRef(enabled);
   const foreground = useRef(AppState.currentState === 'active');
@@ -109,7 +110,11 @@ export function useLocalVoice({
               monitoring: monitoringRef.current,
             },
       );
-      if (latest) publishPhase(next.phase, next.monitoring === true);
+      if (latest) {
+        if (next.audioDiagnostics !== undefined)
+          setAudioDiagnostics(next.audioDiagnostics);
+        publishPhase(next.phase, next.monitoring === true);
+      }
       return latest;
     },
     [publishPhase],
@@ -129,6 +134,23 @@ export function useLocalVoice({
       }
       return next;
     });
+  }, []);
+
+  const readFailureDiagnostics = useCallback(async (version: number) => {
+    // Promise rejection and the native error event can cross the bridge in
+    // either order. Inspect only diagnostic data, without reviving a phase or
+    // letting this older request replace the next session's observations.
+    try {
+      const next = parseVoiceStatus(await NativeAssist!.getVoiceStatus());
+      if (
+        mounted.current &&
+        version === epoch.current &&
+        next.audioDiagnostics !== undefined
+      )
+        setAudioDiagnostics(next.audioDiagnostics);
+    } catch {
+      // Preserve the original failure if its optional details are unavailable.
+    }
   }, []);
 
   const cancel = useCallback((): Promise<boolean> => {
@@ -158,6 +180,15 @@ export function useLocalVoice({
     return pending;
   }, [supported, publishPhase]);
 
+  const cancelAfterFailure = useCallback(async () => {
+    // Stop immediately; fetching optional observations must never delay audio
+    // cancellation. Pin the post-cancel epoch before awaiting either command.
+    const stopped = cancel();
+    const version = epoch.current;
+    await stopped;
+    await readFailureDiagnostics(version);
+  }, [cancel, readFailureDiagnostics]);
+
   useEffect(() => {
     mounted.current = true;
     if (!supported) return;
@@ -183,10 +214,13 @@ export function useLocalVoice({
                     phaseRef.current === 'stopping' ? 'idle' : phaseRef.current,
                   monitoring: monitoringRef.current,
                   diagnostics: undefined,
+                  audioDiagnostics: undefined,
                 },
           );
           if (latest && !current.current) {
             rememberDiagnostics(next.diagnostics);
+            if (next.audioDiagnostics !== undefined)
+              setAudioDiagnostics(next.audioDiagnostics);
           }
         })
         .catch(e => {
@@ -213,6 +247,8 @@ export function useLocalVoice({
         )
           return;
         const update = parseVoiceEvent(event.json);
+        if (update.audioDiagnostics !== undefined)
+          setAudioDiagnostics(update.audioDiagnostics);
         if (update.kind === 'interruption') {
           if (session.kind !== 'speech' || session.failed || stopping.current)
             return;
@@ -347,6 +383,7 @@ export function useLocalVoice({
     };
     setError('');
     setDiagnostics(null);
+    setAudioDiagnostics([]);
     publishPhase('requesting');
     const revision = statusRevision.current;
     try {
@@ -375,6 +412,7 @@ export function useLocalVoice({
         current.current = null;
         publishPhase('idle');
         setError(errorMessage(e));
+        await readFailureDiagnostics(version);
       }
       return false;
     }
@@ -384,6 +422,7 @@ export function useLocalVoice({
     publishPhase,
     acceptStatus,
     captureCompleted,
+    readFailureDiagnostics,
   ]);
 
   const finishListening = useCallback(async (): Promise<boolean> => {
@@ -412,11 +451,17 @@ export function useLocalVoice({
     } catch (e) {
       if (mounted.current && version === epoch.current) {
         setError(errorMessage(e));
-        await cancel();
+        await cancelAfterFailure();
       }
       return false;
     }
-  }, [supported, cancel, rememberDiagnostics, publishPhase, acceptStatus]);
+  }, [
+    supported,
+    cancelAfterFailure,
+    rememberDiagnostics,
+    publishPhase,
+    acceptStatus,
+  ]);
 
   const speak = useCallback(
     async (text: string, utteranceId: string) => {
@@ -436,6 +481,7 @@ export function useLocalVoice({
       current.current = { id: utteranceId, kind: 'speech', failed: false };
       setError('');
       setDiagnostics(null);
+      setAudioDiagnostics([]);
       publishPhase('speaking');
       const revision = statusRevision.current;
       try {
@@ -450,10 +496,11 @@ export function useLocalVoice({
           current.current = null;
           publishPhase('idle');
           setError(errorMessage(e));
+          await readFailureDiagnostics(version);
         }
       }
     },
-    [supported, publishPhase, acceptStatus],
+    [supported, publishPhase, acceptStatus, readFailureDiagnostics],
   );
 
   const beginSpeech = useCallback(
@@ -473,6 +520,7 @@ export function useLocalVoice({
       current.current = { id: utteranceId, kind: 'speech', failed: false };
       setError('');
       setDiagnostics(null);
+      setAudioDiagnostics([]);
       publishPhase('speaking');
       const revision = statusRevision.current;
       try {
@@ -497,12 +545,12 @@ export function useLocalVoice({
           current.current.id === utteranceId
         ) {
           setError(errorMessage(e));
-          await cancel();
+          await cancelAfterFailure();
         }
         return false;
       }
     },
-    [streamingSupported, cancel, publishPhase, acceptStatus],
+    [streamingSupported, cancelAfterFailure, publishPhase, acceptStatus],
   );
 
   const continueSpeech = useCallback(
@@ -559,12 +607,12 @@ export function useLocalVoice({
           current.current.id === utteranceId
         ) {
           setError(errorMessage(e));
-          await cancel();
+          await cancelAfterFailure();
         }
         return false;
       }
     },
-    [streamingSupported, cancel, acceptStatus],
+    [streamingSupported, cancelAfterFailure, acceptStatus],
   );
 
   const enqueueSpeech = useCallback(
@@ -594,6 +642,7 @@ export function useLocalVoice({
     phase,
     error,
     diagnostics,
+    audioDiagnostics,
     startListening,
     finishListening,
     cancel,

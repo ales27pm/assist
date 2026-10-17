@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { useAppearance } from './appearance';
-import { ActionButton } from './uiPrimitives';
+import { ActionButton, Disclosure } from './uiPrimitives';
 import { uiGrammar } from './uiGrammar';
 import type { VoiceInputDiagnostics } from './voice';
 
@@ -30,6 +30,7 @@ export type VoiceConversationScreenProps = {
   replyInterrupted?: boolean;
   error?: string;
   diagnostics?: VoiceInputDiagnostics | null;
+  audioDiagnostics?: string[];
   readResponses: boolean;
   /** Native monitoring is armed; requesting it alone must not set this flag. */
   bargeInReady?: boolean;
@@ -87,6 +88,7 @@ export function VoiceConversationScreen({
   replyInterrupted = false,
   error,
   diagnostics,
+  audioDiagnostics,
   readResponses,
   bargeInReady = false,
   onPause,
@@ -241,6 +243,17 @@ export function VoiceConversationScreen({
           >
             {error}
           </Text>
+        )}
+
+        {!!error && !!audioDiagnostics?.length && (
+          <Disclosure
+            title="Détails audio"
+            description="Informations locales pour signaler cette interruption."
+          >
+            <Text selectable style={[styles.caption, { color: colors.muted }]}>
+              {audioDiagnostics.join('\n')}
+            </Text>
+          </Disclosure>
         )}
 
         <View style={styles.message}>

@@ -54,6 +54,14 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private var monitorRetry = AssistVoiceMonitorRetry()
     private var monitorRetryTask: Task<Void, Never>?
     private var pendingAudioError: String?
+    private var routeBaseline: AssistVoiceRouteBaseline?
+    private var ownedCategoryTransition: (generation: UUID, value: AssistVoiceOwnedCategoryTransition)?
+    private var tapInputFormat: AssistVoiceRouteFormat?
+    private var configuringGeneration: UUID?
+    private var pendingRouteChecks: [(reason: UInt?, previous: AssistVoiceRouteIdentity?, current: AssistVoiceRouteIdentity)] = []
+    private var routeProgressTask: Task<Void, Never>?
+    private var routeProgress = AssistVoiceRouteProgressWatch()
+    private var audioDiagnostics = AssistVoiceAudioDiagnostics()
     private var lastMonitoring = false
     private var queuedSpeech: [(identifier: UUID, text: String)] = []
     private var queuedSpeechBytes = 0
@@ -68,7 +76,8 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private var speechQueue = AssistVoiceSpeechQueue()
     private var speechVoice: AVSpeechSynthesisVoice?
     private var hasTap = false
-    private var audioSessionActive = false
+    private var audioSessionOwnership = AssistVoiceAudioSessionOwnership()
+    private var audioSessionActive: Bool { audioSessionOwnership.isActive }
     private var invalidated = false
 
     override init() {
@@ -124,6 +133,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         guard recognizer?.supportsOnDeviceRecognition == true, recognizer?.isAvailable == true else {
             completion(nil, Self.error("E_VOICE_UNAVAILABLE", "La dictée locale en français canadien est indisponible sur cet appareil.")); return
         }
+        audioDiagnostics = AssistVoiceAudioDiagnostics()
         if adoptRetainedInput(id, completion: completion) { return }
         cancelCurrent()
         let token = generation
@@ -208,6 +218,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             completion(nil, Self.error("E_VOICE_UNAVAILABLE", "Installe une voix française canadienne dans les réglages de parole iOS.")); return
         }
         cancelCurrent()
+        audioDiagnostics = AssistVoiceAudioDiagnostics()
         sessionId = id
         speechVoice = voice
         latestTranscript = ""
@@ -222,9 +233,10 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             emitState()
             completion(statusJSON(), nil)
         } catch {
+            let code = (error as NSError).userInfo["code"] as? String == "E_VOICE_INTERRUPTED" ? "E_VOICE_INTERRUPTED" : "E_VOICE_AEC"
             let message = "La conversation avec annulation d’écho n’a pas pu démarrer : \(error.localizedDescription)"
-            fail(message, code: "E_VOICE_AEC")
-            completion(nil, Self.error("E_VOICE_AEC", message))
+            fail(message, code: code)
+            completion(nil, Self.error(code, message))
         }
     }
 
@@ -256,10 +268,19 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
 
     private func activateAudioSession() throws {
         let audio = AVAudioSession.sharedInstance()
+        let token = generation
+        let before = Self.routeIdentity(audio.currentRoute)
         try audio.setCategory(.playAndRecord, mode: .voiceChat,
                               options: [.defaultToSpeaker, .duckOthers])
+        let categoryRoute = Self.routeIdentity(audio.currentRoute)
         try audio.setActive(true)
-        audioSessionActive = true
+        guard generation == token, UIApplication.shared.applicationState == .active else {
+            try? audio.setActive(false, options: [.notifyOthersOnDeactivation])
+            throw Self.error("E_VOICE_INTERRUPTED", "Le démarrage audio a été interrompu.")
+        }
+        ownedCategoryTransition = (generation, AssistVoiceOwnedCategoryTransition(
+            previous: [before, categoryRoute], target: Self.routeIdentity(audio.currentRoute)))
+        audioSessionOwnership.acquire()
     }
 
     private var isMonitoring: Bool {
@@ -455,12 +476,28 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             emitState()
             settleStart(statusJSON(), nil)
         } catch {
-            fail("Le microphone avec annulation d’écho n’a pas pu démarrer : \(error.localizedDescription)", code: "E_VOICE_AEC")
+            let code = (error as NSError).userInfo["code"] as? String == "E_VOICE_INTERRUPTED" ? "E_VOICE_INTERRUPTED" : "E_VOICE_AEC"
+            fail("Le microphone avec annulation d’écho n’a pas pu démarrer : \(error.localizedDescription)", code: code)
         }
     }
 
     private func makeDuplexEngine(token: UUID) throws {
+        guard generation == token, audioSessionActive, UIApplication.shared.applicationState == .active else {
+            throw Self.error("E_VOICE_INTERRUPTED", "Le démarrage audio a été interrompu.")
+        }
+        configuringGeneration = token
+        pendingRouteChecks.removeAll(keepingCapacity: true)
+        defer {
+            if configuringGeneration == token { configuringGeneration = nil }
+            pendingRouteChecks.removeAll(keepingCapacity: true)
+        }
         let engine = AVAudioEngine()
+        var graphCommitted = false
+        defer {
+            // start() may complete after a reentrant cancellation released the
+            // owner's reference. Stop this local instance on every failed build.
+            if !graphCommitted { engine.stop() }
+        }
         audioEngine = engine
         let player = AVAudioPlayerNode()
         self.player = player
@@ -468,17 +505,59 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         // Voice processing changes BOTH I/O nodes and must be enabled stopped.
         // All synthesized audio renders through this same VPIO output reference.
         try engine.inputNode.setVoiceProcessingEnabled(true)
+        guard generation == token, audioEngine === engine, audioSessionActive,
+              UIApplication.shared.applicationState == .active else {
+            throw Self.error("E_VOICE_INTERRUPTED", "Le démarrage audio a été interrompu.")
+        }
         guard engine.inputNode.isVoiceProcessingEnabled, engine.outputNode.isVoiceProcessingEnabled else {
             throw Self.error("E_VOICE_AEC", "Le traitement vocal avec annulation d’écho est indisponible.")
         }
         let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
         engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        guard generation == token, audioEngine === engine, audioSessionActive,
+              UIApplication.shared.applicationState == .active else {
+            throw Self.error("E_VOICE_INTERRUPTED", "Le démarrage audio a été interrompu.")
+        }
         try installRecognition(on: engine, token: token)
+        guard generation == token, audioEngine === engine, audioSessionActive,
+              UIApplication.shared.applicationState == .active else {
+            throw Self.error("E_VOICE_INTERRUPTED", "Le démarrage audio a été interrompu.")
+        }
         engine.prepare()
         try engine.start()
+        guard generation == token, audioEngine === engine, audioSessionActive,
+              UIApplication.shared.applicationState == .active else {
+            throw Self.error("E_VOICE_INTERRUPTED", "Le démarrage audio a été interrompu.")
+        }
+        let committed = routeFacts(reason: 8, previous: nil, constructing: false)
+        routeBaseline = AssistVoiceRouteBaseline(route: committed.current, input: committed.input,
+                                                output: committed.output, player: committed.player)
+        configuringGeneration = nil
+        let health = routeFacts(reason: 8, previous: nil, constructing: false)
+        guard health.decision == .accept else {
+            recordRoute(health, source: "graph", decision: "failed-commit")
+            throw Self.error("E_VOICE_AEC", "Le graphe audio avec annulation d’écho est inutilisable.")
+        }
+        recordRoute(health, source: "graph", decision: "committed")
+        // Reentrant configuration notices may arrive before start returns. They
+        // are checked against the committed graph, never ignored for a duration.
+        for pending in pendingRouteChecks {
+            let facts = routeFacts(reason: pending.reason, previous: pending.previous, constructing: false)
+            guard generation == token, facts.current == pending.current, facts.decision == .accept else {
+                recordRoute(facts, source: "route", decision: "failed-deferred")
+                throw Self.error("E_VOICE_INTERRUPTED", "Le périphérique audio a changé pendant le démarrage.")
+            }
+            recordRoute(facts, source: "route", decision: "accepted-deferred")
+            watchRouteProgress()
+        }
+        graphCommitted = true
     }
 
     private func installRecognition(on engine: AVAudioEngine, token: UUID) throws {
+        guard generation == token, audioEngine === engine, audioSessionActive,
+              UIApplication.shared.applicationState == .active else {
+            throw Self.error("E_VOICE_INTERRUPTED", "La session de reconnaissance a été annulée.")
+        }
         guard let recognizer, recognizer.supportsOnDeviceRecognition, recognizer.isAvailable else {
             throw Self.error("E_VOICE_UNAVAILABLE", "La dictée locale fr-CA est indisponible.")
         }
@@ -487,6 +566,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw Self.error("E_VOICE_AUDIO", "Aucune entrée microphone n’est disponible.")
         }
+        tapInputFormat = Self.routeFormat(format)
         let localRequest = SFSpeechAudioBufferRecognitionRequest()
         localRequest.requiresOnDeviceRecognition = true
         localRequest.shouldReportPartialResults = true
@@ -601,6 +681,10 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         recognitionTask?.cancel()
         recognitionTask = nil
         request = nil
+        let recheckRouteProgress = routeProgressTask != nil
+        routeProgressTask?.cancel()
+        routeProgressTask = nil
+        routeProgress.cancel()
         lifetime.rearmRecognition()
         lastMonitoring = false
         emitState()
@@ -612,7 +696,12 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             }
             guard let self, self.generation == token, self.speechGeneration == outputToken,
                   self.phase == "speaking", self.audioEngine === engine else { return }
-            do { try self.installRecognition(on: engine, token: token) }
+            do {
+                try self.installRecognition(on: engine, token: token)
+                // A new tap replaces the meter. Preserve a pending route check
+                // against its counters instead of dropping it with the old ASR.
+                if recheckRouteProgress || self.routeProgressTask != nil { self.watchRouteProgress() }
+            }
             catch { self.fail("La surveillance vocale locale n’a pas pu redémarrer.", code: "E_VOICE_MONITOR") }
         }
     }
@@ -634,6 +723,17 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
 
     private func cancelCurrent() {
         lifetime.reset()
+        // stop/player/engine/deactivation may synchronously notify. Observers
+        // must see no owned audio session before any of those boundaries.
+        let shouldDeactivate = audioSessionOwnership.relinquish()
+        routeProgressTask?.cancel()
+        routeProgressTask = nil
+        routeProgress.cancel()
+        routeBaseline = nil
+        ownedCategoryTransition = nil
+        tapInputFormat = nil
+        configuringGeneration = nil
+        pendingRouteChecks.removeAll(keepingCapacity: true)
         stopSpeechOutput()
         pendingAudioError = nil
         monitorRetryTask?.cancel()
@@ -651,9 +751,8 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         audioEngine = nil
         player = nil
         lastMonitoring = false
-        if audioSessionActive {
+        if shouldDeactivate {
             try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-            audioSessionActive = false
         }
         phase = "idle"
         settleStart(nil, Self.error("E_VOICE_CANCELLED", "La dictée a été annulée."))
@@ -662,8 +761,8 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     private func fail(_ message: String, code: String) {
-        settleStart(nil, Self.error(code, message))
         emit(kind: "error", message: message)
+        settleStart(nil, Self.error(code, message))
         cancelCurrent()
     }
 
@@ -686,19 +785,19 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         { [weak owner] notification in
             let routeReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
             let interruptionType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            let previousRoute = notification.userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
+            let previous = previousRoute.map(Self.routeIdentity)
             // This observer explicitly runs on the main operation queue. Handle
             // it synchronously so an old route event cannot stop a newer turn.
             MainActor.assumeIsolated { [weak owner] in
-                owner?.handleNotification(name, routeReason: routeReason, interruptionType: interruptionType)
+                owner?.handleNotification(name, routeReason: routeReason, interruptionType: interruptionType, previous: previous)
             }
         }
     }
 
     private func handleNotification(
-        _ name: Notification.Name, routeReason: UInt?, interruptionType: UInt?
+        _ name: Notification.Name, routeReason: UInt?, interruptionType: UInt?, previous: AssistVoiceRouteIdentity?
     ) {
-        if name == AVAudioSession.routeChangeNotification &&
-            routeReason == AVAudioSession.RouteChangeReason.categoryChange.rawValue { return }
         if name == UIApplication.didBecomeActiveNotification {
             let action = pendingForegroundAction
             pendingForegroundAction = nil
@@ -707,22 +806,103 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         }
         // Permission sheets may deactivate the app; actual background cancels.
         if name == UIApplication.willResignActiveNotification && phase == "requesting" { return }
-        guard phase != "idle" || lifetime.retained else { return }
-        if name == AVAudioSession.interruptionNotification || name == AVAudioSession.routeChangeNotification {
+        guard phase != "idle" || lifetime.retained || configuringGeneration != nil else { return }
+        if name == AVAudioSession.routeChangeNotification {
             guard audioSessionActive else { return }
-            // Ending an earlier interruption is not a new failure of a turn.
-            if name == AVAudioSession.interruptionNotification &&
-                interruptionType == AVAudioSession.InterruptionType.ended.rawValue { return }
-            if lifetime.retained {
-                cancelCurrent()
-                pendingAudioError = "Le périphérique audio a changé ou la session a été interrompue. Reprends le mode vocal."
-                return
+            let facts = routeFacts(reason: routeReason, previous: previous,
+                                   constructing: configuringGeneration == generation)
+            let decision = facts.decision
+            recordRoute(facts, source: "route", decision: decision.rawValue)
+            switch decision {
+            case .accept:
+                watchRouteProgress()
+                emitState()
+            case .deferUntilCommit:
+                guard pendingRouteChecks.count < 8 else { failAudioInterruption(); return }
+                pendingRouteChecks.append((routeReason, previous, facts.current))
+            case .fail: failAudioInterruption()
             }
-            fail("La session audio a été interrompue ou son périphérique a changé. Relance le mode vocal.",
-                 code: "E_VOICE_INTERRUPTED")
             return
         }
+        if name == AVAudioSession.interruptionNotification {
+            guard audioSessionActive else { return }
+            let ended = interruptionType == AVAudioSession.InterruptionType.ended.rawValue
+            recordRoute(routeFacts(reason: interruptionType, previous: nil, constructing: false),
+                        source: "interruption", decision: ended ? "ended-no-resume" : "fail")
+            if !ended { failAudioInterruption() }
+            return
+        }
+        recordRoute(routeFacts(reason: nil, previous: nil, constructing: false), source: "lifecycle", decision: "cancel")
         cancelCurrent()
+    }
+
+    private func failAudioInterruption() {
+        if lifetime.retained {
+            cancelCurrent()
+            pendingAudioError = "Le périphérique audio a changé ou la session a été interrompue. Reprends le mode vocal."
+            return
+        }
+        fail("La session audio a été interrompue ou son périphérique a changé. Relance le mode vocal.",
+             code: "E_VOICE_INTERRUPTED")
+    }
+
+    private nonisolated static func routeIdentity(_ route: AVAudioSessionRouteDescription) -> AssistVoiceRouteIdentity {
+        AssistVoiceRouteIdentity(inputs: route.inputs.map { .init(type: $0.portType.rawValue, uid: $0.uid) },
+                                 outputs: route.outputs.map { .init(type: $0.portType.rawValue, uid: $0.uid) })
+    }
+
+    private static func routeFormat(_ format: AVAudioFormat?) -> AssistVoiceRouteFormat {
+        AssistVoiceRouteFormat(rate: format?.sampleRate ?? 0, channels: Int(format?.channelCount ?? 0),
+                               commonFormat: format?.commonFormat.rawValue ?? 0, interleaved: format?.isInterleaved ?? false)
+    }
+
+    private func routeFacts(reason: UInt?, previous: AssistVoiceRouteIdentity?, constructing: Bool) -> AssistVoiceRouteFacts {
+        let session = AVAudioSession.sharedInstance()
+        return AssistVoiceRouteFacts(
+            reason: reason, previous: previous, current: Self.routeIdentity(session.currentRoute), baseline: routeBaseline,
+            ownedCategoryTransition: ownedCategoryTransition?.generation == generation ? ownedCategoryTransition?.value : nil,
+            input: Self.routeFormat(audioEngine?.inputNode.outputFormat(forBus: 0)),
+            output: Self.routeFormat(audioEngine?.outputNode.inputFormat(forBus: 0)),
+            player: Self.routeFormat(player?.outputFormat(forBus: 0)), tapInput: tapInputFormat,
+            appActive: UIApplication.shared.applicationState == .active, sessionActive: audioSessionActive,
+            expectedSessionConfiguration: session.category == .playAndRecord && session.mode == .voiceChat,
+            constructing: constructing, engineRunning: audioEngine?.isRunning == true,
+            inputVoiceProcessing: audioEngine?.inputNode.isVoiceProcessingEnabled == true,
+            outputVoiceProcessing: audioEngine?.outputNode.isVoiceProcessingEnabled == true)
+    }
+
+    private func recordRoute(_ facts: AssistVoiceRouteFacts, source: String, decision: String) {
+        let frames = inputMeter?.snapshot().frameCount ?? 0
+        let reason = (source == "route" || source == "interruption") ? facts.reason.map(String.init) ?? "none" : "none"
+        let previous = facts.previous?.diagnosticTypes ?? "none"
+        let line = "source=\(source) reason=\(reason) phase=\(phase) ports=\(facts.current.diagnosticTypes) previous=\(previous) same=\(facts.samePorts) run=\(facts.engineRunning) vp=\(facts.inputVoiceProcessing)/\(facts.outputVoiceProcessing) in=\(facts.input.rate)/\(facts.input.channels) out=\(facts.output.rate)/\(facts.output.channels) pcm=\(frames) decision=\(decision)"
+        audioDiagnostics.append(line)
+    }
+
+    private func watchRouteProgress() {
+        guard let meter = inputMeter, let engine = audioEngine else { return }
+        routeProgressTask?.cancel()
+        let token = generation
+        let identity = routeProgress.begin(frameCount: meter.snapshot().frameCount)
+        routeProgressTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .milliseconds(1_500)) } catch { return }
+            guard let self,
+                  let progressed = self.routeProgress.progressed(identifier: identity, frameCount: meter.snapshot().frameCount)
+            else { return }
+            self.routeProgressTask = nil
+            self.routeProgress.cancel()
+            guard self.generation == token, self.audioEngine === engine,
+                  self.inputMeter === meter, self.hasTap,
+                  self.phase == "listening" || self.phase == "speaking" || self.lifetime.retained else { return }
+            let facts = self.routeFacts(reason: 8, previous: nil, constructing: false)
+            let decision = facts.decision != .accept ? "fail-health" : progressed ? "progress" : "fail-no-progress"
+            self.recordRoute(facts, source: "pcm-watch", decision: decision)
+            guard facts.decision == .accept, progressed else {
+                self.failAudioInterruption()
+                return
+            }
+            self.emitState()
+        }
     }
 
     private func canadianVoice() -> AVSpeechSynthesisVoice? {
@@ -744,6 +924,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             "recognitionAvailable": recognitionAvailable, "synthesisAvailable": synthesisAvailable,
             "locale": "fr-CA", "phase": phase, "monitoring": isMonitoring
         ]
+        if !audioDiagnostics.lines.isEmpty { status["audioDiagnostics"] = audioDiagnostics.lines }
         if let voice { status["voiceName"] = voice.name }
         if let lastInputDiagnostics { status["diagnostics"] = lastInputDiagnostics }
         if !recognitionAvailable { status["reason"] = "La dictée locale fr-CA ou ses permissions est indisponible. Aucun service distant ne sera utilisé." }
@@ -782,6 +963,9 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         if let isFinal { event["isFinal"] = isFinal }
         if let message { event["message"] = message }
         if let lastInputDiagnostics { event["diagnostics"] = lastInputDiagnostics }
+        if (kind == "state" || kind == "error"), !audioDiagnostics.lines.isEmpty {
+            event["audioDiagnostics"] = audioDiagnostics.lines
+        }
         eventHandler?(encode(event))
     }
 

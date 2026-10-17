@@ -900,6 +900,151 @@ test('diagnostics retain only measurement fields, without transcript or audio pa
   expect(parsed.diagnostics).toEqual(inputDiagnostics());
 });
 
+test.each([null, 'route', [1], Array(9).fill('route'), ['x'.repeat(401)]])(
+  'rejects malformed or unbounded audio history %j at both native boundaries',
+  audioDiagnostics => {
+    expect(() =>
+      parseVoiceStatus(
+        JSON.stringify({ ...JSON.parse(status()), audioDiagnostics }),
+      ),
+    ).toThrow('Historique audio invalide.');
+    expect(() =>
+      parseVoiceEvent(
+        JSON.stringify({
+          sessionId: 'capture',
+          kind: 'error',
+          phase: 'idle',
+          message: 'Session interrompue.',
+          audioDiagnostics,
+        }),
+      ),
+    ).toThrow('Historique audio invalide.');
+  },
+);
+
+test('retains current audio failure details through cancellation, but clears them for a new turn', async () => {
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  const sessionId = native.startListening.mock.calls[0][0];
+  const audioDiagnostics = ['route reason=8 engine=0 decision=stop'];
+  await act(async () => {
+    emit({
+      sessionId,
+      kind: 'error',
+      phase: 'idle',
+      message: 'Session interrompue.',
+      audioDiagnostics,
+    });
+    await result.current.cancel();
+  });
+  expect(result.current.audioDiagnostics).toEqual(audioDiagnostics);
+  await act(async () => {
+    await result.current.startListening();
+  });
+  expect(result.current.audioDiagnostics).toEqual([]);
+  await act(async () => {
+    emit({
+      sessionId,
+      kind: 'error',
+      phase: 'idle',
+      message: 'Ancienne erreur.',
+      audioDiagnostics,
+    });
+  });
+  expect(result.current.audioDiagnostics).toEqual([]);
+  expect(result.current.error).toBe('');
+});
+
+test('a stale capability refresh cannot overwrite newer audio failure history', async () => {
+  const initial = deferred<string>();
+  native.getVoiceStatus.mockReturnValueOnce(initial.promise);
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  const sessionId = native.startListening.mock.calls[0][0];
+  const audioDiagnostics = ['route reason=2 decision=stop'];
+  await act(async () => {
+    emit({
+      sessionId,
+      kind: 'error',
+      phase: 'idle',
+      message: 'Session interrompue.',
+      audioDiagnostics,
+    });
+    initial.resolve(
+      JSON.stringify({ ...JSON.parse(status()), audioDiagnostics: ['older'] }),
+    );
+  });
+  expect(result.current.audioDiagnostics).toEqual(audioDiagnostics);
+});
+
+test('reads diagnostics when a rejected start arrives before its native error event', async () => {
+  const audioDiagnostics = ['route reason=8 engine=0 decision=stop'];
+  native.startListening.mockRejectedValueOnce(
+    new Error('Session interrompue.'),
+  );
+  native.getVoiceStatus
+    .mockResolvedValueOnce(status())
+    .mockResolvedValueOnce(
+      JSON.stringify({ ...JSON.parse(status()), audioDiagnostics }),
+    );
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    expect(await result.current.startListening()).toBe(false);
+  });
+  expect(result.current.error).toBe('Session interrompue.');
+  expect(result.current.audioDiagnostics).toEqual(audioDiagnostics);
+  expect(result.current.phase).toBe('idle');
+  expect(native.startListening).toHaveBeenCalledTimes(1);
+});
+
+test('a failed speech command stops before diagnostics and cannot cancel the next capture after a delayed read', async () => {
+  const delayedDetails = deferred<string>();
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.beginSpeech('old-reply');
+  });
+  native.getVoiceStatus.mockReturnValueOnce(delayedDetails.promise);
+  native.enqueueSpeech.mockRejectedValueOnce(new Error('Lecture arrêtée.'));
+  let failed!: Promise<boolean>;
+  await act(async () => {
+    failed = result.current.enqueueSpeech('Une phrase.', 'old-reply');
+  });
+  expect(native.cancelVoice).toHaveBeenCalledTimes(1);
+  expect(native.getVoiceStatus).toHaveBeenCalledTimes(2);
+  native.startListening.mockResolvedValueOnce(
+    JSON.stringify({
+      ...JSON.parse(status('listening')),
+      audioDiagnostics: ['new-capture'],
+    }),
+  );
+  await act(async () => {
+    expect(await result.current.startListening()).toBe(true);
+    delayedDetails.resolve(
+      JSON.stringify({
+        ...JSON.parse(status()),
+        audioDiagnostics: ['old-failure'],
+      }),
+    );
+    expect(await failed).toBe(false);
+  });
+  expect(native.cancelVoice).toHaveBeenCalledTimes(1);
+  expect(result.current.phase).toBe('listening');
+  expect(result.current.audioDiagnostics).toEqual(['new-capture']);
+  expect(result.current.error).toBe('');
+});
+
 test('metering updates measurements without changing the draft or reviving a finished capture', async () => {
   const onTranscript = jest.fn();
   const { result } = await renderHookAsync(() =>

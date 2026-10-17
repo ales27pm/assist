@@ -100,6 +100,38 @@ test('presents a dedicated automatic voice surface without a composer or inline 
   }
 });
 
+test('only exposes local audio details on request after an error', async () => {
+  const user = userEvent.setup();
+  const audioDiagnostics = ['route reason=8 engine=0 decision=stop'];
+  const state = props({
+    phase: 'error',
+    error: 'Session interrompue.',
+    audioDiagnostics,
+  });
+  const { rerenderAsync } = await renderAsync(
+    <VoiceConversationScreen {...state} />,
+  );
+  const details = screen.getByRole('button', { name: 'Détails audio' });
+  expect(details).toBeCollapsed();
+  expect(screen.queryByText(audioDiagnostics[0])).not.toBeOnTheScreen();
+  await user.press(details);
+  expect(screen.getByText(audioDiagnostics[0])).toHaveProp('selectable', true);
+  expect(details).toBeExpanded();
+  expect(state.onResume).not.toHaveBeenCalled();
+  await rerenderAsync(
+    <VoiceConversationScreen {...state} phase="listening" error="" />,
+  );
+  expect(
+    screen.queryByRole('button', { name: 'Détails audio' }),
+  ).not.toBeOnTheScreen();
+  await rerenderAsync(
+    <VoiceConversationScreen {...state} audioDiagnostics={[]} />,
+  );
+  expect(
+    screen.queryByRole('button', { name: 'Détails audio' }),
+  ).not.toBeOnTheScreen();
+});
+
 test.each([
   ['starting', 'Préparation du mode vocal'],
   ['listening', 'À ton écoute'],

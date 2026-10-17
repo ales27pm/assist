@@ -11,6 +11,22 @@ private final class PlaybackProbe {
     let releases = Atomic<Int>(0)
 }
 
+@MainActor
+private final class TeardownNotificationProbe {
+    var ownership = AssistVoiceAudioSessionOwnership()
+    var errors = 0
+    var notifications = 0
+    nonisolated func callback() -> @Sendable (Notification) -> Void {
+        { [self] _ in
+            MainActor.assumeIsolated {
+                notifications += 1
+                // Same ownership gate used by AssistVoice.handleNotification.
+                if ownership.isActive { errors += 1 }
+            }
+        }
+    }
+}
+
 @main
 struct VoiceDuplexChecks {
     private static func buffer(_ format: AVAudioCommonFormat, frames: Int, channels: Int = 1, interleaved: Bool = false, rate: Double = 22_050) -> AVAudioPCMBuffer {
@@ -256,6 +272,124 @@ struct VoiceDuplexChecks {
     }
 
     @MainActor
+    private static func routePolicy() {
+        let input = AssistVoiceRouteIdentity.Port(type: "MicrophoneBuiltIn", uid: "private-input-A")
+        let output = AssistVoiceRouteIdentity.Port(type: "Speaker", uid: "private-output-A")
+        let route = AssistVoiceRouteIdentity(inputs: [input], outputs: [output])
+        let differentDevice = AssistVoiceRouteIdentity(inputs: [.init(type: "MicrophoneBuiltIn", uid: "private-input-B")], outputs: [output])
+        let empty = AssistVoiceRouteIdentity(inputs: [], outputs: [output])
+        let format = AssistVoiceRouteFormat(rate: 48_000, channels: 1, commonFormat: 1, interleaved: false)
+        let changedRate = AssistVoiceRouteFormat(rate: 44_100, channels: 1, commonFormat: 1, interleaved: false)
+        let changedChannels = AssistVoiceRouteFormat(rate: 48_000, channels: 2, commonFormat: 1, interleaved: false)
+        let baseline = AssistVoiceRouteBaseline(route: route, input: format, output: format, player: format)
+        func evaluate(reason: UInt? = 8, current: AssistVoiceRouteIdentity? = nil,
+                      previous: AssistVoiceRouteIdentity? = nil, committed: Bool = true,
+                      owned: AssistVoiceOwnedCategoryTransition? = nil,
+                      input: AssistVoiceRouteFormat? = nil, output: AssistVoiceRouteFormat? = nil,
+                      player: AssistVoiceRouteFormat? = nil, tap: AssistVoiceRouteFormat? = nil,
+                      active: Bool = true, session: Bool = true, configured: Bool = true,
+                      constructing: Bool = false, running: Bool = true, vpin: Bool = true,
+                      vpout: Bool = true) -> AssistVoiceRouteDecision {
+            AssistVoiceRouteFacts(reason: reason, previous: previous, current: current ?? route,
+                baseline: committed ? baseline : nil, ownedCategoryTransition: owned, input: input ?? format, output: output ?? format,
+                player: player ?? format, tapInput: tap ?? format, appActive: active, sessionActive: session,
+                expectedSessionConfiguration: configured, constructing: constructing, engineRunning: running,
+                inputVoiceProcessing: vpin, outputVoiceProcessing: vpout).decision
+        }
+        precondition(evaluate(previous: route) == .accept)
+        precondition(evaluate() == .accept) // delayed notice without PreviousRouteKey uses committed baseline
+        precondition(evaluate(reason: 3) == .accept)
+        precondition(evaluate(current: differentDevice) == .fail)
+        precondition(evaluate(previous: differentDevice) == .fail)
+        precondition(route.diagnosticTypes == differentDevice.diagnosticTypes)
+        print("PASS: internal configuration/category requires the same private I/O identities; matching types alone cannot hide a device change.")
+        for reason: UInt? in [nil, 0, 1, 2, 4, 6, 7] { precondition(evaluate(reason: reason) == .fail) }
+        precondition(evaluate(current: empty) == .fail)
+        precondition(evaluate(active: false) == .fail)
+        precondition(evaluate(session: false) == .fail)
+        precondition(evaluate(configured: false) == .fail)
+        print("PASS: unknown/hardware/lost-input notifications, inactive apps and changed session configurations remain fatal.")
+        precondition(evaluate(running: false) == .fail)
+        precondition(evaluate(vpin: false) == .fail)
+        precondition(evaluate(vpout: false) == .fail)
+        precondition(evaluate(input: changedRate) == .fail)
+        precondition(evaluate(output: changedChannels) == .fail)
+        precondition(evaluate(player: changedRate) == .fail)
+        precondition(evaluate(tap: changedRate) == .fail)
+        print("PASS: stopped engine, disabled AEC, and changed input/output/player/tap formats cannot be accepted as internal reconfiguration.")
+        precondition(evaluate(committed: false) == .fail)
+        precondition(evaluate(committed: false, constructing: true, running: false) == .deferUntilCommit)
+        precondition(evaluate(previous: route) == .accept)
+        precondition(evaluate(previous: differentDevice) == .fail)
+        precondition(evaluate(active: false, constructing: true) == .fail)
+        precondition(evaluate(reason: 2, constructing: true) == .fail)
+        print("PASS: startup configuration is deferred until graph commit and rechecked; delayed notices use its baseline without an ignore window.")
+        let beforeActivation = AssistVoiceRouteIdentity(inputs: [], outputs: [.init(type: "Receiver", uid: "private-receiver")])
+        let owned = AssistVoiceOwnedCategoryTransition(previous: [beforeActivation], target: route)
+        precondition(evaluate(reason: 3, previous: beforeActivation, owned: owned) == .accept)
+        precondition(evaluate(reason: 8, previous: beforeActivation, owned: owned) == .fail)
+        precondition(evaluate(reason: 3, previous: differentDevice, owned: owned) == .fail)
+        precondition(evaluate(reason: 3, current: differentDevice, previous: beforeActivation, owned: owned) == .fail)
+        precondition(evaluate(reason: 2, previous: beforeActivation, owned: owned) == .fail)
+        print("PASS: delayed owned category changes may match the recorded pre-activation route; no unrecorded device or VPIO UID alias is exempted.")
+        var progress = AssistVoiceRouteProgressWatch()
+        let firstNotice = progress.begin(frameCount: 0)
+        precondition(progress.progressed(identifier: firstNotice, frameCount: 10) == true)
+        let lastNotice = progress.begin(frameCount: 10)
+        precondition(progress.progressed(identifier: firstNotice, frameCount: 10) == nil)
+        precondition(progress.progressed(identifier: lastNotice, frameCount: 10) == false)
+        precondition(progress.progressed(identifier: lastNotice, frameCount: 20) == true)
+        progress.cancel()
+        precondition(progress.progressed(identifier: lastNotice, frameCount: 20) == nil)
+        print("PASS: PCM progress is measured after the latest accepted notice; stale timers cannot bless a subsequent freeze or cancellation.")
+        var diagnostics = AssistVoiceAudioDiagnostics()
+        for index in 0..<12 { diagnostics.append("reason=8 decision=accept counter=\(index) " + String(repeating: "x", count: 500) + "\n") }
+        precondition(diagnostics.lines.count == 8)
+        precondition(diagnostics.lines.allSatisfy { $0.count <= 400 && !$0.contains("\n") })
+        precondition(!route.diagnosticTypes.contains("private-input") && !route.diagnosticTypes.contains("private-output"))
+        print("PASS: diagnostic history is bounded to eight 400-character lines and hardware identities never enter port-type diagnostics.")
+    }
+
+    @MainActor
+    private static func teardownNotifications() {
+        let probe = TeardownNotificationProbe()
+        let center = NotificationCenter()
+        let name = Notification.Name("AssistVoiceSyntheticTeardown")
+        let observer = center.addObserver(forName: name, object: nil, queue: nil, using: probe.callback())
+        defer { center.removeObserver(observer) }
+        probe.ownership.acquire()
+        center.post(name: name, object: nil)
+        precondition(probe.errors == 1) // negative control: the observer sees ownership
+        probe.errors = 0
+        precondition(probe.ownership.relinquish())
+        for _ in ["stopSpeechOutput", "stopCapture", "cancelRecognition", "setActive(false)"] {
+            center.post(name: name, object: nil)
+        }
+        precondition(probe.notifications == 5 && probe.errors == 0)
+        precondition(!probe.ownership.relinquish() && !probe.ownership.isActive)
+        print("PASS: real synchronous notifications at teardown boundaries see relinquished production ownership; deactivation is claimed once.")
+    }
+
+    @MainActor
+    private static func teardownSourceOrdering() throws {
+        let path = "mobile/ios/Assist/Voice/AssistVoice.swift"
+        let source = try String(contentsOfFile: path, encoding: .utf8)
+        guard let start = source.range(of: "    private func cancelCurrent() {"),
+              let end = source.range(of: "    private func fail(", range: start.upperBound..<source.endIndex)
+        else { preconditionFailure("Cannot locate production teardown") }
+        let body = String(source[start.upperBound..<end.lowerBound])
+        guard let fence = body.range(of: "let shouldDeactivate = audioSessionOwnership.relinquish()") else {
+            preconditionFailure("Production teardown must relinquish session ownership")
+        }
+        for boundary in ["stopSpeechOutput()", "stopCapture()", "recognitionTask?.cancel()", "AVAudioSession.sharedInstance().setActive(false"] {
+            guard let call = body.range(of: boundary) else { preconditionFailure("Missing production teardown boundary") }
+            precondition(fence.upperBound < call.lowerBound)
+        }
+        precondition(body.contains("if shouldDeactivate {"))
+        print("PASS: the production cancelCurrent source relinquishes ownership before every notifying stop and uses its captured deactivation claim.")
+    }
+
+    @MainActor
     static func main() async throws {
         DispatchQueue.global().asyncAfter(deadline: .now() + 30) { exit(90) }
         identitiesAndDrain()
@@ -268,6 +402,9 @@ struct VoiceDuplexChecks {
         await terminalOrdering()
         try converterDraining()
         await unsupportedAndBounded()
-        print("PASS: 10 native duplex checks; no engine start, microphone, speech recognition or real TTS.")
+        routePolicy()
+        teardownNotifications()
+        try teardownSourceOrdering()
+        print("PASS: 19 native duplex checks; no engine start, microphone, speech recognition or real TTS.")
     }
 }

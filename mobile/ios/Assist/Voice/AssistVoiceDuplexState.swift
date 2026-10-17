@@ -83,3 +83,141 @@ struct AssistVoiceMonitorRetry: Sendable {
         return delay
     }
 }
+
+/// Hardware identifiers participate only in private equality. Diagnostics expose
+/// port types separately; this type deliberately has no serialization contract.
+struct AssistVoiceRouteIdentity: Sendable, Equatable {
+    struct Port: Sendable, Equatable {
+        let type: String
+        private let uid: String
+        init(type: String, uid: String) { self.type = type; self.uid = uid }
+        fileprivate var sortKey: String { type + "\u{0}" + uid }
+    }
+    private let inputs: [Port]
+    private let outputs: [Port]
+    init(inputs: [Port], outputs: [Port]) {
+        self.inputs = inputs.sorted { $0.sortKey < $1.sortKey }
+        self.outputs = outputs.sorted { $0.sortKey < $1.sortKey }
+    }
+    var hasInputAndOutput: Bool { !inputs.isEmpty && !outputs.isEmpty }
+    var diagnosticTypes: String {
+        func types(_ ports: [Port]) -> String {
+            ports.map { String($0.type.filter { $0.isLetter || $0.isNumber }.prefix(32)) }.joined(separator: ",")
+        }
+        return types(inputs) + "/" + types(outputs)
+    }
+}
+
+struct AssistVoiceRouteFormat: Sendable, Equatable {
+    let rate: Double
+    let channels: Int
+    let commonFormat: UInt
+    let interleaved: Bool
+    var isValid: Bool { rate.isFinite && rate > 0 && channels > 0 }
+}
+
+struct AssistVoiceRouteBaseline: Sendable, Equatable {
+    let route: AssistVoiceRouteIdentity
+    let input: AssistVoiceRouteFormat
+    let output: AssistVoiceRouteFormat
+    let player: AssistVoiceRouteFormat
+}
+
+/// Evidence from this generation's own setCategory/setActive operation.
+/// A delayed category notification may describe its pre-activation route, even
+/// though the committed graph already uses the operation's observed target.
+struct AssistVoiceOwnedCategoryTransition: Sendable {
+    let previous: [AssistVoiceRouteIdentity]
+    let target: AssistVoiceRouteIdentity
+    func contains(previous route: AssistVoiceRouteIdentity, current: AssistVoiceRouteIdentity) -> Bool {
+        target == current && previous.contains(route)
+    }
+}
+
+/// Reason values are Apple's stable AVAudioSession.RouteChangeReason raw values.
+/// No route reason alone is evidence that an existing graph remains usable.
+enum AssistVoiceRouteDecision: String, Sendable {
+    case accept, deferUntilCommit, fail
+}
+
+struct AssistVoiceRouteFacts: Sendable {
+    let reason: UInt?
+    let previous: AssistVoiceRouteIdentity?
+    let current: AssistVoiceRouteIdentity
+    let baseline: AssistVoiceRouteBaseline?
+    let ownedCategoryTransition: AssistVoiceOwnedCategoryTransition?
+    let input: AssistVoiceRouteFormat
+    let output: AssistVoiceRouteFormat
+    let player: AssistVoiceRouteFormat
+    let tapInput: AssistVoiceRouteFormat?
+    let appActive: Bool
+    let sessionActive: Bool
+    let expectedSessionConfiguration: Bool
+    let constructing: Bool
+    let engineRunning: Bool
+    let inputVoiceProcessing: Bool
+    let outputVoiceProcessing: Bool
+
+    var samePorts: Bool {
+        baseline?.route == current
+    }
+
+    private var previousIsExpected: Bool {
+        guard let previous else { return true }
+        return previous == current || (reason == 3 &&
+            ownedCategoryTransition?.contains(previous: previous, current: current) == true)
+    }
+
+    var decision: AssistVoiceRouteDecision {
+        // Configuration (8), or our requested category (3); never swallow
+        // unknown, hardware addition/removal, override, or no-suitable-route.
+        guard reason == 8 || reason == 3,
+              appActive, sessionActive, expectedSessionConfiguration,
+              current.hasInputAndOutput else { return .fail }
+        if constructing { return .deferUntilCommit }
+        guard let baseline, samePorts, previousIsExpected, engineRunning,
+              inputVoiceProcessing, outputVoiceProcessing,
+              input.isValid, output.isValid, player.isValid,
+              input == baseline.input, output == baseline.output,
+              player == baseline.player, input == tapInput else { return .fail }
+        return .accept
+    }
+}
+
+struct AssistVoiceAudioDiagnostics: Sendable {
+    private(set) var lines: [String] = []
+    mutating func append(_ line: String) {
+        lines.append(String(line.replacingOccurrences(of: "\n", with: " ").prefix(400)))
+        if lines.count > 8 { lines.removeFirst(lines.count - 8) }
+    }
+}
+
+/// Every accepted notice replaces the observation, including when PCM advanced
+/// between two notices. An older timer cannot validate a newer configuration.
+struct AssistVoiceRouteProgressWatch: Sendable {
+    private(set) var identifier: UUID?
+    private var initialFrames = 0
+    mutating func begin(frameCount: Int) -> UUID {
+        let identifier = UUID()
+        self.identifier = identifier
+        initialFrames = frameCount
+        return identifier
+    }
+    func progressed(identifier: UUID, frameCount: Int) -> Bool? {
+        guard self.identifier == identifier else { return nil }
+        return frameCount > initialFrames
+    }
+    mutating func cancel() { identifier = nil }
+}
+
+/// Relinquish ownership before any AVFoundation teardown call can notify us
+/// synchronously. The returned value permits exactly one system deactivation.
+struct AssistVoiceAudioSessionOwnership: Sendable {
+    private(set) var isActive = false
+    mutating func acquire() { isActive = true }
+    mutating func relinquish() -> Bool {
+        let wasActive = isActive
+        isActive = false
+        return wasActive
+    }
+}

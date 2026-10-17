@@ -46,3 +46,15 @@ La raison exacte du signalement17, les vraies routes/périphériques, l’écho,
 Build EAS final18 : `dadf65ba-ee1e-45a5-bf67-75623ec85b7c`, source exacte `c1d866d5f189722b66e62f2c15d29c7704a258ff`. Branche distante et candidate propre vérifiées. Le typecheck des six Swift et les19contrôles duplex ont été refaits après correction du teardown; les autres contrôles natifs inchangés conservent leur preuve précédente et repassent dans le pré-install EAS.
 
 Le workspace reçoit parallèlement des changements indépendants de sélection du modèle et d’accessibilité. Ils ne sont pas inclus dans cette archive isolée et ne seront pas écrasés lors du report du correctif vocal.
+
+## Archive finale et IPA vérifiées
+
+EAS final FINISHED à2026-10-17T02:27:49.448Z; **ARCHIVE SUCCEEDED** présent dans le journal Xcode SDK27.1. Tous les précontrôles natifs ont repassé sur EAS, y compris les deux pièges d’isolation133 dès leur premier passage et les19contrôles duplex, dont les nouvelles notifications synchrones pendant teardown.
+
+IPA :12 451 459octets; SHA256 `19ffadb9255f8979a62577943c3c1888f6f9a6e2459f5f58156b3866d36445c4`; UUIDarm64 `C5B91910-3DEF-3543-967F-BE5B6150279D`. Bundle/version1.0.0 (18), minimum27.1, permissions micro/Speech et chiffrement nonexemptfalse vérifiés. Pas de poids Gemma. Signature CMS du profil vérifiée sans chaîne de confiance; présence structurelle de signature Mach-O et concordance des entitlements inspectées. Chaîne Apple et hashes cryptographiques de la signature exécutable non validés ici. Preuve : `/tmp/assist-voice18-ipa-verification.json`.
+
+Soumission de cette seule IPA finale à Apple en cours. Aucun artifact de la tentative annulée n’a été soumis.
+
+## Soumission finale
+
+EAS submission `33a880fa-bcb3-4629-9245-c2576a2af894` confirme FINISHED à2026-10-17T02:30:39.688Z. La relation pointe exactement vers la tentative finale `dadf65ba-ee1e-45a5-bf67-75623ec85b7c`, build18. Traitement et disponibilité Apple encore à vérifier.
