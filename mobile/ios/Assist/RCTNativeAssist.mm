@@ -5,6 +5,11 @@
 // The generated Assist Swift interface exposes Expo Swift base classes used by
 // AppDelegate, SceneDelegate, and ExpoModulesProvider. Import Expo's generated
 // interface before Assist-Swift.h so Objective-C++ can resolve those classes.
+#if __has_include(<ExpoModulesCore/ExpoModulesCore-Swift.h>)
+#import <ExpoModulesCore/ExpoModulesCore-Swift.h>
+#elif __has_include("ExpoModulesCore-Swift.h")
+#import "ExpoModulesCore-Swift.h"
+#endif
 #if __has_include(<Expo/Expo-Swift.h>)
 #import <Expo/Expo-Swift.h>
 #elif __has_include("Expo-Swift.h")
