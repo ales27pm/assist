@@ -1,5 +1,11 @@
 import React from 'react';
-import { StyleSheet, Switch, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
 import { useAppearance } from './appearance';
 import { ActionButton, Disclosure } from './uiPrimitives';
 import { uiGrammar } from './uiGrammar';
@@ -61,62 +67,124 @@ export function VoiceControls({
     : !measured
     ? 'Audio reçu · niveau indisponible.'
     : `Audio reçu · niveau ${levelPercent} %.`;
-  const labels = {
-    idle: 'Dicte, puis vérifie le texte avant d’envoyer.',
-    requesting: 'Autorisation du micro…',
-    listening: 'Écoute en cours · touche Terminer la dictée quand tu as fini.',
-    finishing: 'Finalisation de la dictée…',
-    speaking: 'Lecture en cours · le micro est fermé.',
-    stopping: 'Arrêt de la voix…',
+  const states = {
+    requesting: {
+      title: 'Préparation du micro',
+      description: 'Autorise le micro et la reconnaissance si iOS le demande.',
+    },
+    listening: {
+      title: 'À ton écoute',
+      description: 'Termine la dictée, puis vérifie ton message.',
+    },
+    finishing: {
+      title: 'Finalisation de la dictée',
+      description: 'Attends le texte final avant d’envoyer.',
+    },
+    speaking: {
+      title: 'Lecture en cours',
+      description: 'Le micro est fermé. Tu peux arrêter la lecture.',
+    },
+    stopping: {
+      title: 'Arrêt en cours',
+      description: 'Attends avant de recommencer.',
+    },
   };
+  const state =
+    voice.phase !== 'idle'
+      ? states[voice.phase]
+      : voice.error && !busy
+      ? {
+          title: 'Voix interrompue',
+          description: 'Tu peux toujours écrire ton message.',
+        }
+      : !voice.status
+      ? {
+          title: 'Vérification de la voix',
+          description: 'Recherche des fonctions locales disponibles…',
+        }
+      : !voice.status.recognitionAvailable
+      ? {
+          title: voice.status.synthesisAvailable
+            ? 'Dictée indisponible'
+            : 'Voix indisponible',
+          description:
+            voice.status.reason || 'La saisie au clavier reste disponible.',
+        }
+      : busy
+      ? {
+          title: 'Dictée en pause',
+          description: 'Termine l’opération en cours avant de dicter.',
+        }
+      : {
+          title: 'Prêt à dicter',
+          description: 'Dicte, puis vérifie le texte avant d’envoyer.',
+        };
+  const waiting =
+    ['requesting', 'finishing', 'stopping'].includes(voice.phase) ||
+    (voice.phase === 'idle' && !voice.status && !voice.error);
+  const stateColor =
+    voice.error && voice.phase === 'idle'
+      ? theme.colors.danger
+      : voice.phase === 'listening' || voice.phase === 'speaking'
+      ? theme.colors.accent
+      : theme.colors.muted;
   return (
     <View style={styles.container}>
-      <View style={styles.controls}>
-        {voice.phase === 'idle' || voice.phase === 'speaking' ? (
-          <ActionButton
-            label="Dicter"
-            hint="Utilise la reconnaissance locale en français canadien."
-            disabled={busy || !voice.status?.recognitionAvailable}
-            onPress={onDictate}
-          />
-        ) : voice.phase === 'listening' ? (
-          <ActionButton
-            label="Terminer la dictée"
-            onPress={voice.finishListening}
-          />
-        ) : null}
-        {voice.phase !== 'idle' && (
-          <ActionButton
-            label={
-              voice.phase === 'speaking'
-                ? 'Arrêter la lecture'
-                : 'Annuler la dictée'
-            }
-            disabled={voice.phase === 'stopping'}
-            onPress={voice.cancel}
-          />
-        )}
+      <View style={styles.stateRow}>
+        <View
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+          style={styles.stateIndicator}
+        >
+          {waiting ? (
+            <ActivityIndicator size="small" color={stateColor} />
+          ) : (
+            <View style={[styles.stateDot, { backgroundColor: stateColor }]} />
+          )}
+        </View>
+        <View
+          accessible
+          aria-label={`${state.title}. ${state.description}`}
+          accessibilityLiveRegion="polite"
+          style={styles.stateCopy}
+        >
+          <Text style={[styles.stateTitle, { color: theme.colors.text }]}>
+            {state.title}
+          </Text>
+          <Text style={[styles.caption, { color: theme.colors.muted }]}>
+            {state.description}
+          </Text>
+        </View>
       </View>
-      <View style={styles.readControl}>
-        <Text style={[styles.readLabel, { color: theme.colors.text }]}>
-          Lire les réponses
-        </Text>
-        <Switch
-          accessibilityLabel="Lire les réponses à voix haute"
-          value={readResponses}
-          disabled={!voice.status?.synthesisAvailable}
-          onValueChange={onReadResponsesChange}
-          style={styles.readSwitch}
-        />
-      </View>
-      <Text
-        accessibilityLiveRegion="polite"
-        style={[styles.caption, { color: theme.colors.muted }]}
-      >
-        {voice.phase === 'idle'
-          ? voice.status?.reason || labels.idle
-          : labels[voice.phase]}
-      </Text>
+      {voice.phase !== 'stopping' && (
+        <View style={styles.controls}>
+          {voice.phase === 'speaking' && (
+            <ActionButton
+              label="Arrêter la lecture"
+              primary
+              onPress={voice.cancel}
+            />
+          )}
+          {voice.phase === 'idle' || voice.phase === 'speaking' ? (
+            <ActionButton
+              label="Dicter"
+              hint="Utilise la reconnaissance locale en français canadien."
+              primary={voice.phase === 'idle'}
+              disabled={busy || !voice.status?.recognitionAvailable}
+              onPress={onDictate}
+            />
+          ) : voice.phase === 'listening' ? (
+            <ActionButton
+              label="Terminer la dictée"
+              primary
+              onPress={voice.finishListening}
+            />
+          ) : null}
+          {voice.phase !== 'idle' && voice.phase !== 'speaking' && (
+            <ActionButton label="Annuler la dictée" onPress={voice.cancel} />
+          )}
+        </View>
+      )}
       {voice.phase === 'listening' && (
         <View
           accessible
@@ -129,10 +197,9 @@ export function VoiceControls({
           }
           style={styles.inputMeter}
         >
-          <Text style={[styles.caption, { color: theme.colors.muted }]}>
-            {inputLabel}
-          </Text>
           <View
+            accessible={false}
+            importantForAccessibility="no-hide-descendants"
             style={[
               styles.meterTrack,
               { backgroundColor: theme.colors.separator },
@@ -148,8 +215,36 @@ export function VoiceControls({
               ]}
             />
           </View>
+          <Text style={[styles.caption, { color: theme.colors.muted }]}>
+            {inputLabel}
+          </Text>
         </View>
       )}
+      <View
+        style={[styles.readControl, { borderColor: theme.colors.separator }]}
+      >
+        <View style={styles.readCopy}>
+          <Text style={[styles.readLabel, { color: theme.colors.text }]}>
+            Lire les réponses
+          </Text>
+          <Text style={[styles.caption, { color: theme.colors.muted }]}>
+            {!voice.status
+              ? 'Vérification de la lecture…'
+              : voice.status.synthesisAvailable
+              ? 'Lecture facultative à voix haute.'
+              : 'Aucune voix locale disponible.'}
+          </Text>
+        </View>
+        <Switch
+          accessibilityLabel="Lire les réponses à voix haute"
+          value={readResponses}
+          disabled={!voice.status?.synthesisAvailable}
+          aria-disabled={!voice.status?.synthesisAvailable}
+          hitSlop={8}
+          onValueChange={onReadResponsesChange}
+          style={styles.readSwitch}
+        />
+      </View>
       {!!voice.error && (
         <Text
           role="alert"
@@ -177,7 +272,17 @@ export function VoiceControls({
 }
 
 const styles = StyleSheet.create({
-  container: { gap: 8 },
+  container: { gap: 10 },
+  stateRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  stateIndicator: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stateDot: { width: 8, height: 8, borderRadius: 4 },
+  stateCopy: { flex: 1, minWidth: 0, gap: 2 },
+  stateTitle: { ...uiGrammar.type.label, fontWeight: '600' },
   controls: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -188,11 +293,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    minHeight: 44,
+    minHeight: 52,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
     width: '100%',
-    gap: 8,
+    gap: 12,
   },
-  readLabel: { ...uiGrammar.type.caption, flexShrink: 1 },
+  readCopy: { flex: 1, minWidth: 0, gap: 2 },
+  readLabel: { ...uiGrammar.type.label, fontWeight: '500' },
   readSwitch: { flexShrink: 0 },
   caption: uiGrammar.type.caption,
   inputMeter: { gap: 6 },

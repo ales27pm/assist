@@ -6,7 +6,7 @@ une réponse écrite. Il avait aussi entendu une réponse lors d'un essai antér
 L'enchaînement lecture → dictée reste à qualifier : un essai avait échoué avec
 « No speech detected » et le contrôle de lecture a été signalé absent.
 
-Le candidat **build 14** ajoute la lecture progressive, un contrôle de lecture
+Le **build 14, livré sur TestFlight interne**, ajoute la lecture progressive, un contrôle de lecture
 sur sa propre ligne et des diagnostics micro agrégés. Les changements de session
 audio visent la transition lecture/dictée; ils ne prouvent pas encore sa réparation
 sur l'appareil. Voir la [feuille de route](voice-roadmap.md) pour les étapes suivantes.
@@ -93,8 +93,8 @@ pas à établir la libération effective du microphone ou de la session audio.
 
 Contrôles du candidat build 14 :
 
-- `cd mobile && npm run check` : typecheck, ESLint, **347 tests JavaScript dans
-  17 suites** et génération du bridge iOS réussis. Les doublures couvrent lecture
+- `cd mobile && npm run check` : typecheck, ESLint, **357 tests JavaScript dans
+  18 suites** et génération du bridge iOS réussis. Les doublures couvrent lecture
   avant fin de génération, ordre des segments, annulation, erreurs facultatives,
   brouillon, diagnostics et événements périmés; elles ne produisent pas d'audio.
 - `python3 scripts/test-local-voice-contract.py` : **8 contrôles statiques** des
@@ -105,8 +105,9 @@ Contrôles du candidat build 14 :
   2 pièges d'isolation attendus au second lancement; le premier a été rejeté
   pour une backtrace insuffisamment symbolisée sur la VM Intel.
 - Le build 13 avait passé l'archive complète SDK 27.1 et ses contrôles de
-  callbacks sur EAS. Le build 14 doit repasser ces étapes avec les nouveaux
-  harnesses, puis être qualifié sur iPhone. Un typecheck avec SDK 26.2 n'est
+  callbacks sur EAS. Le build 14 a repassé ces étapes avec les nouveaux
+  harnesses et a été accepté par Apple. Sa qualification audio sur iPhone reste
+  à faire. Un typecheck avec SDK 26.2 n'est
   pas une archive SDK 27.1.
 
 Aucune mesure acoustique, latence iPhone, qualification de l'accent ou capture
@@ -165,3 +166,24 @@ attend la fin de la tâche de génération; elle ne mesure pas l'arrêt audible 
 lecteur externe. Une intégration future devra qualifier stockage, mémoire avec
 Gemma, écoute fr-CA, file audio et annulation sur l'iPhone réellement supporté
 avant de remplacer le premier parcours Apple.
+
+## Interface vocale — candidat build 15
+
+La zone vocale commence par un état explicite : vérification, prêt à dicter,
+préparation du micro, écoute, finalisation, lecture et arrêt. L'action principale
+est mise en évidence; aucune annulation de dictée n'est proposée pendant l'arrêt.
+Le contrôle de lecture garde sa propre ligne, avec un état désactivé accessible.
+Les mises à jour du niveau micro restent séparées du bandeau d'état.
+
+Les commandes vocales natives, l'envoi manuel et les capacités locales du build 14
+restent identiques. Dix tests de composant couvrent ces états et les commandes;
+les tests intégrés existants couvrent le parcours. Une revue visuelle simulée de
+72 combinaisons (8 états, 3 thèmes, largeurs 320/375/430) ne révèle aucun
+excès de largeur; un essai de texte web agrandi passe également. Ce banc n'ouvre
+pas de microphone. Deux essais initiaux par navigation ont expiré pendant le
+chargement du banc; le contrôle final change les scénarios dans une page montée
+et a terminé sans erreur JavaScript. Il ne prouve pas le comportement de VoiceOver,
+de Dynamic Type, du clavier ou de l'audio sur iPhone.
+
+FreakUI fournit des composants SwiftUI; ce lot utilise les composants React Native
+existants et les couleurs des trois apparences, sans ajouter cette dépendance.
