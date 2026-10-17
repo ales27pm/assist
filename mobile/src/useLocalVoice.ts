@@ -45,13 +45,20 @@ export function useLocalVoice({
   const visible = useRef(enabled);
   const foreground = useRef(AppState.currentState === 'active');
   const phaseRef = useRef(phase);
+  const monitoringRef = useRef(false);
   const epoch = useRef(0);
+  const statusRevision = useRef(0);
   const current = useRef<
-    | { id: string; kind: 'capture' }
+    | { id: string; kind: 'capture'; failed: boolean; hasFinalText: boolean }
     | { id: string; kind: 'speech'; failed: boolean }
     | null
   >(null);
   const lastSpeechCompletion = useRef<{
+    id: string;
+    epoch: number;
+    success: boolean;
+  } | null>(null);
+  const lastCaptureCompletion = useRef<{
     id: string;
     epoch: number;
     success: boolean;
@@ -63,6 +70,50 @@ export function useLocalVoice({
   phaseRef.current = phase;
   transcript.current = onTranscript;
   eventListener.current = onEvent;
+
+  const publishPhase = useCallback(
+    (next: VoicePhase | 'stopping', monitoring = false) => {
+      ++statusRevision.current;
+      phaseRef.current = next;
+      monitoringRef.current = next === 'speaking' && monitoring;
+      setPhase(next);
+      setStatus(previous =>
+        previous
+          ? {
+              ...previous,
+              phase: next === 'stopping' ? 'idle' : next,
+              monitoring: next === 'speaking' && monitoring,
+            }
+          : previous,
+      );
+    },
+    [],
+  );
+
+  const acceptStatus = useCallback(
+    (next: VoiceStatus, revision: number): boolean => {
+      const latest =
+        revision === statusRevision.current ||
+        // Permission callbacks can emit "requesting" while the original start
+        // command is pending. Its successful ACK still advances that capture.
+        (phaseRef.current === 'requesting' && next.phase === 'listening');
+      // Events describe a newer runtime state than a previously issued bridge
+      // command. Its ACK may update capabilities, but cannot re-arm monitoring.
+      setStatus(
+        latest
+          ? next
+          : {
+              ...next,
+              phase:
+                phaseRef.current === 'stopping' ? 'idle' : phaseRef.current,
+              monitoring: monitoringRef.current,
+            },
+      );
+      if (latest) publishPhase(next.phase, next.monitoring === true);
+      return latest;
+    },
+    [publishPhase],
+  );
 
   const rememberDiagnostics = useCallback((next?: VoiceInputDiagnostics) => {
     if (!next) return;
@@ -85,9 +136,10 @@ export function useLocalVoice({
     const version = ++epoch.current;
     current.current = null;
     lastSpeechCompletion.current = null;
+    lastCaptureCompletion.current = null;
     if (!supported) return Promise.resolve(true);
     if (stopping.current) return stopping.current;
-    if (mounted.current) setPhase('stopping');
+    if (mounted.current) publishPhase('stopping');
     const pending = NativeAssist!
       .cancelVoice()
       .then(() => true)
@@ -99,12 +151,12 @@ export function useLocalVoice({
         stopping.current = null;
         // A second cancel can invalidate the first; both still stop the same audio.
         if (mounted.current && !current.current && epoch.current >= version) {
-          setPhase('idle');
+          publishPhase('idle');
         }
       });
     stopping.current = pending;
     return pending;
-  }, [supported]);
+  }, [supported, publishPhase]);
 
   useEffect(() => {
     mounted.current = true;
@@ -112,18 +164,38 @@ export function useLocalVoice({
     let live = true;
     const refresh = () => {
       const version = epoch.current;
+      const revision = statusRevision.current;
       NativeAssist!
         .getVoiceStatus()
         .then(json => {
           if (!live) return;
           const next = parseVoiceStatus(json);
-          setStatus(next);
-          if (version === epoch.current && !current.current) {
+          const latest =
+            version === epoch.current && revision === statusRevision.current;
+          // Capability inspection can outlive the initial hidden-screen stop.
+          // Keep its capabilities, but never restore obsolete runtime state.
+          setStatus(
+            latest
+              ? next
+              : {
+                  ...next,
+                  phase:
+                    phaseRef.current === 'stopping' ? 'idle' : phaseRef.current,
+                  monitoring: monitoringRef.current,
+                  diagnostics: undefined,
+                },
+          );
+          if (latest && !current.current) {
             rememberDiagnostics(next.diagnostics);
           }
         })
         .catch(e => {
-          if (live) setError(errorMessage(e));
+          if (
+            live &&
+            version === epoch.current &&
+            revision === statusRevision.current
+          )
+            setError(errorMessage(e));
         });
     };
     refresh(); // Capability inspection never requests microphone permissions.
@@ -141,25 +213,59 @@ export function useLocalVoice({
         )
           return;
         const update = parseVoiceEvent(event.json);
+        if (update.kind === 'interruption') {
+          if (session.kind !== 'speech' || session.failed || stopping.current)
+            return;
+          // Native has already stopped playback and promoted the running ASR.
+          // Adopt it before notifying the controller: its first words may be
+          // queued immediately behind this event. Never cancel/restart audio.
+          ++epoch.current;
+          lastSpeechCompletion.current = null;
+          lastCaptureCompletion.current = null;
+          current.current = {
+            id: update.captureSessionId,
+            kind: 'capture',
+            failed: false,
+            hasFinalText: false,
+          };
+          setError('');
+          setDiagnostics(null);
+          publishPhase('listening');
+          eventListener.current?.(update);
+          return;
+        }
+        // Watcher energy is not a user turn until native promotes recognition.
+        if (session.kind === 'speech' && update.kind === 'input') return;
         if (session.kind === 'capture') rememberDiagnostics(update.diagnostics);
         // A queued input observation cannot reopen a capture that is finishing.
         if (update.kind !== 'input') {
           if (update.kind === 'transcript' && session.kind === 'capture') {
+            if (update.isFinal) session.hasFinalText = !!update.text!.trim();
             transcript.current(update.text!);
             if (version !== epoch.current) return;
           }
           if (update.kind === 'error') {
-            if (session.kind === 'speech') session.failed = true;
+            session.failed = true;
             setError(update.message!);
           }
-          phaseRef.current = update.phase;
-          setPhase(update.phase);
+          publishPhase(
+            update.phase,
+            session.kind === 'speech' &&
+              update.kind === 'state' &&
+              update.monitoring === true,
+          );
           if (update.phase === 'idle') {
             if (session.kind === 'speech') {
               lastSpeechCompletion.current = {
                 id: session.id,
                 epoch: version,
                 success: !session.failed,
+              };
+            } else {
+              lastCaptureCompletion.current = {
+                id: session.id,
+                epoch: version,
+                success: !session.failed && session.hasFinalText,
               };
             }
             current.current = null;
@@ -201,11 +307,23 @@ export function useLocalVoice({
       lifecycle.remove();
       cancel();
     };
-  }, [supported, cancel, rememberDiagnostics]);
+  }, [supported, cancel, rememberDiagnostics, publishPhase]);
 
   useEffect(() => {
     if (!enabled) cancel();
   }, [enabled, cancel]);
+
+  const captureCompleted = useCallback(
+    (id: string, version: number): boolean => {
+      const completed = lastCaptureCompletion.current;
+      return !!(
+        completed?.id === id &&
+        completed.epoch === version &&
+        completed.success
+      );
+    },
+    [],
+  );
 
   const startListening = useCallback(async (): Promise<boolean> => {
     if (
@@ -219,40 +337,54 @@ export function useLocalVoice({
       return false;
     const version = ++epoch.current;
     lastSpeechCompletion.current = null;
+    lastCaptureCompletion.current = null;
     const id = `capture-${Date.now()}-${version}`;
-    current.current = { id, kind: 'capture' };
+    current.current = {
+      id,
+      kind: 'capture',
+      failed: false,
+      hasFinalText: false,
+    };
     setError('');
     setDiagnostics(null);
-    phaseRef.current = 'requesting';
-    setPhase('requesting');
+    publishPhase('requesting');
+    const revision = statusRevision.current;
     try {
       const next = parseVoiceStatus(await NativeAssist!.startListening(id));
-      if (
-        !mounted.current ||
-        !visible.current ||
-        version !== epoch.current ||
-        current.current?.kind !== 'capture' ||
-        current.current.id !== id
-      )
+      if (!mounted.current || !visible.current || version !== epoch.current)
         return false;
-      setStatus(next);
+      if (current.current?.kind !== 'capture' || current.current.id !== id) {
+        // Retained native ASR may deliver a complete utterance before its start
+        // ACK. Accept only its nonempty, error-free natural completion; never
+        // restore the ACK's obsolete "listening" phase.
+        return captureCompleted(id, version);
+      }
+      if (current.current.failed) return false;
+      const latest = acceptStatus(next, revision);
       rememberDiagnostics(next.diagnostics);
-      phaseRef.current = next.phase;
-      setPhase(next.phase);
-      if (next.phase !== 'listening' && next.phase !== 'requesting') {
-        current.current = null;
+      if (
+        phaseRef.current !== 'listening' &&
+        phaseRef.current !== 'requesting'
+      ) {
+        if (latest) current.current = null;
         return false;
       }
       return true;
     } catch (e) {
       if (mounted.current && version === epoch.current) {
         current.current = null;
-        setPhase('idle');
+        publishPhase('idle');
         setError(errorMessage(e));
       }
       return false;
     }
-  }, [supported, rememberDiagnostics]);
+  }, [
+    supported,
+    rememberDiagnostics,
+    publishPhase,
+    acceptStatus,
+    captureCompleted,
+  ]);
 
   const finishListening = useCallback(async (): Promise<boolean> => {
     if (
@@ -264,8 +396,8 @@ export function useLocalVoice({
       return false;
     const version = epoch.current;
     const id = current.current.id;
-    phaseRef.current = 'finishing';
-    setPhase('finishing');
+    publishPhase('finishing');
+    const revision = statusRevision.current;
     try {
       const next = parseVoiceStatus(await NativeAssist!.stopListening());
       if (!mounted.current || version !== epoch.current) return false;
@@ -273,10 +405,8 @@ export function useLocalVoice({
       // still means stop succeeded; do not revive the released capture with a
       // late "finishing" status or treat its natural completion as cancellation.
       if (current.current?.kind === 'capture' && current.current.id === id) {
-        setStatus(next);
+        acceptStatus(next, revision);
         rememberDiagnostics(next.diagnostics);
-        phaseRef.current = next.phase;
-        setPhase(next.phase);
       }
       return true;
     } catch (e) {
@@ -286,7 +416,7 @@ export function useLocalVoice({
       }
       return false;
     }
-  }, [supported, cancel, rememberDiagnostics]);
+  }, [supported, cancel, rememberDiagnostics, publishPhase, acceptStatus]);
 
   const speak = useCallback(
     async (text: string, utteranceId: string) => {
@@ -302,27 +432,28 @@ export function useLocalVoice({
         return;
       const version = ++epoch.current;
       lastSpeechCompletion.current = null;
+      lastCaptureCompletion.current = null;
       current.current = { id: utteranceId, kind: 'speech', failed: false };
       setError('');
       setDiagnostics(null);
-      setPhase('speaking');
+      publishPhase('speaking');
+      const revision = statusRevision.current;
       try {
         const next = parseVoiceStatus(
           await NativeAssist!.speak(text, utteranceId),
         );
         if (!mounted.current || version !== epoch.current || !current.current)
           return;
-        setStatus(next);
-        setPhase(next.phase);
+        acceptStatus(next, revision);
       } catch (e) {
         if (mounted.current && version === epoch.current) {
           current.current = null;
-          setPhase('idle');
+          publishPhase('idle');
           setError(errorMessage(e));
         }
       }
     },
-    [supported],
+    [supported, publishPhase, acceptStatus],
   );
 
   const beginSpeech = useCallback(
@@ -338,11 +469,12 @@ export function useLocalVoice({
         return false;
       const version = ++epoch.current;
       lastSpeechCompletion.current = null;
+      lastCaptureCompletion.current = null;
       current.current = { id: utteranceId, kind: 'speech', failed: false };
       setError('');
       setDiagnostics(null);
-      phaseRef.current = 'speaking';
-      setPhase('speaking');
+      publishPhase('speaking');
+      const revision = statusRevision.current;
       try {
         const next = parseVoiceStatus(
           await NativeAssist!.beginSpeech(utteranceId),
@@ -354,9 +486,8 @@ export function useLocalVoice({
           current.current.id !== utteranceId
         )
           return false;
-        setStatus(next);
-        setPhase(next.phase);
-        if (next.phase === 'idle') current.current = null;
+        if (acceptStatus(next, revision) && next.phase === 'idle')
+          current.current = null;
         return true;
       } catch (e) {
         if (
@@ -371,7 +502,7 @@ export function useLocalVoice({
         return false;
       }
     },
-    [streamingSupported, cancel],
+    [streamingSupported, cancel, publishPhase, acceptStatus],
   );
 
   const continueSpeech = useCallback(
@@ -390,6 +521,7 @@ export function useLocalVoice({
       )
         return false;
       const version = epoch.current;
+      const revision = statusRevision.current;
       try {
         const next = parseVoiceStatus(await command());
         if (
@@ -415,9 +547,8 @@ export function useLocalVoice({
           );
         }
         if (current.current.failed) return false;
-        setStatus(next);
-        setPhase(next.phase);
-        if (next.phase === 'idle') current.current = null;
+        if (acceptStatus(next, revision) && next.phase === 'idle')
+          current.current = null;
         return true;
       } catch (e) {
         // A late failed promise must never stop a newer capture or response.
@@ -433,7 +564,7 @@ export function useLocalVoice({
         return false;
       }
     },
-    [streamingSupported, cancel],
+    [streamingSupported, cancel, acceptStatus],
   );
 
   const enqueueSpeech = useCallback(

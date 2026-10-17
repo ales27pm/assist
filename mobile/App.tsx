@@ -113,6 +113,7 @@ export function AssistantScreen() {
     startCapture: (isCurrent: () => boolean) => Promise<boolean>;
     finishCapture: () => Promise<void>;
     cancel: () => Promise<void>;
+    cancelResponse: () => Promise<void>;
     generate: (
       text: string,
       isCurrent: () => boolean,
@@ -123,6 +124,7 @@ export function AssistantScreen() {
       startCapture: valid => voiceCommands.current!.startCapture(valid),
       finishCapture: () => voiceCommands.current!.finishCapture(),
       cancel: () => voiceCommands.current!.cancel(),
+      cancelResponse: () => voiceCommands.current!.cancelResponse(),
       generate: (text, valid) => voiceCommands.current!.generate(text, valid),
       changed: state => {
         if (mounted.current) setVoiceConversation(state);
@@ -133,6 +135,7 @@ export function AssistantScreen() {
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const requestPrompt = useRef('');
+  const pendingVoiceTurn = useRef<{ id: string; messages: Message[] } | null>(null);
   const speechIntent = useRef(0);
   const spokenRequest = useRef<string | null>(null);
   const responseSpeech = useRef<ResponseSpeechStream | null>(null);
@@ -173,6 +176,38 @@ export function AssistantScreen() {
     }
     return audioStopped;
   }, [cancelVoice]);
+
+  // Native barge-in has already silenced playback and kept the same ASR task.
+  // Retire JS scheduling synchronously, then cancel Gemma without cancelVoice.
+  const cancelResponse = useCallback(async () => {
+    speechIntent.current += 1;
+    spokenRequest.current = null;
+    responseSpeech.current?.cancel();
+    responseSpeech.current = null;
+    if (mounted.current) {
+      setProgress(null);
+      setReport(null);
+    }
+    const requestId = active.current;
+    // Preserve the interrupted user's intent, without saving an unspoken or
+    // incomplete assistant answer as a completed response.
+    if (pendingVoiceTurn.current?.id === requestId) {
+      messagesRef.current = pendingVoiceTurn.current.messages;
+      if (mounted.current) setMessages(messagesRef.current);
+      pendingVoiceTurn.current = null;
+    }
+    if (!requestId) return;
+    if (!NativeAssist) throw new Error('Le moteur local est indisponible.');
+    const state = parseState(await NativeAssist.cancel());
+    if (mounted.current && (active.current === requestId || active.current === null)) {
+      statusVersion.current += 1;
+      setEngine(previous => ({
+        ...state,
+        bundledModelAvailable:
+          state.bundledModelAvailable ?? previous.bundledModelAvailable,
+      }));
+    }
+  }, []);
 
   useEffect(() => {
     if (tab !== 'chat') {
@@ -308,10 +343,14 @@ export function AssistantScreen() {
         speechVersion === speechIntent.current
           ? requestId
           : null;
-      const conversation: Message[] = [
-        ...messagesRef.current,
-        { role: 'user', content: text.trim() },
-      ];
+      const history = messagesRef.current;
+      const last = history.at(-1);
+      // Gemma's chat template requires alternating roles. An interrupted user
+      // turn followed by a correction is one user message in the model context.
+      const conversation: Message[] = last?.role === 'user'
+        ? [...history.slice(0, -1), { role: 'user', content: `${last.content}\n\n${text.trim()}` }]
+        : [...history, { role: 'user', content: text.trim() }];
+      if (fromVoice) pendingVoiceTurn.current = { id: requestId, messages: conversation };
       active.current = requestId;
       let speechFailed = false;
       const stream: ResponseSpeechStream | null =
@@ -359,6 +398,7 @@ export function AssistantScreen() {
               { role: 'assistant', content: result.text },
             ];
             messagesRef.current = nextMessages;
+            if (pendingVoiceTurn.current?.id === requestId) pendingVoiceTurn.current = null;
             setMessages(nextMessages);
             if (fromVoice) controller.progress(result.text);
             if (!fromVoice) setPrompt('');
@@ -389,6 +429,7 @@ export function AssistantScreen() {
           }
         }
       } finally {
+        if (pendingVoiceTurn.current?.id === requestId) pendingVoiceTurn.current = null;
         if (responseSpeech.current === stream) {
           responseSpeech.current = null;
           stream?.cancel();
@@ -408,6 +449,7 @@ export function AssistantScreen() {
   }
 
   voiceCommands.current = {
+    cancelResponse,
     cancel: async () => {
       if (!(await cancelGeneration()))
         throw new Error('L’arrêt du micro n’a pas été confirmé.');
@@ -436,7 +478,10 @@ export function AssistantScreen() {
           'Mets Assist à jour pour utiliser la conversation vocale.',
         );
       }
-      if (operation.current || !(await cancelVoice()) || !valid()) return false;
+      // Explicit start/resume/interrupt already cancel in the coordinator.
+      // Natural completion may retain native ASR briefly; adopt it without a
+      // redundant cancel that would discard the user's first overlapping word.
+      if (operation.current || !valid()) return false;
       return voice.startListening();
     },
     generate: async (text, valid) => {
@@ -728,6 +773,7 @@ export function AssistantScreen() {
           {tab === 'chat' && speechMode && (
             <VoiceConversationScreen
               {...voiceConversation}
+              bargeInReady={voice.status?.phase === 'speaking' && voice.status.monitoring === true}
               readResponses={readResponses}
               onPause={() => {
                 controller.pause();

@@ -1,19 +1,24 @@
 # Voix locale — mode vocal au premier plan
 
-Le candidat **build 16** introduit un **Mode vocal** distinct de la conversation
+Le **build 16** introduit un **Mode vocal** distinct de la conversation
 au clavier : fin de tour automatique, envoi au modèle local, lecture progressive
-et écoute du tour suivant. À la préparation de ce candidat, les contrôles
-locaux passent; l’archive EAS, l’acceptation Apple et la qualification audio
-sur iPhone sont des étapes séparées à vérifier.
+et écoute du tour suivant. **L’utilisateur confirme que ce parcours fonctionne
+sur son iPhone.** Ce retour valide une référence utilisable pour l’étape 3 de la
+[feuille de route](voice-roadmap.md); il ne remplace pas une qualification
+formelle des latences, des routes audio ou des erreurs.
+
+Le **candidat build 17** ajoute l’interruption par la voix pendant la lecture.
+Ses contrôles JavaScript et bancs natifs passent; à la préparation de ce
+candidat, l’archive, la livraison et les essais acoustiques restent à faire.
+Il ne revendique pas la qualité ou la fluidité de ChatGPT.
 
 Les builds 13 à 15 ont été livrés sur TestFlight. Ils utilisaient une dictée vers
 un brouillon, un envoi manuel, puis une lecture facultative; les versions 14 et
 15 ajoutaient la lecture progressive, les diagnostics et des états plus clairs.
 Sur iPhone, une dictée après relance et avant lecture a été confirmée au build 13.
-Un autre essai avait échoué avec « No speech detected ». La fiabilité de
-l'enchaînement lecture → reconnaissance et celle des tours automatiques du
-candidat 16 restent à qualifier sur appareil. Voir la
-[feuille de route](voice-roadmap.md) pour les étapes suivantes.
+Un autre essai avait échoué avec « No speech detected ». Le retour positif du
+build 16 ne mesure pas encore la fiabilité de toutes les transitions, ni
+l’interruption vocale introduite par le candidat 17.
 
 ## Parcours actuel
 
@@ -29,9 +34,11 @@ candidat 16 restent à qualifier sur appareil. Voir la
    une première phrase peut être lue avant la fin du texte. Une erreur vocale ne
    supprime pas la réponse écrite et interrompt le parcours pour permettre une
    reprise explicite.
-4. L'écoute suivante démarre après la fin de génération et la fin de lecture
-   native. Si la lecture est désactivée, elle reprend après la réponse texte.
-   Il faut toujours rester dans le mode vocal, au premier plan.
+4. Hors interruption, le tour suivant attend la fin de génération et la fin de
+   lecture native. Le candidat 17 peut réutiliser une reconnaissance locale
+   conservée brièvement à la fin de la lecture. Si la lecture est désactivée,
+   l’écoute reprend après la réponse texte. Il faut toujours rester dans le
+   mode vocal, au premier plan.
 
 Cet écran n'a ni compositeur, ni bouton **Envoyer**, ni contrôle de dictée intégré
 au chat. La conversation au clavier garde son envoi manuel et ne déclenche pas
@@ -67,10 +74,71 @@ revient au chat après confirmation de l’arrêt. Un échec reste visible dans
 le mode vocal. Ouvrir **Réglages du mode vocal** met la session en pause;
 revenir à son écran ne la relance pas sans **Reprendre**.
 
-Le parcours est **demi-duplex** : le microphone est fermé pendant la génération
-et la lecture. **Interrompre est un bouton**, pas une interruption acoustique.
-Parler pendant une réponse ne la coupe pas. Ce lot ne fournit ni barge-in vocal,
-ni AEC qualifié, ni écoute continue en arrière-plan.
+Le build 16 était **demi-duplex**, avec le bouton **Interrompre** pour reprendre
+la parole. Le candidat 17 conserve ce bouton et ajoute le parcours ci-dessous.
+Il ne fournit aucune écoute continue en arrière-plan.
+
+## Interruption vocale du candidat 17
+
+Pendant la lecture, le candidat maintient une reconnaissance Apple **locale**
+avec le traitement vocal Apple VPIO activé dans un graphe `.voiceChat`.
+`AVSpeechSynthesizer.write` fournit du PCM à un `AVAudioPlayerNode` du même
+graphe. Ce chemin donne au traitement d’écho le signal effectivement joué;
+son efficacité acoustique et ses limites restent à mesurer sur iPhone.
+
+Le déclenchement repose sur du texte reconnu contenant des lettres ou des
+chiffres, pas sur le seul niveau sonore. Quand cette reconnaissance détecte une
+intervention, le natif coupe et purge la lecture, invalide ses anciennes
+identités et **promeut la même requête et la même tâche STT** en nouvelle capture.
+Le début déjà reçu reste dans ce STT; aucun redémarrage de dictée ni prébuffer
+PCM d’entrée séparé n’est nécessaire au transfert.
+
+Le natif publie ensuite l’événement de transfert :
+
+```json
+{
+  "kind": "interruption",
+  "sessionId": "ancienne-reponse",
+  "captureSessionId": "nouvelle-capture",
+  "phase": "listening",
+  "monitoring": false
+}
+```
+
+Le hook adopte la nouvelle identité avant ses premières transcriptions. Le
+coordinateur retire immédiatement l’ancienne file JavaScript et demande
+l’annulation coopérative de Gemma, **sans `cancelVoice()` ni seconde capture**.
+La nouvelle transcription peut avancer pendant cette attente; son envoi attend
+à la fois son texte final, sa fin de capture et le règlement de l’ancienne
+génération et de son annulation. Les anciens segments, événements et retours
+de commandes sont rejetés. L’intention utilisateur interrompue est conservée;
+une correction peut la compléter sans créer deux rôles utilisateur consécutifs
+dans le contexte Gemma. L’écran marque **Réponse interrompue** et retire
+l’ancien partiel du flux de conversation en cours.
+
+**Micro actif pendant la réponse** n’apparaît que lorsque le statut natif
+`speaking` porte `monitoring: true` : moteur, entrée traitée et tâche STT sont
+effectivement actifs selon le code. Une demande de surveillance seule, un
+réarmement, un arrêt ou un ancien retour de commande ne suffisent pas à afficher
+cet état. Les mesures du watcher ne décident pas la fin d’un tour utilisateur.
+
+Après la fin naturelle de la lecture, le natif peut retenir cette entrée/STT
+**au maximum 5 secondes**, afin que le prochain tour adopte une parole commencée
+près du dernier son. Cette rétention est détruite si elle n’est pas adoptée;
+pause, fermeture, arrière-plan ou invalidation la détruisent immédiatement,
+sans attendre ce délai. La fin de production PCM et la fin effective de lecture
+des buffers sont suivies séparément.
+
+Les files de sortie sont bornées dans le code : au plus **15 secondes de frames
+PCM à 48 kHz**, transfert limité à **4 Mio et 2 048 paquets**, et file textuelle
+limitée à **64 segments et 32 Kio**. Ce sont des plafonds de protection, pas des
+mesures de mémoire totale ou de latence; leur comportement à saturation reste
+à qualifier.
+
+Exécuter le STT pendant le TTS coûte davantage que le parcours demi-duplex.
+L’impact CPU/ANE, mémoire, batterie et thermique, l’efficacité AEC, les fausses
+interruptions dues à l’écho ou au bruit, la conservation acoustique du premier
+mot et le délai jusqu’au silence ne sont **pas encore prouvés sur appareil**.
 
 ## Lecture et préférence locale
 
@@ -146,22 +214,26 @@ Ces garanties de code demandent des essais natifs : les tests JavaScript ne
 prouvent pas la libération effective du microphone, l'arrêt audible ou la
 transition correcte entre routes.
 
-## Validation du candidat 16
+## Validation du candidat 17
 
 Le contrôle local complet est terminé :
 
 - `cd mobile && npm run check` : typecheck TypeScript, ESLint sans avertissement,
-  **461 tests JavaScript dans 22 suites** et génération du bridge iOS réussis.
+  **508 tests JavaScript dans 22 suites** et génération du bridge iOS réussis.
 - `python3 scripts/test-local-voice-contract.py` : **8 contrôles statiques**
   réussis pour les permissions, sources Xcode, contrat du bridge et exigences
   locales.
-- Les quatre sources vocales passent un typecheck Swift 6 strict arm64 iOS avec
-  le SDK 26.2. Ce contrôle ne remplace pas une archive avec le SDK 27.1.
 
-Ces résultats ont été enregistrés avant l’archive EAS avec SDK 27.1. Ils ne
-constituent pas une preuve d’IPA, d’acceptation Apple ou de livraison TestFlight.
+Les six sources Swift passent le typecheck Swift6 strict arm64-iOS27.1 sur
+SDK26.2. Les scripts natifs synthétiques passent : duplex10, mesurePCM8,
+fileTTS9, callbacks9 avec128frames ordonnées et2contrôles négatifs attendus.
+Le premier essai négatif sur VM a produit la terminaison attendue avec une
+backtrace insuffisamment symbolisée; une relance unique a passé le contrôle
+strict. Ces résultats précèdent l’archive SDK27.1, l’acceptation Apple et la
+livraison TestFlight; ils ne constituent pas ces preuves. Les tests JavaScript utilisent des frontières natives
+simulées; ils vérifient les identités, ordres, annulations et états, pas l’audio.
 
-Une revue **web simulée** de l'écran réel couvre **144 cas** : largeurs
+Une revue **web simulée du build 16** couvrait **144 cas** : largeurs
 320/375/430, hauteurs 568/750, trois thèmes et huit états. Aucun débordement
 horizontal ni bouton hors écran n'a été observé. Les callbacks simulés de pause,
 reprise, interruption, fermeture et Réglages répondent; le texte long défile avec
@@ -189,6 +261,9 @@ Ne pas effacer de données utilisateur pour préparer les essais.
 | Séparation clavier | Brouillon clavier conservé, aucun envoi ou TTS déclenché par ce brouillon; aucun compositeur dans Mode vocal |
 | Préférence | Valeur par défaut activée, désactivation conservée après relance; échec de sauvegarde signalé; absence de voix n'empêchant pas de désactiver la lecture |
 | Annulations | Pause ou Interrompre pendant génération et lecture; fermeture, retour Réglages et nouvelle session : aucune ancienne transcription, génération ou phrase ne reprend |
+| Interruption vocale | Dire « non, attends » pendant un TTS : son coupé, premier mot conservé, un seul nouveau tour, ancienne file purgée; tester avant et après EOS et pendant les retours de commandes différés |
+| Écho et fausses interruptions | TTS seul à plusieurs volumes, bruit et voix distante : compter les déclenchements; vérifier le statut réel de surveillance et l’absence d’auto-interruption par le haut-parleur |
+| Fin naturelle | Commencer à parler près du dernier son : adoption du même STT, aucun premier mot perdu ni capture doublée; sans adoption, entrée libérée au terme du délai borné |
 | Cycle de vie | Arrière-plan, verrouillage, interruption système et changement de route à chaque phase; absence de reprise automatique; reprise explicite possible |
 | Français québécois | Hésitations, noms locaux, montants et alternance français/anglais; transcription et qualité vocale évaluées séparément |
 | Hors réseau | Ressources installées, app terminée, mode Avion avec Wi-Fi/cellulaire désactivés; parcours complet après relance et redémarrage du téléphone |

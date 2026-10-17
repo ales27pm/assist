@@ -181,6 +181,75 @@ test('offers interruption only while preparing or speaking a response', async ()
   ).not.toBeOnTheScreen();
 });
 
+test.each(['thinking', 'speaking'] as const)(
+  'only promises acoustic interruption in %s after native monitoring is ready',
+  async phase => {
+    const user = userEvent.setup();
+    const state = props({ phase, diagnostics: diagnostics() });
+    const { rerenderAsync } = await renderAsync(
+      <VoiceConversationScreen {...state} />,
+    );
+    expect(
+      screen.getByText('Touche Interrompre pour reprendre la parole.'),
+    ).toBeOnTheScreen();
+    expect(
+      screen.queryByText('Micro actif pendant la réponse.'),
+    ).not.toBeOnTheScreen();
+    expect(screen.queryByLabelText(/Parle pour m’interrompre/)).not.toBeOnTheScreen();
+
+    await rerenderAsync(
+      <VoiceConversationScreen {...state} bargeInReady />,
+    );
+    expect(screen.getByText('Micro actif pendant la réponse.')).toBeOnTheScreen();
+    expect(
+      screen.getByText('Parle pour m’interrompre, ou touche Interrompre.'),
+    ).toBeOnTheScreen();
+    expect(screen.getByLabelText(/Micro actif pendant la réponse/)).toHaveProp(
+      'accessibilityLiveRegion',
+      'polite',
+    );
+    // The native monitor supplies readiness, not microphone metering snapshots.
+    expect(screen.queryByRole('progressbar')).not.toBeOnTheScreen();
+    await user.press(screen.getByRole('button', { name: 'Interrompre' }));
+    expect(state.onInterrupt).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('switch')).not.toBeOnTheScreen();
+
+    await rerenderAsync(
+      <VoiceConversationScreen {...state} bargeInReady={false} />,
+    );
+    expect(
+      screen.queryByText('Micro actif pendant la réponse.'),
+    ).not.toBeOnTheScreen();
+    expect(screen.queryByLabelText(/Parle pour m’interrompre/)).not.toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: 'Interrompre' })).toBeEnabled();
+  },
+);
+
+test.each([
+  'starting',
+  'listening',
+  'finishing',
+  'stopping',
+  'paused',
+  'error',
+] as const)(
+  'ignores stale response monitoring readiness in %s',
+  async phase => {
+    await renderAsync(
+      <VoiceConversationScreen {...props({ phase, bargeInReady: true })} />,
+    );
+    expect(
+      screen.queryByText('Micro actif pendant la réponse.'),
+    ).not.toBeOnTheScreen();
+    expect(screen.queryByLabelText(/Parle pour m’interrompre/)).not.toBeOnTheScreen();
+    expect(
+      screen.queryByRole('button', { name: 'Interrompre' }),
+    ).not.toBeOnTheScreen();
+    if (phase !== 'listening')
+      expect(screen.queryByRole('progressbar')).not.toBeOnTheScreen();
+  },
+);
+
 test('the microphone meter exposes measured input only during listening', async () => {
   const state = props();
   const { rerenderAsync } = await renderAsync(
@@ -264,6 +333,39 @@ test('preserves complete long messages, explicit controls and a reading-off expl
     screen.getByRole('button', { name: 'Fermer le mode vocal' }),
   ).toBeEnabled();
 });
+
+test.each(['listening', 'paused'] as const)(
+  'identifies an interrupted reply during %s until the next response',
+  async phase => {
+    const reply = 'Le début de la réponse précédente…';
+    const state = props({ phase, reply, replyInterrupted: true });
+    const { rerenderAsync } = await renderAsync(
+      <VoiceConversationScreen {...state} />,
+    );
+    expect(
+      screen.getByRole('heading', { name: 'Réponse interrompue' }),
+    ).toBeOnTheScreen();
+    expect(screen.getByText(reply)).toHaveProp('selectable', true);
+    expect(
+      screen.queryByRole('heading', { name: 'Réponse de l’assistant' }),
+    ).not.toBeOnTheScreen();
+
+    await rerenderAsync(
+      <VoiceConversationScreen
+        {...state}
+        phase="speaking"
+        reply="La nouvelle réponse."
+        replyInterrupted={false}
+      />,
+    );
+    expect(
+      screen.getByRole('heading', { name: 'Réponse de l’assistant' }),
+    ).toBeOnTheScreen();
+    expect(
+      screen.queryByRole('heading', { name: 'Réponse interrompue' }),
+    ).not.toBeOnTheScreen();
+  },
+);
 
 test('exposes a useful error while retaining explicit recovery and exit', async () => {
   const message = 'Aucune voix locale disponible sur cet appareil.';

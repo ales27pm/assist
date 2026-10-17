@@ -5,34 +5,26 @@ une interruption naturelle, tout en gardant STT, LLM et TTS sur l’iPhone. Les
 expériences vocales de ChatGPT et Gemini servent de références perceptuelles;
 ce plan ne promet ni leur qualité ni leur fluidité sur le matériel local.
 
-**Le build 13 a maintenant une preuve positive de dictée après relance.**
-L’utilisateur a relancé complètement l’app, chargé le modèle puis lancé
-**Dicter avant toute lecture** : transcription dans le brouillon, envoi manuel
-et réponse écrite ont fonctionné. La lecture vocale avait aussi fonctionné lors
-d’un essai antérieur. Ces observations ne qualifient pas encore leur enchaînement.
+**Référence actuelle : build 16, confirmé fonctionnel par l’utilisateur sur son
+iPhone.** Son mode vocal distinct enchaîne écoute, fin de tour automatique,
+envoi local, lecture progressive et tour suivant. Ce retour valide le parcours
+de l’étape 3 comme base de travail; il ne constitue pas une qualification
+formelle des latences, de l’accent, des permissions ou de toutes les routes.
 
-L’erreur « No speech detected » reste à reproduire, notamment après TTS;
-l’hypothèse d’une transition TTS → STT défaillante n’est pas confirmée. L’utilisateur
-signale aussi que le contrôle **Lire les réponses** n’est plus visible ensuite;
-la cause de cette disparition reste inconnue. Ce sont des points de fiabilité
-ciblés, pas la preuve d’une panne générale du STT.
+**Candidat actuel : build 17, interruption vocale pendant la lecture.** Le code
+maintient un STT Apple local avec AEC Apple VPIO pendant le TTS, puis promeut la
+même tâche de reconnaissance lorsque l’utilisateur intervient. Les contrôles
+JavaScript, statiques et bancs natifs passent; l’archive, la livraison et la
+qualification acoustique de ce candidat restent à faire.
 
-## Référence du build 13 et candidat build 14
+## Référence produit et limites
 
-Le parcours du build 13 est en demi-duplex :
-
-```text
-Dictée Apple locale fr-CA → brouillon modifiable → Envoyer manuellement
-    → génération Gemma locale → réponse terminée → lecture Apple facultative
-```
-
-Le micro est fermé pendant la lecture. Recommencer une dictée coupe d’abord la
-lecture. Il n’existe pas encore de fin de tour automatique, de détection vocale
-d’interruption, d’AEC qualifié ou de synthèse des segments en cours de génération.
-Les événements `onProgress` du LLM exposent déjà des instantanés textuels cumulés;
-la lecture du build 13 attend la réponse complète terminée par EOS. Le candidat
-build 14 ajoute une file TTS par génération et un découpage de ces instantanés;
-la lecture avant EOS reste à confirmer acoustiquement sur iPhone.
+Les builds 13 à 15 formaient la progression depuis une dictée dans un brouillon
+avec envoi manuel vers une lecture progressive et des états plus clairs. Le
+build 13 avait un essai positif de dictée après relance et avant TTS; un autre
+essai avait produit « No speech detected ». Le build 16 apporte le mode vocal
+confirmé par l’utilisateur. Ces observations ne deviennent pas des mesures
+homogènes de fiabilité pour le nouveau candidat.
 
 Le projet cible **iOS 27.1**; le chargeur Gemma exige **iOS 27.2 à l’exécution**.
 Ces contraintes figurent dans le projet Xcode, le Podfile et
@@ -40,22 +32,17 @@ Ces contraintes figurent dans le projet Xcode, le Podfile et
 ne décrivent donc pas la compatibilité de cette app. Une nouvelle cible doit
 d’abord satisfaire le système, charger le modèle réel et passer les mesures.
 
-Le [parcours local actuel](local-voice.md) détaille le fonctionnement et ses
-limites; le [build EAS 13](https://expo.dev/accounts/ales27/projects/assist/builds/8a84b33f-6a07-4d0e-b1c9-2777594616cf)
-a été livré sur TestFlight, avec les limites physiques décrites ci-dessus.
+Le [parcours local actuel](local-voice.md) détaille le fonctionnement, les preuves
+et les limites. Aucune parité avec les expériences vocales de ChatGPT ou Gemini
+n’est revendiquée pour l’app locale.
 
 ## Séquence de livraison
 
-Chaque étape produit un parcours utilisable et un rapport sur iPhone physique.
-Le parcours clavier et l’envoi manuel restent disponibles pendant cette progression.
-
-**Candidat implémenté : build 14.** Indicateur et diagnostics micro agrégés,
-session audio commune après accord micro, contrôle de lecture sur sa propre ligne
-et lecture progressive avec une file TTS par génération.
-Ce lot combine les travaux ciblés de l’étape 0, leur mesure à l’étape 1 et la
-lecture progressive de l’étape 2. Le code et les tests sont prêts; la livraison et la
-qualification audio sont suivies séparément. Fin de tour automatique et barge-in attendent les
-portes de qualification physique suivantes.
+Le parcours clavier et l’envoi manuel restent disponibles. Les étapes 0 à 2
+expliquent les fondations de la référence actuelle; leurs objectifs de mesure
+restent ouverts lorsqu’aucun résultat physique n’est consigné. L’étape 3 possède
+le retour positif du build 16. L’étape 4 est implémentée dans le candidat 17,
+sans être encore qualifiée sur appareil.
 
 ### 0. Rendre la capture observable et qualifier les enchaînements
 
@@ -87,7 +74,9 @@ une compilation ou le banc de callbacks ne suffit pas.
 
 ### 1. Qualifier le parcours manuel et établir la référence
 
-**Tranche : dix échanges dictés, corrigés si nécessaire, envoyés puis lus.**
+**Tranche de référence initiale : dix échanges dictés, corrigés si nécessaire,
+envoyés puis lus.** Ce parcours manuel décrivait les builds 13 à 15; le build 16
+réserve la dictée au mode vocal. Le chat clavier conserve son envoi manuel.
 
 Instrumenter capture, premier texte partiel, fin acoustique, texte stable,
 départ de génération, premier texte LLM exploitable, demande TTS et premier son
@@ -95,15 +84,16 @@ audible. Mesurer séparément chargement à froid et tours avec modèles réside
 L’essai couvre aussi le refus de permission, l’arrière-plan, le verrouillage,
 l’interruption système, la route audio et les annulations successives.
 
-**Passage :** flux complet reproductible hors réseau après préparation des
-ressources, erreurs expliquées, aucune génération avant l’envoi manuel, aucune
-lecture d’une réponse annulée. Publier les distributions et les échecs avant
-d’ajouter de l’automatisme.
+**Mesures à conserver :** flux complet reproductible hors réseau après
+préparation des ressources, erreurs expliquées, aucune génération avant l’envoi
+manuel dans le chat, aucune lecture d’une réponse annulée. Consigner les
+distributions et les échecs pour comparer les automatismes suivants.
 
 ### 2. Parler avant la fin de la génération
 
-**Tranche : une question envoyée manuellement reçoit une première phrase parlée
-pendant que Gemma termine sa réponse.**
+**Tranche : une question du mode vocal reçoit une première phrase parlée pendant
+que Gemma termine sa réponse.** La lecture automatique reste propre au mode
+vocal; un envoi au clavier ne la déclenche pas.
 
 - Exploiter `onProgress` avec l’identité de requête; déterminer un préfixe stable
   avant de le rendre irréversible à l’oral. Les instantanés cumulés ne sont pas
@@ -123,18 +113,25 @@ interrompue après une phrase doit être présentée comme incomplète.
 ### 3. Ajouter un mode conversation avec fin de tour prudente
 
 **Tranche : dans un mode explicitement activé, poser une question sans bouton
-Envoyer; conserver un bouton pour terminer ou annuler.**
+Envoyer; conserver des commandes de pause, reprise et interruption.**
 
-Combiner VAD, silence, stabilité de transcription et indices de phrase inachevée.
-La durée de silence seule ne décide pas. Tester « euh… », « attends… », les
+**Référence build 16 confirmée par l’utilisateur.** Le chat clavier reste manuel
+et son brouillon est séparé. La lecture automatique est activée par défaut,
+avec une préférence locale dans Réglages. Le prochain tour attend la fin du
+modèle et de la lecture effective; aucune reprise automatique ne suit une
+pause, un refus de permission, une erreur ou le retour d’arrière-plan.
+
+La politique actuelle combine niveau agrégé du micro, stabilité de transcription
+et indices de phrase inachevée. Ce n’est ni un VAD neuronal ni une compréhension
+sémantique. La durée de silence seule ne décide pas. Tester « euh… », « attends… », les
 conjonctions, autocorrections et faux départs québécois. Une fenêtre de silence
 plus courte pour une phrase complète et une attente plus longue pour une
 hésitation sont des paramètres à calibrer avec le corpus.
 
 Une décision de fin de tour ne doit pas envoyer du texte instable ou doubler un
 tour. L’automatisme concerne la conversation; il ne donne aucune autorisation
-supplémentaire pour exécuter des actions de l’agent. En cas de confiance faible,
-garder le brouillon et permettre de terminer manuellement.
+supplémentaire pour exécuter des actions de l’agent. En cas d’échec ou d’absence
+de parole, arrêter le parcours et demander une reprise explicite.
 
 **Passage :** mesures de tours coupés trop tôt et d’attente excessive, avec des
 locuteurs et enregistrements de validation distincts du corpus de calibration.
@@ -145,20 +142,42 @@ Le gain de latence doit rester compatible avec le respect des pauses.
 **Tranche : l’agent parle; l’utilisateur dit « non, attends »; le son s’arrête
 et la nouvelle intervention devient le tour suivant.**
 
-Ouvrir une surveillance micro pendant le TTS seulement dans ce mode. Qualifier
-un traitement d’écho, avec le graphe audio de traitement vocal Apple ou une
-solution locale qui reçoit la référence audio effectivement jouée. Éviter de
-cascader deux AEC sans mesure. Commencer par VAD/AEC pendant la lecture, sans
-imposer un STT complet permanent. Un court prébuffer en RAM peut préserver le
-début de l’interruption; sa durée et sa purge doivent être explicites.
+**Implémentée dans le candidat build 17, pas encore livrée ni qualifiée.** Le
+choix de cette tranche est un STT local actif pendant la lecture, avec le
+traitement d’écho Apple VPIO et `.voiceChat`. Le TTS est produit par
+`AVSpeechSynthesizer.write` et joué par `AVAudioPlayerNode` dans le même graphe.
+Un texte STT contenant lettres ou chiffres déclenche la promotion; le niveau
+sonore seul ne la déclenche pas. Le coût du STT pendant le TTS est plus élevé
+que celui du demi-duplex et doit être mesuré avec Gemma.
+
+La promotion conserve la même requête, la même tâche STT et leur début déjà
+reçu, sans seconde capture ni prébuffer PCM d’entrée séparé. Après une fin
+naturelle de lecture, cette entrée peut être retenue **5 secondes au maximum**
+pour être adoptée par le prochain tour. Pause, fermeture, arrière-plan et
+invalidation détruisent la rétention immédiatement; aucun délai de 5 secondes
+n’est attendu dans ces chemins.
 
 L’interruption suit un invariant commun au natif et au JavaScript :
 
 1. Invalider l’identité de l’ancienne réponse et couper sa sortie audible.
 2. Purger les buffers et les segments TTS en attente, y compris ceux du lecteur.
-3. Demander l’annulation coopérative de Gemma et du moteur TTS.
+3. Adopter la capture native, retirer la file JS et demander l’annulation
+   coopérative de Gemma sans `cancelVoice()` sur la nouvelle capture.
 4. Rejeter tout événement ou tampon tardif portant l’ancienne identité.
 5. Former le nouveau tour sans reprendre automatiquement l’ancienne phrase.
+
+La nouvelle transcription est acceptée pendant l’arrêt du modèle précédent;
+son envoi attend aussi la fin de cet arrêt et de la génération précédente.
+L’intention utilisateur reste dans le contexte, avec coalescence des rôles
+utilisateur successifs compatible avec Gemma. Les retours de commandes anciens
+ne peuvent ni réarmer la lecture ni annuler la nouvelle capture. L’écran affiche
+**Réponse interrompue** et n’affiche **Micro actif pendant la réponse** que si le
+statut natif `speaking` contient `monitoring: true`.
+
+Les plafonds actuels de sortie sont **15 secondes de PCM à 48 kHz**, **4 Mio et
+2 048 paquets** pour le transfert, puis **64 segments et 32 Kio** pour le texte.
+Ce sont des limites de protection du code, sans preuve de mémoire totale ni de
+latence sur appareil; leur saturation fait partie de la qualification.
 
 Mesurer le **silence audible**, séparément du retour de la méthode d’annulation.
 Qualifier haut-parleur fort, bruit ambiant, voix distante et changements de route.
@@ -166,7 +185,17 @@ La voix de l’agent ne doit pas déclencher sa propre interruption.
 
 **Passage :** pas de phrase ancienne rejouée, début de l’utilisateur conservé,
 faible taux de fausses interruptions et reprise cohérente après annulations
-répétées. Le plein duplex reste désactivé sur les profils non qualifiés.
+répétées. AEC, faux déclenchements, premier mot conservé, latence d’arrêt et coût
+thermique ne sont pas encore prouvés sur iPhone; le candidat ne constitue pas
+une qualification de plein duplex conversationnel.
+
+**Preuves logicielles actuelles :** `npm run check` passe avec **508 tests
+JavaScript dans 22 suites**, TypeScript, ESLint et codegen; les **8 contrôles
+statiques** du contrat local passent. Les six sources Swift passent le typecheck
+strict SDK26.2; les bancs natifs synthétiques passent (duplex10, mesure8, file9,
+callbacks9+128frames et2pièges d’isolation attendus). L’archive SDK27.1 reste
+une vérification séparée à cette étape. Aucun résultat acoustique, IPA ou statut de livraison n’en
+est déduit.
 
 ### 5. Comparer les voix fr-CA avant d’intégrer un moteur plus lourd
 
@@ -235,13 +264,13 @@ de terminaison iOS n’est supposé.
 | Surface existante | Travail futur concerné |
 | --- | --- |
 | `mobile/ios/Assist/Voice/AssistVoice.swift` | Capture, diagnostics agrégés, session audio, file TTS et états de tour |
-| `mobile/ios/Assist/Voice/AssistVoiceCallbacks.swift` | Adaptateurs Sendable, snapshot d’erreur enrichi, append audio synchrone |
+| `mobile/ios/Assist/Voice/AssistVoiceCallbacks.swift`, `AssistVoiceDuplexState.swift`, `AssistVoicePCMTransfer.swift` | Callbacks Sendable, identités entrée/sortie, transfert PCM borné et fin effective de lecture |
 | `mobile/ios/Assist/Inference/AssistCoreAI.swift` | Mesure du premier texte, instantanés stables et annulation Gemma |
 | `mobile/ios/Assist/RCTNativeAssist.mm`, `mobile/specs/NativeAssist.ts` | Contrat natif/JS, identité des réponses et nouveaux événements bornés |
 | `mobile/src/voice.ts`, `mobile/src/useLocalVoice.ts` | Validation des événements, état de conversation et rejet des sessions périmées |
-| `mobile/App.tsx`, `mobile/src/VoiceControls.tsx` | Activation explicite du mode, brouillon, streaming et commandes d’arrêt |
+| `mobile/App.tsx`, `mobile/src/VoiceConversationController.ts`, `mobile/src/VoiceConversationScreen.tsx` | Mode explicite, transfert de capture, annulation du modèle, brouillon séparé et commandes d’arrêt |
 | `mobile/ios/Assist/Info.plist`, projet Xcode, `mobile/ios/Podfile` | Permissions, inclusion des sources et minimum système réel |
-| `scripts/check-voice-callbacks.*`, `scripts/test-local-voice-contract.py`, `mobile/__tests__/localVoice.test.tsx`, `mobile/__tests__/VoiceApp.test.tsx` | Contrats et régressions; compléter par les essais physiques, sans les leur substituer |
+| `scripts/check-voice-callbacks.*`, `scripts/check-voice-duplex.*`, `scripts/test-local-voice-contract.py`, `mobile/__tests__/localVoice.test.tsx`, `mobile/__tests__/VoiceApp.test.tsx` | Contrats et régressions; bancs natifs synthétiques, puis essais physiques, sans les leur substituer |
 
 Choisir les capacités d’après des profils **mesurés**, pas seulement un nom de
 puce : parcours manuel, conversation avec streaming, puis interruption vocale
@@ -251,8 +280,7 @@ Les cibles de comparaison telles que l’iPhone 14 Pro ne deviennent supportées
 qu’après qualification de la configuration exacte. Aucun engagement SE2 n’est
 pris par cette feuille de route.
 
-Le candidat build 14 améliore donc un parcours déjà réussi après relance :
-micro observable, échanges successifs fiables et lecture progressive. Les
-automatismes de conversation attendent ensuite leurs propres preuves et décisions
-de capacité. Ce document n’autorise ni téléchargement de poids ni nouvelle
-publication et ne bloque pas une correction ciblée de fiabilité.
+Le build 16 constitue la référence fonctionnelle rapportée par l’utilisateur.
+Le candidat 17 ajoute l’interruption vocale; sa livraison et sa qualification
+physique restent distinctes de ses contrôles logiciels. Aucun téléchargement de
+poids ou remplacement des voix Apple n’est impliqué par cette étape.

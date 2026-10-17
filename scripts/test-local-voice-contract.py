@@ -38,7 +38,7 @@ class LocalVoiceSourceContractTests(unittest.TestCase):
         self.assertEqual(source_phase.count("AssistVoice.swift in Sources"), 1)
         self.assertIn("path = Assist/Voice/AssistVoiceCallbacks.swift;", self.project)
         self.assertEqual(source_phase.count("AssistVoiceCallbacks.swift in Sources"), 1)
-        for name in ("AssistVoiceInputMeter", "AssistVoiceSpeechQueue"):
+        for name in ("AssistVoiceInputMeter", "AssistVoiceSpeechQueue", "AssistVoiceDuplexState", "AssistVoicePCMTransfer"):
             self.assertIn(f"path = Assist/Voice/{name}.swift;", self.project)
             self.assertEqual(source_phase.count(f"{name}.swift in Sources"), 1)
 

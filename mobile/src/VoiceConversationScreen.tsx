@@ -25,9 +25,12 @@ export type VoiceConversationScreenProps = {
   phase: VoiceConversationPhase;
   transcript: string;
   reply: string;
+  replyInterrupted?: boolean;
   error?: string;
   diagnostics?: VoiceInputDiagnostics | null;
   readResponses: boolean;
+  /** Native monitoring is armed; requesting it alone must not set this flag. */
+  bargeInReady?: boolean;
   onPause: () => void;
   onResume: () => void;
   onInterrupt: () => void;
@@ -53,7 +56,7 @@ const states: Record<
   },
   thinking: {
     title: 'Je prépare la réponse',
-    description: 'Tu peux interrompre pour reprendre la parole.',
+    description: 'Touche Interrompre pour reprendre la parole.',
   },
   speaking: {
     title: 'Réponse vocale',
@@ -78,9 +81,11 @@ export function VoiceConversationScreen({
   phase,
   transcript,
   reply,
+  replyInterrupted = false,
   error,
   diagnostics,
   readResponses,
+  bargeInReady = false,
   onPause,
   onResume,
   onInterrupt,
@@ -90,6 +95,14 @@ export function VoiceConversationScreen({
   const { theme } = useAppearance();
   const { colors } = theme;
   const state = states[phase];
+  const monitoringResponse =
+    bargeInReady && (phase === 'thinking' || phase === 'speaking');
+  const description = monitoringResponse
+    ? 'Parle pour m’interrompre, ou touche Interrompre.'
+    : state.description;
+  const monitoringLabel = monitoringResponse
+    ? 'Micro actif pendant la réponse.'
+    : '';
   const paused = phase === 'paused' || phase === 'error';
   const waiting =
     phase === 'starting' ||
@@ -132,7 +145,7 @@ export function VoiceConversationScreen({
       >
         <View
           accessible
-          aria-label={`${state.title}. ${state.description}`}
+          aria-label={`${state.title}. ${monitoringLabel ? `${monitoringLabel} ` : ''}${description}`}
           accessibilityLiveRegion="polite"
           style={[styles.state, { borderColor: colors.separator }]}
         >
@@ -149,8 +162,13 @@ export function VoiceConversationScreen({
           <Text style={[styles.stateTitle, { color: statusColor }]}>
             {state.title}
           </Text>
+          {monitoringResponse && (
+            <Text style={[styles.caption, { color: colors.text }]}>
+              {monitoringLabel}
+            </Text>
+          )}
           <Text style={[styles.body, { color: colors.muted }]}>
-            {state.description}
+            {description}
           </Text>
         </View>
 
@@ -213,7 +231,7 @@ export function VoiceConversationScreen({
             role="heading"
             style={[styles.messageTitle, { color: colors.muted }]}
           >
-            Réponse de l’assistant
+            {replyInterrupted ? 'Réponse interrompue' : 'Réponse de l’assistant'}
           </Text>
           <Text
             selectable

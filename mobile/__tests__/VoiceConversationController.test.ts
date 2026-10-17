@@ -26,6 +26,7 @@ function fixture() {
     startCapture: jest.fn(async (_isCurrent: () => boolean) => true),
     finishCapture: jest.fn(() => finishAck.promise),
     cancel: jest.fn(async () => {}),
+    cancelResponse: jest.fn(async () => {}),
     generate: jest.fn(
       (_text: string, _isCurrent: () => boolean) => generation.promise,
     ),
@@ -45,6 +46,13 @@ function fixture() {
 }
 
 type Fixture = ReturnType<typeof fixture>;
+
+function handoff(test: Fixture, oldId = 'reply-1', newId = 'interruption-1') {
+  test.controller.event({
+    kind: 'interruption', phase: 'listening',
+    sessionId: oldId, captureSessionId: newId,
+  });
+}
 
 function transcript(
   test: Fixture,
@@ -385,4 +393,104 @@ test('a failed cancellation never claims a completed pause or reopens the microp
   expect(test.controller.snapshot().phase).toBe('error');
   expect(test.controller.snapshot().error).toContain('n’a pas été confirmé');
   expect(test.commands.startCapture).toHaveBeenCalledTimes(1);
+});
+
+test.each(['cancel-first', 'generation-first'] as const)(
+  'spoken interruption preserves its final and waits for both old tasks: %s',
+  async order => {
+    const test = fixture();
+    const cancellation = deferred<void>();
+    const second = deferred<Reply>();
+    test.commands.cancelResponse.mockReturnValueOnce(cancellation.promise);
+    test.commands.generate.mockReturnValueOnce(test.generation.promise).mockReturnValueOnce(second.promise);
+    await test.controller.start();
+    transcript(test, 'Première question.', true);
+    await flush();
+    test.controller.expectSpeech('reply-1');
+    state(test, 'reply-1', 'speaking');
+    const initialCancels = test.commands.cancel.mock.calls.length;
+    const wasCurrent = test.commands.generate.mock.calls[0][1];
+    handoff(test);
+    expect(wasCurrent()).toBe(false);
+    expect(test.controller.snapshot().phase).toBe('listening');
+    expect(test.commands.cancelResponse).toHaveBeenCalledTimes(1);
+    expect(test.commands.cancel).toHaveBeenCalledTimes(initialCancels);
+    expect(test.commands.startCapture).toHaveBeenCalledTimes(1);
+    transcript(test, 'Non, attends, plutôt vendredi.', true, 'idle', 'interruption-1');
+    state(test, 'reply-1', 'idle');
+    transcript(test, 'Ancien texte.', true);
+    handoff(test);
+    await flush();
+    expect(test.commands.generate).toHaveBeenCalledTimes(1);
+    if (order === 'cancel-first') cancellation.resolve();
+    else test.generation.resolve({ text: 'Ancienne réponse.', spoken: true });
+    await flush();
+    expect(test.commands.generate).toHaveBeenCalledTimes(1);
+    if (order === 'cancel-first') test.generation.resolve({ text: 'Ancienne réponse.', spoken: true });
+    else cancellation.resolve();
+    await flush();
+    expect(test.commands.generate).toHaveBeenCalledTimes(2);
+    expect(test.commands.generate.mock.calls[1][0]).toBe('Non, attends, plutôt vendredi.');
+    expect(test.commands.startCapture).toHaveBeenCalledTimes(1);
+    expect(test.commands.cancelResponse).toHaveBeenCalledTimes(1);
+    second.resolve({ text: 'D’accord.', spoken: false });
+    await flush();
+    expect(test.commands.startCapture).toHaveBeenCalledTimes(2);
+  },
+);
+
+test('a single promoted partial contributes to end-of-turn after reset', async () => {
+  const test = fixture();
+  await test.controller.start();
+  transcript(test, 'Question.', true);
+  await flush();
+  test.controller.expectSpeech('reply-1');
+  state(test, 'reply-1', 'speaking');
+  handoff(test);
+  test.at(100);
+  transcript(test, 'Non, plutôt vendredi.', false, 'listening', 'interruption-1');
+  test.at(2400);
+  test.controller.tick();
+  expect(test.commands.finishCapture).toHaveBeenCalledTimes(1);
+  expect(test.controller.snapshot().transcript).toBe('Non, plutôt vendredi.');
+});
+
+test('failed model cancellation after handoff stops the promoted microphone', async () => {
+  const test = fixture();
+  const cancellation = deferred<void>();
+  cancellation.promise.catch(() => undefined);
+  test.commands.cancelResponse.mockReturnValueOnce(cancellation.promise);
+  await test.controller.start();
+  transcript(test, 'Question.', true);
+  await flush();
+  test.controller.expectSpeech('reply-1');
+  state(test, 'reply-1', 'speaking');
+  const initialCancels = test.commands.cancel.mock.calls.length;
+  handoff(test);
+  cancellation.reject(new Error('cancel failed'));
+  await flush();
+  expect(test.controller.snapshot().phase).toBe('error');
+  expect(test.controller.isActive()).toBe(false);
+  expect(test.commands.cancel).toHaveBeenCalledTimes(initialCancels + 1);
+  transcript(test, 'Ne pas envoyer.', true, 'idle', 'interruption-1');
+  test.generation.resolve({ text: 'Ancien.', spoken: true });
+  await flush();
+  expect(test.commands.generate).toHaveBeenCalledTimes(1);
+});
+
+test('pause wins over a late native handoff while the old model settles', async () => {
+  const test = fixture();
+  await test.controller.start();
+  transcript(test, 'Question.', true);
+  await flush();
+  test.controller.expectSpeech('reply-1');
+  state(test, 'reply-1', 'speaking');
+  const stopping = test.controller.pause();
+  handoff(test);
+  transcript(test, 'Ne pas envoyer.', true, 'idle', 'interruption-1');
+  test.generation.resolve({ text: 'Ancien.', spoken: true });
+  await stopping;
+  expect(test.commands.cancelResponse).not.toHaveBeenCalled();
+  expect(test.controller.snapshot().phase).toBe('paused');
+  expect(test.commands.generate).toHaveBeenCalledTimes(1);
 });

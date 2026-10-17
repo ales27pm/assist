@@ -1,6 +1,14 @@
 import AVFoundation
 import Foundation
 import Speech
+import Synchronization
+
+private final class AssistVoicePlaybackOnce: Sendable {
+    private let completed = Atomic<Bool>(false)
+    nonisolated func claim() -> Bool {
+        !completed.exchange(true, ordering: .acquiringAndReleasing)
+    }
+}
 
 /// Framework objects are read on their callback queue; only these values hop
 /// into the main-actor conversation coordinator.
@@ -17,6 +25,18 @@ struct AssistVoiceRecognitionSnapshot: Sendable, Equatable {
 /// that actor at callback entry, before an inner Task can hop to it. Construct
 /// explicitly Sendable callbacks here, outside any actor, instead.
 enum AssistVoiceCallbacks {
+    nonisolated static func playback(
+        release: @escaping @Sendable () -> Void,
+        _ receive: @escaping @MainActor @Sendable () -> Void
+    ) -> @Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void {
+        let once = AssistVoicePlaybackOnce()
+        return { _ in
+            guard once.claim() else { return }
+            release()
+            Task { @MainActor in receive() }
+        }
+    }
+
     nonisolated static func authorization(
         _ receive: @escaping @MainActor @Sendable (Bool) -> Void
     ) -> @Sendable (SFSpeechRecognizerAuthorizationStatus) -> Void {

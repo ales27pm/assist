@@ -27,6 +27,7 @@ export type VoiceStatus = {
   synthesisAvailable: boolean;
   locale: 'fr-CA';
   phase: VoicePhase;
+  monitoring?: boolean;
   reason?: string;
   voiceName?: string;
   diagnostics?: VoiceInputDiagnostics;
@@ -37,8 +38,15 @@ export type VoiceEvent = {
   text?: string;
   isFinal?: boolean;
   message?: string;
+  monitoring?: boolean;
 } & (
   | { kind: 'input'; phase: 'listening'; diagnostics: VoiceInputDiagnostics }
+  | {
+      kind: 'interruption';
+      phase: 'listening';
+      captureSessionId: string;
+      diagnostics?: VoiceInputDiagnostics;
+    }
   | {
       kind: 'transcript' | 'state' | 'error';
       phase: VoicePhase;
@@ -120,6 +128,7 @@ export function parseVoiceStatus(json: string): VoiceStatus {
     typeof value.synthesisAvailable !== 'boolean' ||
     value.locale !== 'fr-CA' ||
     !phases.includes(value.phase as string) ||
+    (value.monitoring !== undefined && typeof value.monitoring !== 'boolean') ||
     (value.reason !== undefined && typeof value.reason !== 'string') ||
     (value.voiceName !== undefined && typeof value.voiceName !== 'string')
   ) {
@@ -138,13 +147,21 @@ export function parseVoiceEvent(json: string): VoiceEvent {
   if (
     typeof value.sessionId !== 'string' ||
     !value.sessionId ||
-    !['transcript', 'state', 'error', 'input'].includes(value.kind as string) ||
+    !['transcript', 'state', 'error', 'input', 'interruption'].includes(
+      value.kind as string,
+    ) ||
     !phases.includes(value.phase as string) ||
+    (value.monitoring !== undefined && typeof value.monitoring !== 'boolean') ||
     (value.kind === 'transcript' &&
       (typeof value.text !== 'string' || typeof value.isFinal !== 'boolean')) ||
     (value.kind === 'error' && typeof value.message !== 'string') ||
     (value.kind === 'input' &&
-      (value.phase !== 'listening' || value.diagnostics === undefined))
+      (value.phase !== 'listening' || value.diagnostics === undefined)) ||
+    (value.kind === 'interruption' &&
+      (value.phase !== 'listening' ||
+        typeof value.captureSessionId !== 'string' ||
+        !value.captureSessionId.trim() ||
+        value.captureSessionId === value.sessionId))
   ) {
     throw new Error('Événement vocal natif invalide.');
   }

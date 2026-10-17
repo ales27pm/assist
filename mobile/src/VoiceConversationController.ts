@@ -15,6 +15,7 @@ export type ConversationVoiceState = {
   phase: ConversationVoicePhase;
   transcript: string;
   reply: string;
+  replyInterrupted?: boolean;
   error: string;
   diagnostics: VoiceInputDiagnostics | null;
 };
@@ -23,6 +24,8 @@ type Commands = {
   startCapture: (isCurrent: () => boolean) => Promise<boolean>;
   finishCapture: () => Promise<void>;
   cancel: () => Promise<void>;
+  /** Detach old speech scheduling and cancel only the model; capture is native-owned. */
+  cancelResponse: () => Promise<void>;
   generate: (
     text: string,
     isCurrent: () => boolean,
@@ -50,6 +53,7 @@ export class VoiceConversationController {
   private finishAcknowledged = false;
   private generating: Promise<void> | null = null;
   private cancelling: Promise<void> | null = null;
+  private responseCancellation: Promise<void> | null = null;
   private generationDone = false;
   private speechStarted = false;
   private speechDrained = false;
@@ -100,7 +104,7 @@ export class VoiceConversationController {
     this.active = false;
     const version = ++this.version;
     this.retireSessions();
-    this.update({ phase: 'stopping' });
+    this.update({ phase: 'stopping', replyInterrupted: this.state.replyInterrupted || ['thinking', 'speaking'].includes(this.state.phase) });
     try {
       await this.cancelWork();
       if (this.version === version) this.update({ phase: 'paused' });
@@ -118,7 +122,7 @@ export class VoiceConversationController {
     if (!this.active) return;
     const version = ++this.version;
     this.retireSessions();
-    this.update({ phase: 'stopping', error: '' });
+    this.update({ phase: 'stopping', error: '', replyInterrupted: true });
     try {
       await this.cancelWork();
       if (this.current(version)) await this.listen(version);
@@ -130,8 +134,10 @@ export class VoiceConversationController {
 
   private async cancelWork(): Promise<void> {
     const pending = this.generating;
+    const responseCancellation = this.responseCancellation;
     await this.cancelCommand();
     if (pending) await pending;
+    if (responseCancellation) await responseCancellation;
   }
 
   private cancelCommand(): Promise<void> {
@@ -190,12 +196,21 @@ export class VoiceConversationController {
 
   event(event: VoiceEvent): void {
     if (!this.active || this.retiredSessions.has(event.sessionId)) return;
+    if (event.kind === 'interruption') {
+      this.adoptInterruption(event);
+      return;
+    }
     if (['starting', 'listening', 'finishing'].includes(this.state.phase)) {
       if (this.captureId && event.sessionId !== this.captureId) return;
       this.captureId ??= event.sessionId;
       if (event.kind === 'error') {
         this.fail(event.message!);
         return;
+      }
+      // Reset before the first partial, including a retained native capture.
+      if (event.phase === 'listening' && this.state.phase === 'starting') {
+        this.policy.reset(this.now());
+        this.update({ phase: 'listening' });
       }
       if (event.diagnostics) {
         this.policy.input(event.diagnostics, this.now());
@@ -205,10 +220,6 @@ export class VoiceConversationController {
         this.policy.transcript(event.text!, this.now());
         this.update({ transcript: event.text! });
         if (event.isFinal) this.finalText = event.text!;
-      }
-      if (event.phase === 'listening' && this.state.phase === 'starting') {
-        this.policy.reset(this.now());
-        this.update({ phase: 'listening' });
       }
       if (event.phase === 'idle') this.captureIdle = true;
       this.maybeGenerate();
@@ -230,6 +241,47 @@ export class VoiceConversationController {
       this.speechDrained = true;
       this.maybeListenAgain();
     }
+  }
+
+  private adoptInterruption(event: Extract<VoiceEvent, { kind: 'interruption' }>): void {
+    if (
+      !['thinking', 'speaking'].includes(this.state.phase) ||
+      !this.speechId || event.sessionId !== this.speechId ||
+      this.retiredSessions.has(event.captureSessionId)
+    ) return;
+    const version = ++this.version;
+    this.retireSessions();
+    this.captureId = event.captureSessionId;
+    this.finalText = null;
+    this.captureIdle = false;
+    this.finishRequested = false;
+    this.finishAcknowledged = false;
+    this.generationDone = false;
+    this.speechStarted = false;
+    this.speechDrained = false;
+    this.speechId = null;
+    this.restarting = false;
+    this.policy.reset(this.now());
+    // Block a synchronous final while cancelResponse invalidates JS scheduling.
+    this.responseCancellation = Promise.resolve();
+    this.update({ phase: 'listening', transcript: '', diagnostics: null, error: '', replyInterrupted: true });
+    let cancellation: Promise<void>;
+    try {
+      // Its synchronous prefix must retire the old stream before another event.
+      cancellation = this.commands.cancelResponse();
+    } catch (error) {
+      cancellation = Promise.reject(error);
+    }
+    const work = Promise.resolve(cancellation)
+      .catch(() => {
+        if (this.current(version))
+          this.fail('L’ancienne réponse n’a pas pu être arrêtée. Reprends pour réessayer.');
+      })
+      .finally(() => {
+        if (this.responseCancellation === work) this.responseCancellation = null;
+        if (this.active) this.maybeGenerate();
+      });
+    this.responseCancellation = work;
   }
 
   progress(text: string): void {
@@ -284,10 +336,11 @@ export class VoiceConversationController {
   private maybeGenerate(): void {
     if (
       !this.active ||
+      !['starting', 'listening', 'finishing'].includes(this.state.phase) ||
       !this.captureIdle ||
       this.finalText === null ||
       (this.finishRequested && !this.finishAcknowledged) ||
-      this.generating
+      this.generating || this.responseCancellation
     )
       return;
     const text = this.finalText.trim();
@@ -296,7 +349,7 @@ export class VoiceConversationController {
       return;
     }
     const version = this.version;
-    this.update({ phase: 'thinking', reply: '', error: '' });
+    this.update({ phase: 'thinking', reply: '', error: '', replyInterrupted: false });
     // Defer so synchronous native events cannot race the work ownership token.
     const work = Promise.resolve().then(async () => {
       try {
@@ -324,7 +377,11 @@ export class VoiceConversationController {
     });
     this.generating = work;
     work.then(() => {
-      if (this.current(version)) this.maybeListenAgain();
+      if (this.active) {
+        // A promoted capture may finish while the old model is still settling.
+        this.maybeGenerate();
+        this.maybeListenAgain();
+      }
     });
   }
 
