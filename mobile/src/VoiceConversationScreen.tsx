@@ -3,13 +3,16 @@ import {
   AccessibilityInfo,
   ActivityIndicator,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useAppearance } from './appearance';
-import { ActionButton, Disclosure } from './uiPrimitives';
+import { AssistantMark } from './ConversationIntro';
+import { InterfaceIcon } from './InterfaceIcon';
+import { ActionButton, Disclosure, ScreenHeading } from './uiPrimitives';
 import { uiGrammar } from './uiGrammar';
 import type { VoiceInputDiagnostics } from './voice';
 
@@ -124,12 +127,11 @@ export function VoiceConversationScreen({
     ? `Audio reçu · niveau ${level} %.`
     : 'Audio reçu · niveau indisponible.';
   const statusColor = phase === 'error' ? colors.danger : colors.accent;
-  const stateLabel = `${state.title}. ${monitoringLabel ? `${monitoringLabel} ` : ''}${description}`;
+  const stateLabel = `${state.title}. ${
+    monitoringLabel ? `${monitoringLabel} ` : ''
+  }${description}`;
   const announcement = `${stateLabel}${error ? ` ${error}` : ''}`;
   const previousAnnouncement = useRef(announcement);
-  const webHeadingProps: { tabIndex?: -1 } =
-    Platform.OS === 'web' ? { tabIndex: -1 } : {};
-
   useEffect(() => {
     const changed = previousAnnouncement.current !== announcement;
     previousAnnouncement.current = announcement;
@@ -149,25 +151,43 @@ export function VoiceConversationScreen({
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <View style={styles.header}>
-        <Text
-          {...webHeadingProps}
-          ref={headingRef}
-          role="heading"
-          style={[styles.title, { color: colors.text }]}
-        >
-          Mode vocal
-        </Text>
-        <Text style={[styles.caption, { color: colors.muted }]}>
-          On reste sur cet appareil.
-        </Text>
         <View style={styles.navigation}>
-          <View style={styles.actionSlot}>
-            <ActionButton label="Réglages du mode vocal" onPress={onSettings} />
-          </View>
-          <View style={styles.actionSlot}>
-            <ActionButton label="Fermer le mode vocal" onPress={onClose} />
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Réglages du mode vocal"
+            onPress={onSettings}
+            style={({ pressed }) => [
+              styles.navigationControl,
+              pressed && styles.pressed,
+            ]}
+          >
+            <InterfaceIcon name="settings" size={20} color={colors.muted} />
+            <Text style={[styles.navigationLabel, { color: colors.muted }]}>
+              Réglages
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Fermer le mode vocal"
+            onPress={onClose}
+            style={({ pressed }) => [
+              styles.navigationControl,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.navigationLabel, { color: colors.muted }]}>
+              Fermer
+            </Text>
+            <View style={styles.closeGlyph}>
+              <InterfaceIcon name="add" size={20} color={colors.muted} />
+            </View>
+          </Pressable>
         </View>
+        <ScreenHeading
+          title="Mode vocal"
+          description="On reste sur cet appareil."
+          headingRef={headingRef}
+        />
       </View>
 
       <ScrollView
@@ -249,6 +269,7 @@ export function VoiceConversationScreen({
           <Disclosure
             title="Détails audio"
             description="Informations locales pour signaler cette interruption."
+            plain
           >
             <Text selectable style={[styles.caption, { color: colors.muted }]}>
               {audioDiagnostics.join('\n')}
@@ -273,19 +294,27 @@ export function VoiceConversationScreen({
             {transcript || 'Ton prochain message apparaîtra ici.'}
           </Text>
         </View>
-        <View style={styles.message}>
-          <Text
-            role="heading"
-            style={[styles.messageTitle, { color: colors.muted }]}
-          >
-            {replyInterrupted ? 'Réponse interrompue' : 'Réponse de l’assistant'}
-          </Text>
-          <Text
-            selectable
-            style={[styles.body, { color: reply ? colors.text : colors.muted }]}
-          >
-            {reply || 'La réponse apparaîtra ici.'}
-          </Text>
+        <View style={styles.assistantRow}>
+          <AssistantMark size={28} />
+          <View style={[styles.message, styles.assistantMessage]}>
+            <Text
+              role="heading"
+              style={[styles.messageTitle, { color: colors.muted }]}
+            >
+              {replyInterrupted
+                ? 'Réponse interrompue'
+                : 'Réponse de l’assistant'}
+            </Text>
+            <Text
+              selectable
+              style={[
+                styles.body,
+                { color: reply ? colors.text : colors.muted },
+              ]}
+            >
+              {reply || 'La réponse apparaîtra ici.'}
+            </Text>
+          </View>
         </View>
       </ScrollView>
 
@@ -327,10 +356,27 @@ export function VoiceConversationScreen({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, minHeight: 0, paddingHorizontal: uiGrammar.gutter },
-  header: { gap: 8, paddingTop: 16, paddingBottom: 16 },
-  title: { ...uiGrammar.type.title, fontWeight: '600' },
-  navigation: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  actionSlot: { flexGrow: 1, flexBasis: 120, minWidth: 0, maxWidth: '100%' },
+  header: {
+    gap: uiGrammar.harmony.space.small,
+    paddingTop: uiGrammar.harmony.space.small,
+    paddingBottom: uiGrammar.harmony.space.large,
+  },
+  navigation: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: uiGrammar.harmony.space.small,
+  },
+  navigationControl: {
+    minHeight: uiGrammar.touchTarget,
+    minWidth: uiGrammar.touchTarget,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: uiGrammar.harmony.space.small,
+  },
+  navigationLabel: uiGrammar.type.label,
+  closeGlyph: { transform: [{ rotate: '45deg' }] },
+  actionSlot: { flexGrow: 1, flexBasis: 152, minWidth: 0, maxWidth: '100%' },
   content: { flex: 1, minHeight: 0 },
   contentBody: { gap: uiGrammar.harmony.space.section, paddingBottom: 24 },
   state: {
@@ -341,6 +387,12 @@ const styles = StyleSheet.create({
   stateTitle: { ...uiGrammar.type.navigation, fontWeight: '600' },
   waiting: { alignItems: 'flex-start' },
   message: { gap: 8 },
+  assistantRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: uiGrammar.harmony.space.medium,
+  },
+  assistantMessage: { flex: 1, minWidth: 0 },
   messageTitle: { ...uiGrammar.type.label, fontWeight: '600' },
   body: uiGrammar.type.body,
   caption: uiGrammar.type.caption,
@@ -353,4 +405,5 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  pressed: { opacity: 0.7 },
 });

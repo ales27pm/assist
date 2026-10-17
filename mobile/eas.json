@@ -7,6 +7,7 @@
   "build": {
     "testflight": {
       "extends": "preview",
+      "channel": "testflight",
       "distribution": "store",
       "environment": "production",
       "env": {
@@ -14,6 +15,7 @@
       }
     },
     "preview": {
+      "channel": "preview",
       "node": "22.22.1",
       "environment": "preview",
       "distribution": "internal",

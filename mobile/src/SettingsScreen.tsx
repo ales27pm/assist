@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   InputAccessoryView,
@@ -15,6 +15,9 @@ import { useAppearance } from './appearance';
 import { InterfaceIcon } from './InterfaceIcon';
 import { uiGrammar } from './uiGrammar';
 import { ScreenHeading, SettingsRow, SurfaceGroup } from './uiPrimitives';
+import { VoiceComparisonPanel } from './VoiceComparisonPanel';
+import { AdvancedVoicePanel } from './AdvancedVoicePanel';
+import { scheduleAccessibilityFocus } from './focusAccessibility';
 
 type Props = {
   modelStatus: string;
@@ -51,6 +54,27 @@ export function SettingsScreen({
 }: Props) {
   const { theme } = useAppearance();
   const { colors } = theme;
+  const [comparingVoices, setComparingVoices] = useState(false);
+  const [advancedVoice, setAdvancedVoice] = useState(false);
+  const advancedVoiceControl = useRef<React.ComponentRef<typeof View>>(null);
+  const wasAdvancedVoice = useRef(false);
+  useEffect(() => {
+    const restore = wasAdvancedVoice.current && !advancedVoice;
+    wasAdvancedVoice.current = advancedVoice;
+    if (restore)
+      return scheduleAccessibilityFocus(() => advancedVoiceControl.current);
+  }, [advancedVoice]);
+  const comparisonControl = useRef<React.ComponentRef<typeof View>>(null);
+  const wasComparingVoices = useRef(false);
+  useEffect(() => {
+    const restore = wasComparingVoices.current && !comparingVoices;
+    wasComparingVoices.current = comparingVoices;
+    if (restore)
+      return scheduleAccessibilityFocus(() => comparisonControl.current);
+  }, [comparingVoices]);
+  // RN Web 0.21 uses this prop for the checked thumb; native uses thumbColor.
+  const webSwitchProps =
+    Platform.OS === 'web' ? { activeThumbColor: colors.onAccent } : {};
   const descriptionId = useId();
   const responseValueId = `${descriptionId}-response`;
   const budgetHintId = `${descriptionId}-budget-hint`;
@@ -81,11 +105,19 @@ export function SettingsScreen({
         : '',
     ].filter(Boolean);
     if (updates.length) {
-      AccessibilityInfo.announceForAccessibilityWithOptions(updates.join('. '), {
-        priority: 'low',
-      });
+      AccessibilityInfo.announceForAccessibilityWithOptions(
+        updates.join('. '),
+        {
+          priority: 'low',
+        },
+      );
     }
   }, [modelStatus, budgetError]);
+
+  if (comparingVoices)
+    return <VoiceComparisonPanel onClose={() => setComparingVoices(false)} />;
+  if (advancedVoice)
+    return <AdvancedVoicePanel onClose={() => setAdvancedVoice(false)} />;
 
   return (
     <View style={styles.screen}>
@@ -111,7 +143,9 @@ export function SettingsScreen({
           aria-expanded={responseOpen}
           aria-describedby={
             Platform.OS === 'web'
-              ? `${responseValueId}${budgetError && responseOpen ? ` ${budgetErrorId}` : ''}`
+              ? `${responseValueId}${
+                  budgetError && responseOpen ? ` ${budgetErrorId}` : ''
+                }`
               : undefined
           }
           onPress={onToggleResponse}
@@ -156,7 +190,9 @@ export function SettingsScreen({
             <TextInput
               aria-label="Limite de réponse · facultatif"
               aria-invalid={!!budgetError}
-              accessibilityHint={`${budgetHint}${budgetError ? ` ${budgetError}` : ''}`}
+              accessibilityHint={`${budgetHint}${
+                budgetError ? ` ${budgetError}` : ''
+              }`}
               aria-describedby={
                 Platform.OS === 'web'
                   ? `${budgetHintId}${budgetError ? ` ${budgetErrorId}` : ''}`
@@ -226,9 +262,12 @@ export function SettingsScreen({
           </View>
         )}
         <View style={[styles.voiceRow, { borderColor: colors.separator }]}>
+          <View style={styles.leadingIcon}>
+            <InterfaceIcon name="voice" size={24} color={colors.muted} />
+          </View>
           <View style={styles.rowCopy}>
             <Text style={[styles.rowTitle, { color: colors.text }]}>
-              Lire les réponses à voix haute
+              Lecture vocale
             </Text>
             <Text
               nativeID={voiceHintId}
@@ -238,6 +277,7 @@ export function SettingsScreen({
             </Text>
           </View>
           <Switch
+            {...webSwitchProps}
             accessibilityLabel="Lire les réponses à voix haute"
             accessibilityHint={voiceHint}
             aria-describedby={Platform.OS === 'web' ? voiceHintId : undefined}
@@ -245,10 +285,29 @@ export function SettingsScreen({
             disabled={!onReadResponsesChange}
             aria-disabled={!onReadResponsesChange}
             onValueChange={onReadResponsesChange}
+            trackColor={{ false: colors.border, true: colors.accent }}
+            thumbColor={readResponses ? colors.onAccent : colors.surface}
+            ios_backgroundColor={colors.border}
             hitSlop={8}
             style={styles.voiceSwitch}
           />
         </View>
+        <SettingsRow
+          label="Voix de l’assistant"
+          value="Comparer les voix fr-CA"
+          onPress={() => setComparingVoices(true)}
+          controlRef={comparisonControl}
+          disabled={busy}
+          stacked
+        />
+        <SettingsRow
+          label="Voix locale avancée"
+          value="Modèles et voix intégrée"
+          onPress={() => setAdvancedVoice(true)}
+          controlRef={advancedVoiceControl}
+          disabled={busy}
+          stacked
+        />
         <SettingsRow
           label="Apparence"
           icon="appearance"
@@ -283,20 +342,20 @@ export function SettingsScreen({
 const styles = StyleSheet.create({
   screen: { gap: uiGrammar.harmony.space.section },
   responseRow: {
-    minHeight: 84,
+    minHeight: uiGrammar.row.stackedMinHeight,
     paddingVertical: uiGrammar.harmony.space.large,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: uiGrammar.harmony.space.medium,
+    gap: uiGrammar.row.iconGap,
     borderBottomWidth: 1,
   },
   rowCopy: { flex: 1, gap: 4 },
   voiceRow: {
-    minHeight: 84,
+    minHeight: uiGrammar.row.stackedMinHeight,
     paddingVertical: uiGrammar.harmony.space.large,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: uiGrammar.harmony.space.medium,
+    gap: uiGrammar.row.iconGap,
     borderBottomWidth: 1,
   },
   voiceSwitch: { flexShrink: 0 },

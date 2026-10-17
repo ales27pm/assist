@@ -4,6 +4,7 @@
 #import <React-RCTAppDelegate/RCTDefaultReactNativeFactoryDelegate.h>
 // AssistVoice exposes this protocol through the generated Swift header.
 #import <AVFoundation/AVFoundation.h>
+#import <UIKit/UIKit.h>
 #import "Assist-Swift.h"
 
 typedef void (^AssistCompletion)(NSString *_Nullable, NSError *_Nullable);
@@ -112,6 +113,84 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
     [self->_voice status:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)getSpeechVoices:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice getSpeechVoices:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)getAdvancedVoiceState:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [[AssistAdvancedVoiceResources shared] status:AssistPromise(resolve, reject)];
+  });
+}
+
+- (BOOL)canChangeAdvancedVoiceResources:(RCTPromiseRejectBlock)reject {
+  if (![self prepareVoice:reject]) { return NO; }
+  if (![self->_voice canChangeAdvancedVoiceResources]) {
+    AssistReject(reject, AssistError(@"E_VOICE_BUSY", @"Ferme le mode vocal et la lecture avant de modifier ses ressources."));
+    return NO;
+  }
+  return YES;
+}
+
+- (void)withAdvancedVoiceResourcesReleased:(void (^)(void))action reject:(RCTPromiseRejectBlock)reject {
+  if (![self canChangeAdvancedVoiceResources:reject]) { return; }
+  // Swift closes admission before awaiting Core ML cleanup. The callback runs
+  // synchronously on main while that barrier remains held; import then claims
+  // the resources owner's busy flag before a new microphone can start.
+  [self->_voice releaseAdvancedVoiceRuntime:^(BOOL released) {
+    if (self->_invalidated) {
+      AssistReject(reject, AssistError(@"E_INVALIDATED", @"Le module a été fermé."));
+    } else if (!released) {
+      AssistReject(reject, AssistError(@"E_VOICE_BUSY", @"L’arrêt du moteur vocal n’est pas confirmé."));
+    } else {
+      action();
+    }
+  }];
+}
+
+- (void)importAdvancedVoicePack:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self withAdvancedVoiceResourcesReleased:^{
+      [[AssistAdvancedVoiceResources shared] importPack:AssistPromise(resolve, reject)];
+    } reject:reject];
+  });
+}
+
+- (void)setAdvancedVoiceBackend:(NSString *)backend variant:(NSString *)variant
+                       resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self withAdvancedVoiceResourcesReleased:^{
+      [[AssistAdvancedVoiceResources shared] setBackend:backend variant:variant completion:AssistPromise(resolve, reject)];
+    } reject:reject];
+  });
+}
+
+- (void)setSpeechVoice:(NSString *)voiceId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice setSpeechVoice:voiceId completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)previewSpeechVoice:(NSString *)voiceId segmentsJSON:(NSString *)segmentsJSON sessionId:(NSString *)sessionId
+                  resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice previewSpeechVoice:voiceId segmentsJSON:segmentsJSON sessionId:sessionId completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)stopSpeechVoicePreview:(NSString *)sessionId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice stopSpeechVoicePreview:sessionId completion:AssistPromise(resolve, reject)];
   });
 }
 
@@ -532,6 +611,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)invalidate {
   dispatch_async(dispatch_get_main_queue(), ^{
     self->_invalidated = YES;
+    [[AssistAdvancedVoiceResources shared] cancelImports];
     [self->_voice invalidate];
     [self->_engine shutdownMonitoring:^(NSString *result, NSError *error) {}];
     if (!self->_loaded) {

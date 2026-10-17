@@ -75,8 +75,20 @@ class LocalVoiceSourceContractTests(unittest.TestCase):
     def test_requested_dialect_has_no_default_voice_fallback(self):
         self.assertIn('Locale(identifier: "fr-CA")', self.voice)
         self.assertIn("AVSpeechSynthesisVoice.speechVoices()", self.voice)
-        self.assertRegex(self.voice, r'\.language[^\n]+==\s*"fr-ca"')
+        # The shared catalog policy receives the real voice language; its
+        # executable Swift checks also reject fr-FR and unknown providers.
+        self.assertRegex(self.voice, r'language:\s*voice\.language')
+        self.assertRegex(self.voice, r'\blanguage\.replacingOccurrences[^\n]+==\s*"fr-ca"')
         self.assertNotRegex(self.voice, r"AVSpeechSynthesisVoice\(language:")
+
+    def test_full_local_voice_stack_is_not_rejected_by_a_static_memory_estimate(self):
+        # `os_proc_available_memory` is a per-app allocation estimate, not a
+        # reservation or a prediction of the staged Core ML load. The real
+        # loader must be allowed to report its failing model stage instead.
+        self.assertNotIn("os_proc_available_memory()", self.voice)
+        self.assertNotIn("E_VOICE_MEMORY", self.voice)
+        self.assertIn("AssistFluidLoadFailure", self.voice)
+        self.assertIn('code: "E_VOICE_FLUID_LOAD"', self.voice)
 
 
 if __name__ == "__main__":

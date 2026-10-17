@@ -219,8 +219,10 @@ test('a native final automatically sends once, reads by default and waits for re
   const captureId = await enter();
   await final(captureId, 'Salut Québec!', 'finishing');
   expect(native.generate).not.toHaveBeenCalled();
+  native.cancelVoice.mockClear();
   await event({ sessionId: captureId, kind: 'state', phase: 'idle' });
   expect(native.generate).toHaveBeenCalledTimes(1);
+  expect(native.cancelVoice).not.toHaveBeenCalled();
   const request = JSON.parse(native.generate.mock.calls[0][0]);
   expect(request.messages).toEqual([
     { role: 'user', content: 'Salut Québec!' },
@@ -362,6 +364,27 @@ test('declining permission pauses voice mode without automatic retries or sendin
   await advance(20_000);
   expect(native.startListening).toHaveBeenCalledTimes(1);
   expect(native.generate).not.toHaveBeenCalled();
+});
+
+test('a model load failure exposes details even before microphone capture starts', async () => {
+  const message = 'Impossible de charger PocketTTS français.';
+  const details = 'load stage=pocket cause=com.apple.CoreML:1';
+  native.startListening.mockRejectedValueOnce(new Error(message));
+  native.getVoiceStatus.mockResolvedValue(
+    voiceState('idle', {
+      audioDiagnostics: [details],
+    }),
+  );
+  await renderAsync(<AssistantScreen />);
+  await press('Mode vocal');
+  expect(screen.getByText('Mode vocal interrompu')).toBeOnTheScreen();
+  expect(screen.getByText(message)).toBeOnTheScreen();
+  await press('Détails audio');
+  expect(screen.getByText(details)).toHaveProp('selectable', true);
+  await advance(20_000);
+  expect(native.startListening).toHaveBeenCalledTimes(1);
+  expect(native.generate).not.toHaveBeenCalled();
+  expect(native.beginSpeech).not.toHaveBeenCalled();
 });
 
 test.each(['inactive', 'background'] as const)(

@@ -340,7 +340,7 @@ export function AssistantScreen() {
     };
   }, [cancelGeneration, controller]);
 
-  async function perform(action: () => Promise<void>) {
+  async function perform(action: () => Promise<void>, fromVoice = false) {
     if (operation.current || !NativeAssist) {
       return;
     }
@@ -352,7 +352,10 @@ export function AssistantScreen() {
       spokenRequest.current = null;
       responseSpeech.current?.cancel();
       responseSpeech.current = null;
-      if (!(await cancelVoice())) {
+      const audioReady = fromVoice
+        ? await voice.prepareResponse()
+        : await cancelVoice();
+      if (!audioReady) {
         throw new Error('La voix doit être arrêtée avant de continuer.');
       }
       await action();
@@ -516,7 +519,7 @@ export function AssistantScreen() {
         }
         active.current = null;
       }
-    });
+    }, fromVoice);
     return completed;
   }
 
@@ -682,6 +685,13 @@ export function AssistantScreen() {
   const generating = busy && active.current !== null;
   const cannotSend =
     busy || voice.captureBusy || !ready || !prompt.trim() || !!budgetError;
+  const cannotStartVoice =
+    !voice.supported ||
+    busy ||
+    !ready ||
+    !!budgetError ||
+    !preferences.ready ||
+    !voice.status?.recognitionAvailable;
   const pendingUserText = progress || generating ? requestPrompt.current : '';
   const screenTitle =
     speechMode && tab === 'chat'
@@ -796,11 +806,6 @@ export function AssistantScreen() {
                   </View>
                   <Text style={styles.headerLabel}>{backLabel}</Text>
                 </Pressable>
-                {tab === 'lab' && (
-                  <Text role="heading" style={styles.screenTitle}>
-                    {screenTitle}
-                  </Text>
-                )}
               </>
             )}
           </View>
@@ -998,22 +1003,29 @@ export function AssistantScreen() {
                 )}
               </ScrollView>
               <View style={styles.composerArea}>
-                <ActionButton
-                  label="Mode vocal"
-                  hint="Ouvre une conversation locale avec écoute et envoi automatiques."
-                  disabled={
-                    !voice.supported ||
-                    busy ||
-                    !ready ||
-                    !!budgetError ||
-                    !preferences.ready ||
-                    !voice.status?.recognitionAvailable
-                  }
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Mode vocal"
+                  accessibilityHint="Ouvre une conversation locale avec écoute et envoi automatiques."
+                  accessibilityState={{ disabled: cannotStartVoice }}
+                  disabled={cannotStartVoice}
                   onPress={() => {
                     Keyboard.dismiss();
                     setSpeechMode(true);
                   }}
-                />
+                  style={({ pressed }) => [
+                    styles.voiceEntry,
+                    cannotStartVoice && styles.disabled,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <InterfaceIcon
+                    name="voice"
+                    size={20}
+                    color={theme.colors.muted}
+                  />
+                  <Text style={styles.voiceEntryLabel}>Mode vocal</Text>
+                </Pressable>
                 <View style={styles.composerRow}>
                   <View style={styles.composer}>
                     <TextInput
@@ -1218,7 +1230,6 @@ export function AssistantScreen() {
                   busy={busy}
                   ready={ready}
                   perform={perform}
-                  onModel={() => setTab('model')}
                 >
                   <View style={styles.panel}>
                     <Text style={styles.section}>Diagnostic de calcul</Text>
@@ -1355,15 +1366,6 @@ const createStyles = (theme: AssistTheme) =>
       maxWidth: '55%',
       flexShrink: 1,
     },
-    screenTitle: {
-      ...uiGrammar.type.navigation,
-      fontWeight: '600',
-      letterSpacing: -0.5,
-      color: theme.colors.text,
-      textAlign: 'right',
-      flexShrink: 1,
-    },
-
     backArrow: { transform: [{ rotate: '180deg' }] },
     statusArea: { paddingHorizontal: uiGrammar.gutter, paddingBottom: 8 },
     modelStatus: {
@@ -1435,6 +1437,17 @@ const createStyles = (theme: AssistTheme) =>
     },
 
     composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+    voiceEntry: {
+      minHeight: uiGrammar.touchTarget,
+      alignSelf: 'flex-end',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingHorizontal: 8,
+      borderRadius: uiGrammar.radius.control,
+    },
+    voiceEntryLabel: { ...uiGrammar.type.label, color: theme.colors.muted },
     composer: {
       flex: 1,
       borderRadius: uiGrammar.radius.pill,

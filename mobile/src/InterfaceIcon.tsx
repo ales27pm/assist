@@ -14,6 +14,7 @@ type IconName =
   | 'compose'
   | 'appearance'
   | 'import'
+  | 'voice'
   | 'stop';
 
 type InterfaceIconProps = {
@@ -99,6 +100,18 @@ const paths: Record<IconName, readonly Line[]> = {
     [20, 21, 20, 13],
   ],
   stop: [],
+  voice: [
+    [4, 9, 8, 9],
+    [8, 9, 12, 5],
+    [12, 5, 12, 19],
+    [12, 19, 8, 15],
+    [8, 15, 4, 15],
+    [4, 15, 4, 9],
+    [16, 9, 17, 12],
+    [17, 12, 16, 15],
+    [19, 6, 21, 12],
+    [21, 12, 19, 18],
+  ],
 };
 
 const outlines: Partial<Record<IconName, readonly Outline[]>> = {

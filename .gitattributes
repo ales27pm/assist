@@ -1,2 +1,4 @@
 * text=auto eol=lf
 *.bat text eol=crlf
+# Stored unified-diff context intentionally includes a space on blank lines.
+mobile/ios/AssistSpeech/LOCAL-PATCH.diff -whitespace

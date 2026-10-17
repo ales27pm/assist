@@ -56,6 +56,20 @@ export function ModelWorkspace({
   const { theme } = useAppearance();
   const textColor = { color: theme.colors.text };
   const mutedColor = { color: theme.colors.muted };
+  const chooseExport =
+    !ready && !selected && engine.bundledModelAvailable !== true;
+  const selectionError = engine.selectedModelError;
+  const headingDescription = !nativeAvailable
+    ? 'Prépare un modèle dans l’app iPhone pour démarrer une conversation.'
+    : ready
+    ? 'Le modèle est chargé. Tu peux reprendre la conversation.'
+    : busy
+    ? 'Une opération est en cours. Garde l’app au premier plan.'
+    : selected
+    ? 'Ton dossier est sélectionné. Charge le modèle pour démarrer une conversation.'
+    : engine.bundledModelAvailable === true
+    ? 'Gemma est intégré à cette build. Charge-le pour démarrer une conversation.'
+    : 'Choisis un dossier exporté compatible, puis charge le modèle sur ton appareil.';
   const statusAnnouncement = [
     `Modèle. ${nativeAvailable ? translatedPhase : 'Indisponible ici'}.`,
     selected
@@ -79,11 +93,10 @@ export function ModelWorkspace({
 
   return (
     <View style={styles.workspace}>
-      <ScreenHeading title="Modèle" headingRef={headingRef} />
       <ScreenHeading
-        eyebrow="SUR CET APPAREIL"
-        title="Préparer l’assistant"
-        description="Charge un modèle sur ton appareil pour démarrer une conversation."
+        title="Modèle"
+        description={headingDescription}
+        headingRef={headingRef}
       />
 
       <View style={styles.modelContent}>
@@ -130,46 +143,67 @@ export function ModelWorkspace({
           </View>
         )}
 
-        {ready && (
-          <View style={styles.actions}>
+        <View style={styles.actions}>
+          {selected && !ready && (
+            <Text style={[styles.label, textColor]}>
+              {engine.selectedModelName
+                ? `Dossier : ${engine.selectedModelName}`
+                : 'Un dossier est sélectionné.'}
+            </Text>
+          )}
+          {ready ? (
             <ActionButton
               label="Ouvrir la conversation"
               primary
               disabled={busy || !nativeAvailable}
               onPress={onConversation}
             />
+          ) : selected ? (
+            <ActionButton
+              label="Charger le modèle"
+              primary
+              disabled={busy || !nativeAvailable}
+              onPress={onLoadSelected}
+            />
+          ) : engine.bundledModelAvailable === true ? (
+            <ActionButton
+              label="Charger Gemma intégré"
+              primary
+              disabled={busy || !nativeAvailable}
+              onPress={onLoadBundled}
+            />
+          ) : !selectionError ? (
+            <ActionButton
+              label="Choisir un dossier exporté"
+              primary
+              disabled={busy || !nativeAvailable}
+              onPress={onSelectExport}
+            />
+          ) : null}
+          {!!selectionError && (
+            <View style={styles.actions}>
+              <Text
+                role="alert"
+                style={[styles.label, { color: theme.colors.danger }]}
+              >
+                {selectionError}
+              </Text>
+              <ActionButton
+                label="Choisir à nouveau le dossier"
+                primary={chooseExport}
+                disabled={busy || ready || !nativeAvailable}
+                onPress={onSelectExport}
+              />
+            </View>
+          )}
+          {ready && (
             <ActionButton
               label="Décharger"
               destructive
               disabled={busy || !nativeAvailable}
               onPress={onUnload}
             />
-          </View>
-        )}
-        <View style={styles.actions}>
-          {selected && !ready && (
-            <>
-              <Text style={[styles.label, textColor]}>
-                {engine.selectedModelName
-                  ? `Dossier : ${engine.selectedModelName}`
-                  : 'Un dossier est sélectionné.'}
-              </Text>
-              <ActionButton
-                label="Charger le modèle"
-                primary
-                disabled={busy || !nativeAvailable}
-                onPress={onLoadSelected}
-              />
-            </>
           )}
-          <ActionButton
-            label="Charger Gemma intégré"
-            primary={!ready && !selected}
-            disabled={
-              busy || ready || !engine.bundledModelAvailable || !nativeAvailable
-            }
-            onPress={onLoadBundled}
-          />
           <Text style={[styles.caption, mutedColor]}>
             {engine.bundledModelAvailable === true
               ? 'Gemma intégré détecté. Chargement entièrement sur l’appareil.'
@@ -190,22 +224,13 @@ export function ModelWorkspace({
             </Text>
           </View>
         )}
-        {!!engine.selectedModelError && (
-          <Text
-            role="alert"
-            style={[styles.label, { color: theme.colors.danger }]}
-          >
-            {engine.selectedModelError}
-          </Text>
-        )}
       </View>
 
       <View style={styles.secondaryActions}>
         <Disclosure
           title="Importer un modèle"
           icon="import"
-          description="Option avancée · un export local compatible"
-          initiallyOpen={selected}
+          description="Préparer un export local compatible"
           disabled={busy}
           plain
         >
@@ -224,21 +249,18 @@ export function ModelWorkspace({
             l’app au premier plan pendant le premier chargement, qui peut être
             long.
           </Text>
-          {selected && (
-            <Text style={[styles.selection, textColor]}>
-              Un dossier est sélectionné.
-            </Text>
-          )}
-          <ActionButton
-            label="Choisir un dossier exporté"
-            disabled={busy || ready || !nativeAvailable}
-            onPress={onSelectExport}
-          />
-          {(!selected || ready) && (
+          {!chooseExport && !selectionError && (
             <ActionButton
-              label="Charger le modèle"
-              disabled={busy || ready || !selected || !nativeAvailable}
-              onPress={onLoadSelected}
+              label="Choisir un dossier exporté"
+              disabled={busy || ready || !nativeAvailable}
+              onPress={onSelectExport}
+            />
+          )}
+          {selected && !ready && engine.bundledModelAvailable === true && (
+            <ActionButton
+              label="Charger Gemma intégré"
+              disabled={busy || !nativeAvailable}
+              onPress={onLoadBundled}
             />
           )}
         </Disclosure>
@@ -305,7 +327,6 @@ const styles = StyleSheet.create({
   actions: { gap: 13 },
   secondaryActions: { gap: 0 },
   diagnostics: { borderBottomWidth: 1 },
-  selection: { ...uiGrammar.type.label, fontWeight: '600' },
   sessionContent: {
     borderTopWidth: 1,
     paddingTop: uiGrammar.harmony.space.large,

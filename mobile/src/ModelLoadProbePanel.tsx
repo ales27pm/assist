@@ -1,8 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import {
+  KeyDownEvent,
+  Platform,
+  Pressable,
+  Share,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import NativeAssist from '../specs/NativeAssist';
 import { AssistTheme, useAppearance } from './appearance';
 import { uiGrammar } from './uiGrammar';
+import { ActionButton } from './uiPrimitives';
 import {
   LoadProbeReport,
   loadProbeFunctions,
@@ -14,6 +23,7 @@ type Props = {
   busy: boolean;
   modelLoaded: boolean;
   perform: (action: () => Promise<void>) => Promise<void>;
+  showHeading?: boolean;
 };
 
 export function ModelLoadProbePanel({
@@ -21,10 +31,17 @@ export function ModelLoadProbePanel({
   busy,
   modelLoaded,
   perform,
+  showHeading = true,
 }: Props) {
   const { theme } = useAppearance();
   const styles = createStyles(theme);
   const [functionIndex, setFunctionIndex] = useState(0);
+  const [focusedFunctionIndex, setFocusedFunctionIndex] = useState<
+    number | null
+  >(null);
+  const functionRefs = useRef<
+    Array<React.ComponentRef<typeof Pressable> | null>
+  >([]);
   const [report, setReport] = useState<LoadProbeReport | null>(null);
   const [error, setError] = useState('');
   const alive = useRef(true);
@@ -33,6 +50,46 @@ export function ModelLoadProbePanel({
     typeof NativeAssist?.runModelLoadProbe === 'function' &&
     typeof NativeAssist?.getLastModelLoadProbe === 'function';
   const disabled = busy || modelLoaded || !selected || !available;
+  const selectionDisabled = busy || !available;
+
+  function handleFunctionKeyDown(event: KeyDownEvent, index: number) {
+    const { key, altKey, ctrlKey, metaKey, shiftKey, isComposing } =
+      event.nativeEvent;
+    if (
+      selectionDisabled ||
+      altKey ||
+      ctrlKey ||
+      metaKey ||
+      shiftKey ||
+      isComposing
+    ) {
+      return;
+    }
+    let nextIndex: number;
+    switch (key) {
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        nextIndex =
+          (index - 1 + loadProbeFunctions.length) % loadProbeFunctions.length;
+        break;
+      case 'ArrowRight':
+      case 'ArrowDown':
+        nextIndex = (index + 1) % loadProbeFunctions.length;
+        break;
+      case 'Home':
+        nextIndex = 0;
+        break;
+      case 'End':
+        nextIndex = loadProbeFunctions.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setFunctionIndex(nextIndex);
+    functionRefs.current[nextIndex]?.focus();
+  }
 
   useEffect(() => {
     alive.current = true;
@@ -57,6 +114,9 @@ export function ModelLoadProbePanel({
   }, [available]);
 
   async function run() {
+    if (disabled) {
+      return;
+    }
     await perform(async () => {
       version.current += 1;
       setError('');
@@ -97,36 +157,76 @@ export function ModelLoadProbePanel({
 
   return (
     <View style={styles.panel}>
-      <Text style={styles.title}>Diagnostic de chargement</Text>
+      {showHeading && (
+        <Text accessibilityRole="header" style={styles.title}>
+          Diagnostic de chargement
+        </Text>
+      )}
       <Text style={styles.text}>
-        Sélectionne le dossier déjà téléchargé, sans charger le modèle. Ce test
-        demande une seule fonction du modèle 32K, sans générer de réponse. Garde
-        l’app au premier plan. Le dernier appel est enregistré avant le
-        chargement et peut être partagé après réouverture si l’app se ferme.
+        Teste une fonction du modèle 32K, sans générer de réponse. Garde l’app
+        au premier plan. Le dernier essai reste disponible après réouverture.
       </Text>
-      <Text selectable style={styles.text}>
-        {loadProbeFunctions[functionIndex]}
-      </Text>
-      <Pressable
-        role="button"
-        aria-label="Fonction suivante"
-        disabled={busy || !available}
-        style={[styles.button, (busy || !available) && styles.disabled]}
-        onPress={() =>
-          setFunctionIndex(index => (index + 1) % loadProbeFunctions.length)
-        }
+      <Text style={styles.groupLabel}>Fonction à tester</Text>
+      <View
+        accessibilityRole="radiogroup"
+        accessibilityLabel="Fonction à tester"
+        style={styles.functions}
       >
-        <Text style={styles.buttonText}>Fonction suivante</Text>
-      </Pressable>
-      <Pressable
-        role="button"
-        aria-label="Tester ce graphe"
+        {loadProbeFunctions.map((functionName, index) => {
+          const checked = functionIndex === index;
+          return (
+            <Pressable
+              key={functionName}
+              ref={node => {
+                functionRefs.current[index] = node;
+              }}
+              accessibilityRole="radio"
+              accessibilityLabel={functionName}
+              accessibilityHint="Sélectionner cette fonction sans lancer de test."
+              accessibilityState={{ checked, disabled: selectionDisabled }}
+              aria-checked={checked}
+              tabIndex={
+                Platform.OS === 'web'
+                  ? checked && !selectionDisabled
+                    ? 0
+                    : -1
+                  : undefined
+              }
+              disabled={selectionDisabled}
+              style={({ pressed }) => [
+                styles.function,
+                checked && styles.selectedFunction,
+                focusedFunctionIndex === index && styles.focusedFunction,
+                selectionDisabled && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+              onPress={() => setFunctionIndex(index)}
+              onKeyDown={
+                Platform.OS === 'web'
+                  ? event => handleFunctionKeyDown(event, index)
+                  : undefined
+              }
+              onFocus={() => setFocusedFunctionIndex(index)}
+              onBlur={() => setFocusedFunctionIndex(null)}
+            >
+              <View
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                style={[styles.radio, checked && styles.checkedRadio]}
+              >
+                {checked && <View style={styles.radioDot} />}
+              </View>
+              <Text style={styles.functionName}>{functionName}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <ActionButton
+        label="Tester ce graphe"
+        primary
         disabled={disabled}
-        style={[styles.button, disabled && styles.disabled]}
         onPress={run}
-      >
-        <Text style={styles.buttonText}>Tester ce graphe</Text>
-      </Pressable>
+      />
       {!available && (
         <Text style={styles.text}>Disponible dans une nouvelle build iOS.</Text>
       )}
@@ -170,17 +270,11 @@ export function ModelLoadProbePanel({
           <Text style={styles.text}>
             Partage ce rapport avant un autre essai.
           </Text>
-          <Pressable
-            role="button"
-            aria-label="Partager le diagnostic de chargement"
+          <ActionButton
+            label="Partager le diagnostic de chargement"
             disabled={busy}
-            style={[styles.button, busy && styles.disabled]}
             onPress={share}
-          >
-            <Text style={styles.buttonText}>
-              Partager le diagnostic de chargement
-            </Text>
-          </Pressable>
+          />
         </>
       )}
       {!!error && (
@@ -195,8 +289,9 @@ export function ModelLoadProbePanel({
 const createStyles = (theme: AssistTheme) =>
   StyleSheet.create({
     disabled: { opacity: 0.4 },
+    pressed: { opacity: 0.7 },
     panel: {
-      gap: 12,
+      gap: uiGrammar.harmony.space.medium,
     },
     title: {
       ...uiGrammar.type.body,
@@ -204,18 +299,44 @@ const createStyles = (theme: AssistTheme) =>
       fontWeight: '600',
     },
     text: { ...uiGrammar.type.label, color: theme.colors.muted },
-    button: {
-      backgroundColor: theme.colors.accent,
+    groupLabel: {
+      ...uiGrammar.type.label,
+      color: theme.colors.text,
+      fontWeight: '600',
+    },
+    functions: { gap: uiGrammar.harmony.space.small },
+    function: {
+      minHeight: uiGrammar.touchTarget,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: uiGrammar.harmony.space.medium,
       borderRadius: uiGrammar.radius.control,
-      paddingVertical: 14,
-      paddingHorizontal: 16,
-      minHeight: 52,
+      borderWidth: 1,
+      borderColor: 'transparent',
+      paddingVertical: uiGrammar.harmony.space.medium,
+      paddingHorizontal: uiGrammar.harmony.space.medium,
+    },
+    selectedFunction: { backgroundColor: theme.colors.surfaceRaised },
+    focusedFunction: { borderColor: theme.colors.accent },
+    functionName: {
+      ...uiGrammar.type.label,
+      color: theme.colors.text,
+      flexShrink: 1,
+    },
+    radio: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: theme.colors.muted,
+      alignItems: 'center',
       justifyContent: 'center',
     },
-    buttonText: {
-      ...uiGrammar.type.label,
-      color: theme.colors.onAccent,
-      textAlign: 'center',
-      fontWeight: '600',
+    checkedRadio: { borderColor: theme.colors.accent },
+    radioDot: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: theme.colors.accent,
     },
   });

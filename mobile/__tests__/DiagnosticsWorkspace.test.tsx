@@ -110,12 +110,15 @@ test('keeps the full repair qualification available to share after collapsing an
       ready={false}
       active
       perform={perform}
-      onModel={jest.fn()}
     >
       {null}
     </DiagnosticsWorkspace>,
   );
 
+  expect(
+    screen.getByRole('heading', { name: 'Diagnostics' }),
+  ).toBeOnTheScreen();
+  expect(screen.queryByRole('button', { name: 'Gérer le modèle' })).toBeNull();
   expect(native.getLastSpecializationRepair).not.toHaveBeenCalled();
   expect(native.repairNumericalProbe).not.toHaveBeenCalled();
   const section = screen.getByRole('button', {

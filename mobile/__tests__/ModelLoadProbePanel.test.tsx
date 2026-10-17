@@ -1,8 +1,15 @@
 import React from 'react';
-import { renderAsync, screen, userEvent } from '@testing-library/react-native';
-import { Share } from 'react-native';
+import {
+  act,
+  fireEvent,
+  renderAsync,
+  screen,
+  userEvent,
+} from '@testing-library/react-native';
+import { Platform, Share } from 'react-native';
 import NativeAssist from '../specs/NativeAssist';
 import { ModelLoadProbePanel } from '../src/ModelLoadProbePanel';
+import { loadProbeFunctions } from '../src/loadProbe';
 
 jest.mock('../specs/NativeAssist', () => ({
   __esModule: true,
@@ -32,6 +39,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   native.getLastModelLoadProbe.mockResolvedValue('null');
 });
+afterEach(() => jest.restoreAllMocks());
 
 test('restores and shares the last pre-call marker without automatically retrying', async () => {
   native.getLastModelLoadProbe.mockResolvedValue(JSON.stringify(saved));
@@ -84,6 +92,129 @@ test('requires a selected folder, no resident engine and no other operation', as
   expect(
     screen.getByRole('button', { name: 'Tester ce graphe' }),
   ).toBeDisabled();
+  for (const option of screen.getAllByRole('radio')) {
+    expect(option).toBeDisabled();
+  }
+  expect(native.runModelLoadProbe).not.toHaveBeenCalled();
+});
+
+test('offers six directly selectable functions and only changes the selection', async () => {
+  const user = userEvent.setup();
+  await renderAsync(
+    <ModelLoadProbePanel
+      selected
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  expect(screen.getAllByRole('radio')).toHaveLength(6);
+  expect(screen.getByLabelText('Fonction à tester')).toHaveProp(
+    'accessibilityRole',
+    'radiogroup',
+  );
+  for (const functionName of loadProbeFunctions) {
+    expect(screen.getByRole('radio', { name: functionName })).toHaveStyle({
+      minHeight: 44,
+    });
+  }
+  expect(
+    screen.getByRole('radio', { name: loadProbeFunctions[0], checked: true }),
+  ).toBeOnTheScreen();
+  await user.press(screen.getByRole('radio', { name: loadProbeFunctions[5] }));
+  expect(
+    screen.getByRole('radio', { name: loadProbeFunctions[5], checked: true }),
+  ).toBeOnTheScreen();
+  expect(screen.getAllByRole('radio', { checked: true })).toHaveLength(1);
+  await user.press(screen.getByRole('radio', { name: loadProbeFunctions[0] }));
+  expect(
+    screen.getByRole('radio', { name: loadProbeFunctions[0], checked: true }),
+  ).toBeOnTheScreen();
+  expect(native.runModelLoadProbe).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole('button', { name: 'Fonction suivante' }),
+  ).toBeNull();
+});
+
+test('supports a single web tab stop and guarded arrow, Home and End selection without probing', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  await renderAsync(
+    <ModelLoadProbePanel
+      selected
+      busy={false}
+      modelLoaded={false}
+      perform={perform}
+    />,
+  );
+  expect(
+    screen.getAllByRole('radio').map(option => option.props.tabIndex),
+  ).toEqual([0, -1, -1, -1, -1, -1]);
+
+  for (const [key, expectedIndex] of [
+    ['ArrowRight', 1],
+    ['ArrowDown', 2],
+    ['End', 5],
+    ['ArrowRight', 0],
+    ['ArrowLeft', 5],
+    ['ArrowUp', 4],
+    ['Home', 0],
+  ] as const) {
+    const event = {
+      nativeEvent: { key },
+      preventDefault: jest.fn(),
+      stopPropagation: jest.fn(),
+    };
+    await act(async () => {
+      fireEvent(screen.getByRole('radio', { checked: true }), 'keyDown', event);
+    });
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole('radio', {
+        name: loadProbeFunctions[expectedIndex],
+        checked: true,
+      }),
+    ).toHaveProp('tabIndex', 0);
+    expect(
+      screen
+        .getAllByRole('radio')
+        .filter(option => option.props.tabIndex === 0),
+    ).toHaveLength(1);
+  }
+  for (const modifier of [
+    'altKey',
+    'ctrlKey',
+    'metaKey',
+    'shiftKey',
+    'isComposing',
+  ]) {
+    const event = {
+      nativeEvent: { key: 'ArrowDown', [modifier]: true },
+      preventDefault: jest.fn(),
+      stopPropagation: jest.fn(),
+    };
+    await act(async () => {
+      fireEvent(screen.getByRole('radio', { checked: true }), 'keyDown', event);
+    });
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole('radio', { name: loadProbeFunctions[0], checked: true }),
+    ).toBeOnTheScreen();
+  }
+  await screen.rerenderAsync(
+    <ModelLoadProbePanel selected busy modelLoaded={false} perform={perform} />,
+  );
+  const event = {
+    nativeEvent: { key: 'End' },
+    preventDefault: jest.fn(),
+    stopPropagation: jest.fn(),
+  };
+  await act(async () => {
+    fireEvent(screen.getByRole('radio', { checked: true }), 'keyDown', event);
+  });
+  expect(event.preventDefault).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole('radio', { name: loadProbeFunctions[0], checked: true }),
+  ).toHaveProp('tabIndex', -1);
   expect(native.runModelLoadProbe).not.toHaveBeenCalled();
 });
 
@@ -114,12 +245,15 @@ test('loads only the user-selected function and does not advance or retry it', a
       perform={perform}
     />,
   );
-  await user.press(screen.getByRole('button', { name: 'Fonction suivante' }));
+  await user.press(screen.getByRole('radio', { name: 'extend_32768_8' }));
+  expect(native.runModelLoadProbe).not.toHaveBeenCalled();
   await user.press(screen.getByRole('button', { name: 'Tester ce graphe' }));
   expect(await screen.findByText(/Ce graphe a été chargé/)).toBeOnTheScreen();
   expect(native.runModelLoadProbe).toHaveBeenCalledTimes(1);
   expect(native.runModelLoadProbe).toHaveBeenCalledWith('extend_32768_8');
-  expect(screen.getByText('extend_32768_8')).toBeOnTheScreen();
+  expect(
+    screen.getByRole('radio', { name: 'extend_32768_8', checked: true }),
+  ).toBeOnTheScreen();
 });
 
 test('shows a saved native loading error as an error result without retrying', async () => {

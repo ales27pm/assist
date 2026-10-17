@@ -165,13 +165,12 @@ test('offers reselection when a saved native model folder is unavailable', async
   expect(
     screen.getByText('Choisis à nouveau ton dossier local.'),
   ).toBeOnTheScreen();
-  await user.press(screen.getByRole('button', { name: 'Importer un modèle' }));
   expect(
-    screen.getByRole('button', { name: 'Choisir un dossier exporté' }),
+    screen.getByRole('button', { name: 'Choisir à nouveau le dossier' }),
   ).toBeEnabled();
   expect(
-    screen.getByRole('button', { name: 'Charger le modèle' }),
-  ).toBeDisabled();
+    screen.queryByRole('button', { name: 'Charger le modèle' }),
+  ).toBeNull();
   expect(native.loadModel).not.toHaveBeenCalled();
 });
 
@@ -272,8 +271,8 @@ test('opens a focused conversation with model and diagnostics available through 
   await navigate(user, 'Modèle');
   expect(screen.getByRole('heading', { name: 'Modèle' })).toBeOnTheScreen();
   expect(
-    screen.queryByRole('button', { name: 'Choisir un dossier exporté' }),
-  ).toBeNull();
+    screen.getByRole('button', { name: 'Choisir un dossier exporté' }),
+  ).toBeEnabled();
   await openDisclosure(user, 'Importer un modèle');
   expect(
     screen.getByRole('button', { name: 'Choisir un dossier exporté' }),
@@ -836,9 +835,7 @@ test('serializes the diagnostic and restores controls after a native failure', a
   expect(
     screen.getByRole('heading', { name: 'Diagnostics' }),
   ).toBeOnTheScreen();
-  expect(
-    screen.getByRole('button', { name: 'Gérer le modèle' }),
-  ).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Gérer le modèle' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Calcul natif' })).toBeDisabled();
   expect(
     screen.queryByRole('button', { name: 'Choisir un dossier exporté' }),
@@ -867,11 +864,12 @@ test('does not claim Gemma is included when its packaged metadata is absent', as
   expect(
     await screen.findByText('Gemma n’est pas intégré à cette build.'),
   ).toBeOnTheScreen();
-  const bundledButton = screen.getByRole('button', {
-    name: 'Charger Gemma intégré',
-  });
-  expect(bundledButton).toBeDisabled();
-  await user.press(bundledButton);
+  expect(
+    screen.queryByRole('button', { name: 'Charger Gemma intégré' }),
+  ).toBeNull();
+  expect(
+    screen.getByRole('button', { name: 'Choisir un dossier exporté' }),
+  ).toBeEnabled();
   expect(native.loadBundledModel).not.toHaveBeenCalled();
 });
 
@@ -892,8 +890,11 @@ test('loads packaged Gemma without asking for a folder', async () => {
   expect(native.selectModel).not.toHaveBeenCalled();
   expect(native.loadModel).not.toHaveBeenCalled();
   expect(
-    screen.getByRole('button', { name: 'Charger Gemma intégré' }),
-  ).toBeDisabled();
+    screen.queryByRole('button', { name: 'Charger Gemma intégré' }),
+  ).toBeNull();
+  expect(
+    screen.getByRole('button', { name: 'Ouvrir la conversation' }),
+  ).toBeEnabled();
 });
 
 test('blocks repeated bundled loads and folder selection while loading', async () => {
