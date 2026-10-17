@@ -32,6 +32,12 @@
 		A55000000000000000000007 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		A56000000000000000000001 /* AssistAdvancedVoiceResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = A56000000000000000000002; };
+		A56100000000000000000001 /* AssistFluidVoiceRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A56100000000000000000002; };
+		A56200000000000000000001 /* AssistFluidAudioInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A56200000000000000000002; };
+		A56400000000000000000001 /* AdvancedVoiceAssets.json in Resources */ = {isa = PBXBuildFile; fileRef = A56400000000000000000002; };
+		A56500000000000000000001 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = A56500000000000000000003; };
+		A56600000000000000000001 /* SpeechAttribution.txt in Resources */ = {isa = PBXBuildFile; fileRef = A56600000000000000000002; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -64,6 +70,11 @@
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Assist/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = Assist/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		A56000000000000000000002 /* AssistAdvancedVoiceResources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Voice/AssistAdvancedVoiceResources.swift; sourceTree = "<group>"; };
+		A56100000000000000000002 /* AssistFluidVoiceRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Voice/AssistFluidVoiceRuntime.swift; sourceTree = "<group>"; };
+		A56200000000000000000002 /* AssistFluidAudioInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Voice/AssistFluidAudioInput.swift; sourceTree = "<group>"; };
+		A56400000000000000000002 /* AdvancedVoiceAssets.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Assist/AdvancedVoiceAssets.json; sourceTree = "<group>"; };
+		A56600000000000000000002 /* SpeechAttribution.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = Assist/SpeechAttribution.txt; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -73,6 +84,7 @@
 			files = (
 				A55000000000000000000005 /* CoreAILM in Frameworks */,
 				A55000000000000000000006 /* Tokenizers in Frameworks */,
+				A56500000000000000000001 /* FluidAudio in Frameworks */,
 				0C80B921A6F3F58F76C31292 /* libPods-Assist.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -87,6 +99,9 @@
 				A55000000000000000000011 /* RCTNativeAssist.mm */,
 				A55000000000000000000012 /* ModelDirectoryPicker.swift */,
 				A55700000000000000000011 /* AssistVoice.swift */,
+				A56200000000000000000002 /* AssistFluidAudioInput.swift */,
+				A56100000000000000000002 /* AssistFluidVoiceRuntime.swift */,
+				A56000000000000000000002 /* AssistAdvancedVoiceResources.swift */,
 				A55800000000000000000011 /* AssistVoiceCallbacks.swift */,
 				A55B00000000000000000011 /* AssistVoicePCMTransfer.swift */,
 				A55C00000000000000000011 /* AssistVoiceDuplexState.swift */,
@@ -102,6 +117,8 @@
 				A55500000000000000000011 /* AssistModelAssetProbe.swift */,
 				A55600000000000000000011 /* AssistSpecializationRepair.swift */,
 				A55300000000000000000012 /* MonitoringAttribution.txt */,
+				A56400000000000000000002 /* AdvancedVoiceAssets.json */,
+				A56600000000000000000002 /* SpeechAttribution.txt */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
@@ -183,6 +200,7 @@
 			packageProductDependencies = (
 				A55000000000000000000021 /* CoreAILM */,
 				A55000000000000000000022 /* Tokenizers */,
+				A56500000000000000000003 /* FluidAudio */,
 			);
 			productReference = 13B07F961A680F5B00A75B9A /* Assist.app */;
 			productType = "com.apple.product-type.application";
@@ -212,6 +230,7 @@
 			packageReferences = (
 				A55000000000000000000031 /* coreai-models */,
 				A55000000000000000000032 /* swift-transformers */,
+				A56500000000000000000002 /* AssistSpeech */,
 			);
 			productRefGroup = 83CBBA001A601CBA00E9B192 /* Products */;
 			projectDirPath = "";
@@ -233,6 +252,8 @@
 				A55100000000000000000002 /* NumericalProbe in Resources */,
 				A55200000000000000000002 /* NumericalProbeFP32 in Resources */,
 				A55300000000000000000002 /* MonitoringAttribution.txt in Resources */,
+				A56400000000000000000001 /* AdvancedVoiceAssets.json in Resources */,
+				A56600000000000000000001 /* SpeechAttribution.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -340,6 +361,9 @@
 				A55000000000000000000001 /* RCTNativeAssist.mm in Sources */,
 				A55000000000000000000002 /* ModelDirectoryPicker.swift in Sources */,
 				A55700000000000000000001 /* AssistVoice.swift in Sources */,
+				A56200000000000000000001 /* AssistFluidAudioInput.swift in Sources */,
+				A56100000000000000000001 /* AssistFluidVoiceRuntime.swift in Sources */,
+				A56000000000000000000001 /* AssistAdvancedVoiceResources.swift in Sources */,
 				A55800000000000000000001 /* AssistVoiceCallbacks.swift in Sources */,
 				A55B00000000000000000001 /* AssistVoicePCMTransfer.swift in Sources */,
 				A55C00000000000000000001 /* AssistVoiceDuplexState.swift in Sources */,
@@ -365,7 +389,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 20;
+				CURRENT_PROJECT_VERSION = 21;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
@@ -397,7 +421,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 20;
+				CURRENT_PROJECT_VERSION = 21;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -582,6 +606,9 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+/* Begin XCLocalSwiftPackageReference section */
+		A56500000000000000000002 /* AssistSpeech */ = {isa = XCLocalSwiftPackageReference; relativePath = AssistSpeech; };
+/* End XCLocalSwiftPackageReference section */
 /* Begin XCRemoteSwiftPackageReference section */
 		A55000000000000000000031 = {
 			isa = XCRemoteSwiftPackageReference;
@@ -597,6 +624,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		A55000000000000000000021 = {isa = XCSwiftPackageProductDependency; package = A55000000000000000000031; productName = CoreAILM; };
 		A55000000000000000000022 = {isa = XCSwiftPackageProductDependency; package = A55000000000000000000032; productName = Tokenizers; };
+		A56500000000000000000003 = {isa = XCSwiftPackageProductDependency; package = A56500000000000000000002; productName = FluidAudio; };
 /* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 83CBB9F71A601CBA00E9B192 /* Project object */;

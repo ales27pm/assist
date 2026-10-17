@@ -12,6 +12,7 @@ import { InterfaceIcon } from './InterfaceIcon';
 import { uiGrammar } from './uiGrammar';
 import { ScreenHeading, SettingsRow, SurfaceGroup } from './uiPrimitives';
 import { VoiceComparisonPanel } from './VoiceComparisonPanel';
+import { AdvancedVoicePanel } from './AdvancedVoicePanel';
 import { scheduleAccessibilityFocus } from './focusAccessibility';
 
 type Props = {
@@ -48,6 +49,15 @@ export function SettingsScreen({
   const { theme } = useAppearance();
   const { colors } = theme;
   const [comparingVoices, setComparingVoices] = useState(false);
+  const [advancedVoice, setAdvancedVoice] = useState(false);
+  const advancedVoiceControl = useRef<React.ComponentRef<typeof View>>(null);
+  const wasAdvancedVoice = useRef(false);
+  useEffect(() => {
+    const restore = wasAdvancedVoice.current && !advancedVoice;
+    wasAdvancedVoice.current = advancedVoice;
+    if (restore)
+      return scheduleAccessibilityFocus(() => advancedVoiceControl.current);
+  }, [advancedVoice]);
   const comparisonControl = useRef<React.ComponentRef<typeof View>>(null);
   const wasComparingVoices = useRef(false);
   useEffect(() => {
@@ -58,6 +68,8 @@ export function SettingsScreen({
   }, [comparingVoices]);
   if (comparingVoices)
     return <VoiceComparisonPanel onClose={() => setComparingVoices(false)} />;
+  if (advancedVoice)
+    return <AdvancedVoicePanel onClose={() => setAdvancedVoice(false)} />;
 
   return (
     <View style={styles.screen}>
@@ -178,6 +190,14 @@ export function SettingsScreen({
           value="Comparer les voix fr-CA"
           onPress={() => setComparingVoices(true)}
           controlRef={comparisonControl}
+          disabled={busy}
+          stacked
+        />
+        <SettingsRow
+          label="Voix locale avancée"
+          value="Modèles et référence vocale"
+          onPress={() => setAdvancedVoice(true)}
+          controlRef={advancedVoiceControl}
           disabled={busy}
           stacked
         />

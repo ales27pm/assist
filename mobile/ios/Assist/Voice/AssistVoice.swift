@@ -1,5 +1,7 @@
 import AVFoundation
 import Foundation
+import FluidAudio
+import os
 import Speech
 import UIKit
 
@@ -20,7 +22,7 @@ private final class AssistVoiceAudioSink: @unchecked Sendable {
     }
 }
 
-/// Apple-only duplex speech. Session configuration, ownership and callbacks
+/// Local duplex speech with a pinned Apple or provisioned FluidAudio backend. Session configuration, ownership and callbacks
 /// are main-actor confined. The audio tap uses Apple's documented append API;
 /// PCM buffers never cross into Swift tasks or JavaScript.
 @MainActor
@@ -81,6 +83,55 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private var audioSessionOwnership = AssistVoiceAudioSessionOwnership()
     private var audioSessionActive: Bool { audioSessionOwnership.isActive }
     private var invalidated = false
+    private var fluidConfiguration: AssistAdvancedVoiceConfiguration?
+    private var fluidRuntime: AssistFluidVoiceRuntime?
+    private var fluidCachedRuntime: (configuration: AssistAdvancedVoiceConfiguration, runtime: AssistFluidVoiceRuntime)?
+    private var advancedResourceMutation = false
+    private var fluidPreparationTask: Task<Void, Never>?
+    private var fluidShutdownTask: Task<Void, Never>?
+    private var fluidInput: AssistFluidAudioInput?
+    private var fluidInputTask: Task<Void, Never>?
+    private var fluidSpeechSession: PocketTtsSession?
+    private var fluidSpeechTask: Task<Void, Never>?
+    private var fluidSpeechInputClosed = false
+    private var fluidSpeechChunkCount = 0
+    private var fluidSpeechTextBytes = 0
+    private var fluidFrameCredits = 0
+
+    @objc func canChangeAdvancedVoiceResources() -> Bool {
+        !advancedResourceMutation && phase == "idle" && !audioSessionActive && retainedInputTask == nil &&
+        !lifetime.retained && voicePreview == nil && fluidPreparationTask == nil
+    }
+
+    @objc(releaseAdvancedVoiceRuntime:)
+    func releaseAdvancedVoiceRuntime(_ completion: @escaping (Bool) -> Void) {
+        guard canChangeAdvancedVoiceResources() else { completion(false); return }
+        advancedResourceMutation = true
+        let shutdown = fluidShutdownTask
+        let cached = fluidCachedRuntime?.runtime
+        fluidCachedRuntime = nil
+        Task { @MainActor [weak self] in
+            await shutdown?.value
+            await cached?.cancel()
+            guard let self else { completion(false); return }
+            // Keep the admission barrier set while the bridge synchronously
+            // enters the resource mutation and establishes its own busy flag.
+            let idle = self.phase == "idle" && !self.audioSessionActive && !self.lifetime.retained
+            completion(idle)
+            self.advancedResourceMutation = false
+        }
+    }
+
+    private static func sameConfiguration(_ left: AssistAdvancedVoiceConfiguration, _ right: AssistAdvancedVoiceConfiguration) -> Bool {
+        left.pocketDirectory == right.pocketDirectory && left.asrDirectory == right.asrDirectory &&
+        left.vadModelURL == right.vadModelURL && left.referenceAudioURL == right.referenceAudioURL &&
+        left.voiceConditioningURL == right.voiceConditioningURL && left.variant == right.variant
+    }
+
+    private var hasLocalInput: Bool {
+        fluidRuntime != nil && fluidInput != nil || request != nil && recognitionTask != nil
+    }
+
 
     override init() {
         super.init()
@@ -92,6 +143,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         observe(UIApplication.willResignActiveNotification)
         observe(UIApplication.didEnterBackgroundNotification)
         observe(UIApplication.didBecomeActiveNotification)
+        observe(UIApplication.didReceiveMemoryWarningNotification)
         observe(AVAudioSession.interruptionNotification)
         observe(AVAudioSession.routeChangeNotification)
     }
@@ -143,7 +195,8 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         guard validID(id), !voiceId.isEmpty, voiceId.utf16.count <= 512 else {
             completion(nil, Self.error("E_VOICE_ID", "Identifiant de l’aperçu vocal invalide.")); return
         }
-        guard phase == "idle", !lifetime.retained, configuringGeneration == nil,
+        guard !advancedResourceMutation, !AssistAdvancedVoiceResources.shared.isBusy,
+              phase == "idle", !lifetime.retained, configuringGeneration == nil,
               audioEngine == nil, !audioSessionActive, voicePreview == nil else {
             completion(nil, Self.error("E_VOICE_BUSY", "Mets le mode vocal en pause avant d’écouter une voix.")); return
         }
@@ -183,18 +236,23 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             completion(nil, Self.error("E_VOICE_BACKGROUND", "Reviens dans Assist pour commencer une dictée.")); return
         }
         guard validID(id) else { completion(nil, Self.error("E_VOICE_ID", "Identifiant vocal invalide.")); return }
+        guard !advancedResourceMutation, !AssistAdvancedVoiceResources.shared.isBusy else {
+            completion(nil, Self.error("E_VOICE_BUSY", "Attends la fin de la préparation des modèles vocaux.")); return
+        }
         guard phase == "idle" || phase == "speaking" else {
             completion(nil, Self.error("E_VOICE_BUSY", "Une dictée est déjà en cours.")); return
         }
         if let pendingAudioError {
             completion(nil, Self.error("E_VOICE_INTERRUPTED", pendingAudioError)); return
         }
-        guard recognizer?.supportsOnDeviceRecognition == true, recognizer?.isAvailable == true else {
+        let selectedConfiguration = AssistAdvancedVoiceResources.shared.configuration
+        guard selectedConfiguration != nil || (recognizer?.supportsOnDeviceRecognition == true && recognizer?.isAvailable == true) else {
             completion(nil, Self.error("E_VOICE_UNAVAILABLE", "La dictée locale en français canadien est indisponible sur cet appareil.")); return
         }
         audioDiagnostics = AssistVoiceAudioDiagnostics()
         if adoptRetainedInput(id, completion: completion) { return }
         cancelCurrent()
+        fluidConfiguration = selectedConfiguration
         let token = generation
         sessionId = id
         latestTranscript = ""
@@ -205,6 +263,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         startCompletion = completion
         phase = "requesting"
         emitState()
+        if fluidConfiguration != nil { requestMicrophone(token); return }
         switch SFSpeechRecognizer.authorizationStatus() {
         case .authorized: requestMicrophone(token)
         case .notDetermined:
@@ -219,19 +278,23 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
 
     @objc(stopListening:)
     func stopListening(_ completion: (String?, NSError?) -> Void) {
-        if phase == "requesting" { cancelCurrent() }
+        if phase == "requesting" { cancelCurrent(preservingFluidCache: false) }
         else if phase == "listening" {
             stopCapture()
             phase = "finishing"
             request?.endAudio()
+            // The worker drains the closed ring before requesting final STT.
+            fluidInput?.close()
             emitState()
             let token = generation
             // Apple's final callback is not guaranteed after audio/route failures.
             // Always leave finishing, even if no final result arrives.
             finishingTask = Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                do { try await Task.sleep(for: .seconds(self?.fluidRuntime == nil ? 3 : 15)) } catch { return }
                 guard let self, self.generation == token, self.phase == "finishing" else { return }
-                self.finishRecognition()
+                if self.fluidRuntime != nil {
+                    self.fail("La transcription finale locale a dépassé son délai. Ton brouillon est conservé; reprends une phrase plus courte.", code: "E_VOICE_FLUID_TIMEOUT")
+                } else { self.finishRecognition() }
             }
         }
         completion(statusJSON(), nil)
@@ -240,27 +303,27 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     @objc(cancel:)
     func cancel(_ completion: (String?, NSError?) -> Void) {
         // Muting and invalidating callback identities happens before settlement.
-        cancelCurrent()
+        cancelCurrent(preservingFluidCache: false)
         completion(statusJSON(), nil)
     }
 
     @objc(speak:utteranceId:completion:)
-    func speak(_ text: String, utteranceId id: String, completion: (String?, NSError?) -> Void) {
+    func speak(_ text: String, utteranceId id: String, completion: @escaping (String?, NSError?) -> Void) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               text.utf8.count <= 2_400 else {
             completion(nil, Self.error("E_VOICE_TEXT", "Le texte de lecture est vide ou dépasse la capacité du lecteur local.")); return
         }
         beginSpeech(id) { value, error in
             guard error == nil else { completion(value, error); return }
-            enqueueSpeech(text, utteranceId: id) { value, error in
-                guard error == nil else { cancelCurrent(); completion(value, error); return }
-                finishSpeech(id, completion: completion)
+            self.enqueueSpeech(text, utteranceId: id) { value, error in
+                guard error == nil else { self.cancelCurrent(); completion(value, error); return }
+                self.finishSpeech(id, completion: completion)
             }
         }
     }
 
     @objc(beginSpeech:completion:)
-    func beginSpeech(_ id: String, completion: (String?, NSError?) -> Void) {
+    func beginSpeech(_ id: String, completion: @escaping (String?, NSError?) -> Void) {
         guard !invalidated else { completion(nil, Self.error("E_VOICE_INVALIDATED", "La voix est fermée.")); return }
         guard UIApplication.shared.applicationState == .active else {
             completion(nil, Self.error("E_VOICE_BACKGROUND", "Reviens dans Assist pour commencer une lecture.")); return
@@ -268,21 +331,34 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         guard validID(id), phase == "idle" || phase == "speaking" else {
             completion(nil, Self.error("E_VOICE_BUSY", "Termine la dictée avant la lecture.")); return
         }
-        guard SFSpeechRecognizer.authorizationStatus() == .authorized,
-              AVAudioApplication.shared.recordPermission == .granted,
-              recognizer?.supportsOnDeviceRecognition == true, recognizer?.isAvailable == true else {
+        guard !advancedResourceMutation, !AssistAdvancedVoiceResources.shared.isBusy else {
+            completion(nil, Self.error("E_VOICE_BUSY", "Attends la fin de la préparation des modèles vocaux.")); return
+        }
+        let selectedConfiguration = AssistAdvancedVoiceResources.shared.configuration
+        guard AVAudioApplication.shared.recordPermission == .granted,
+              selectedConfiguration != nil || (SFSpeechRecognizer.authorizationStatus() == .authorized &&
+              recognizer?.supportsOnDeviceRecognition == true && recognizer?.isAvailable == true) else {
             completion(nil, Self.error("E_VOICE_PERMISSION", "Autorise la dictée locale et le microphone avant le mode vocal.")); return
         }
-        guard let voice = canadianVoice() else {
+        let voice = canadianVoice()
+        guard selectedConfiguration != nil || voice != nil else {
             completion(nil, Self.error("E_VOICE_UNAVAILABLE", "Installe une voix française canadienne dans les réglages de parole iOS.")); return
         }
         cancelCurrent()
         audioDiagnostics = AssistVoiceAudioDiagnostics()
         sessionId = id
+        fluidConfiguration = selectedConfiguration
         speechVoice = voice
         latestTranscript = ""
         cachedRecognition = nil
         monitorRetry = AssistVoiceMonitorRetry()
+        if selectedConfiguration != nil {
+            phase = "requesting"
+            startCompletion = completion
+            emitState()
+            prepareFluid(token: generation, speaking: true)
+            return
+        }
         do {
             try activateAudioSession()
             try makeDuplexEngine(token: generation)
@@ -301,9 +377,10 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
 
     @objc(enqueueSpeech:utteranceId:completion:)
     func enqueueSpeech(_ text: String, utteranceId id: String, completion: (String?, NSError?) -> Void) {
-        guard phase == "speaking", sessionId == id, speechVoice != nil else {
+        guard phase == "speaking", sessionId == id, speechVoice != nil || fluidSpeechSession != nil else {
             completion(nil, Self.error("E_VOICE_STALE", "Cette lecture n’est plus active.")); return
         }
+        if fluidSpeechSession != nil { enqueueFluidSpeech(text, completion: completion); return }
         let bytes = text.utf8.count
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               bytes <= 2_400, speechQueue.pendingCount < 64,
@@ -321,8 +398,188 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         guard phase == "speaking", sessionId == id else {
             completion(nil, Self.error("E_VOICE_STALE", "Cette lecture n’est plus active.")); return
         }
-        if speechQueue.finishInput() { finishSpeechNaturally() }
+        if let fluidSpeechSession {
+            fluidSpeechInputClosed = true
+            fluidSpeechSession.finish()
+        } else if speechQueue.finishInput() { finishSpeechNaturally() }
         completion(statusJSON(), nil)
+    }
+
+    private func prepareFluid(token: UUID, speaking: Bool) {
+        guard fluidPreparationTask == nil, let configuration = fluidConfiguration else { return }
+        let shutdown = fluidShutdownTask
+        fluidPreparationTask = Task { @MainActor [weak self] in
+            await shutdown?.value
+            guard let self, self.generation == token, self.phase == "requesting", !Task.isCancelled else { return }
+            do {
+                let runtime: AssistFluidVoiceRuntime
+                let receive: @MainActor @Sendable (AssistFluidVoiceEvent) -> Void = { [weak self] event in
+                    self?.receiveFluid(event, token: token)
+                }
+                if let cached = self.fluidCachedRuntime, Self.sameConfiguration(cached.configuration, configuration) {
+                    runtime = cached.runtime
+                    self.fluidCachedRuntime = nil
+                    await runtime.resetCapture(monitoring: speaking, receive: receive)
+                } else {
+                    self.fluidCachedRuntime = nil
+                    // Admission budget, not a prediction of RSS or physical
+                    // free RAM. A hot turn reuses the already-loaded models.
+                    guard os_proc_available_memory() >= 2_000_000_000 else {
+                        throw Self.error("E_VOICE_MEMORY", "Le budget mémoire disponible est insuffisant pour la pile vocale avancée (minimum de prototype : 2 Go). Choisis les voix Apple.")
+                    }
+                    guard ProcessInfo.processInfo.thermalState != .serious,
+                          ProcessInfo.processInfo.thermalState != .critical else {
+                        throw Self.error("E_VOICE_THERMAL", "L’iPhone est trop chaud pour charger les modèles vocaux avancés. Laisse-le refroidir ou choisis Apple.")
+                    }
+                    runtime = try await AssistFluidVoiceRuntime(configuration: configuration, monitoring: speaking, receive: receive)
+                }
+                guard self.generation == token, self.phase == "requesting", !Task.isCancelled else {
+                    await runtime.cancel(); return
+                }
+                self.fluidRuntime = runtime
+                if speaking {
+                    let session = try await runtime.makeSpeechSession()
+                    guard self.generation == token, self.phase == "requesting", !Task.isCancelled else {
+                        await runtime.cancel(); return
+                    }
+                    self.fluidSpeechSession = session
+                }
+                self.completeFluidPreparation(token: token, speaking: speaking)
+            } catch {
+                guard self.generation == token, self.phase == "requesting", !Task.isCancelled else { return }
+                self.fluidPreparationTask = nil
+                let native = error as NSError
+                let code = native.userInfo["code"] as? String ?? "E_VOICE_FLUID_LOAD"
+                let message = code == "E_VOICE_MEMORY" || code == "E_VOICE_THERMAL" ? native.localizedDescription :
+                    "Les modèles vocaux locaux n’ont pas pu être chargés. Vérifie les ressources dans Réglages."
+                self.fail(message, code: code)
+            }
+        }
+    }
+
+    private func completeFluidPreparation(token: UUID, speaking: Bool) {
+        guard generation == token, phase == "requesting", fluidRuntime != nil else { return }
+        guard UIApplication.shared.applicationState == .active else {
+            pendingForegroundAction = { [weak self] in self?.completeFluidPreparation(token: token, speaking: speaking) }
+            return
+        }
+        fluidPreparationTask = nil
+        do {
+            try activateAudioSession()
+            try makeDuplexEngine(token: token)
+            phase = speaking ? "speaking" : "listening"
+            if speaking { startFluidSpeechFrames() }
+            lastMonitoring = isMonitoring
+            emitState()
+            settleStart(statusJSON(), nil)
+        } catch {
+            fail("Le graphe audio local avec annulation d’écho n’a pas pu démarrer : \(error.localizedDescription)", code: "E_VOICE_AEC")
+        }
+    }
+
+    private func receiveFluid(_ event: AssistFluidVoiceEvent, token: UUID) {
+        guard generation == token, fluidRuntime != nil else { return }
+        switch event {
+        case .onset:
+            if phase == "speaking" { promoteInterruption() }
+        case .transcript(let text, let final):
+            receiveRecognition(AssistVoiceRecognitionSnapshot(text: text, isFinal: final, message: nil))
+        case .failure(let message):
+            fail(message, code: "E_VOICE_FLUID")
+        }
+    }
+
+    private func enqueueFluidSpeech(_ text: String, completion: (String?, NSError?) -> Void) {
+        let bytes = text.utf8.count
+        guard let session = fluidSpeechSession, !fluidSpeechInputClosed,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              bytes <= 2_400, fluidSpeechChunkCount < 64,
+              fluidSpeechTextBytes <= 32_768 - bytes else {
+            completion(nil, Self.error("E_VOICE_TEXT", "Ce segment dépasse la capacité du lecteur local.")); return
+        }
+        fluidSpeechChunkCount += 1
+        fluidSpeechTextBytes += bytes
+        session.enqueue(text)
+        completion(statusJSON(), nil)
+    }
+
+    private func startFluidSpeechFrames() {
+        guard let session = fluidSpeechSession else { return }
+        let token = speechGeneration
+        let identifier = UUID()
+        currentUtterance = AssistVoiceUtterance(text: "", generation: token, identifier: identifier)
+        pcmConverter = AssistVoicePCMConverter()
+        pcmDrain.begin(identifier)
+        fluidFrameCredits = 0
+        // One Pocket session spans every prosodic chunk of this response. Both
+        // Mimi state and the resampler remain continuous across enqueue calls.
+        fluidSpeechTask = Task { @MainActor [weak self] in
+            do {
+                for try await frame in session.frames {
+                    try Task.checkCancellation()
+                    guard let self, self.speechGeneration == token,
+                          self.phase == "speaking", self.currentUtterance?.identifier == identifier else { return }
+                    guard !frame.samples.isEmpty, frame.samples.count <= 1_920,
+                          frame.samples.allSatisfy({ $0.isFinite }) else {
+                        throw Self.error("E_VOICE_PCM", "Trame PocketTTS invalide.")
+                    }
+                    self.fluidFrameCredits += 1
+                    if let buffer = try self.pcmConverter?.convert(frame.samples, sampleRate: 24_000) {
+                        let credits = self.fluidFrameCredits
+                        self.fluidFrameCredits = 0
+                        try self.scheduleFluidPCM(buffer, token: token, identifier: identifier,
+                                                  session: session, credits: credits)
+                    }
+                }
+                guard let self, !Task.isCancelled, self.speechGeneration == token,
+                      self.phase == "speaking", self.currentUtterance?.identifier == identifier else { return }
+                guard self.fluidSpeechInputClosed else {
+                    throw Self.error("E_VOICE_PCM", "La synthèse locale s’est arrêtée avant la fin de la réponse.")
+                }
+                let tails = try self.pcmConverter?.finish() ?? []
+                for (index, tail) in tails.enumerated() {
+                    let credits = index == tails.count - 1 ? self.fluidFrameCredits : 0
+                    if credits > 0 { self.fluidFrameCredits = 0 }
+                    try self.scheduleFluidPCM(tail, token: token, identifier: identifier,
+                                              session: session, credits: credits)
+                }
+                if self.fluidFrameCredits > 0 {
+                    let credits = self.fluidFrameCredits
+                    self.fluidFrameCredits = 0
+                    for _ in 0..<credits { await session.acknowledgePlaybackFrame() }
+                }
+                self.pcmDrain.finishProduction()
+                self.finishFluidSpeechIfDrained()
+            } catch {
+                guard let self, !Task.isCancelled, self.speechGeneration == token, self.phase == "speaking" else { return }
+                self.fail("La synthèse PocketTTS locale s’est arrêtée. Reprends le mode vocal.", code: "E_VOICE_FLUID_TTS")
+            }
+        }
+    }
+
+    private func scheduleFluidPCM(_ buffer: AVAudioPCMBuffer, token: UUID, identifier: UUID,
+                                  session: PocketTtsSession, credits: Int) throws {
+        let bufferId = UUID()
+        guard let player, pcmDrain.schedule(bufferId, frames: Int(buffer.frameLength)) else {
+            throw Self.error("E_VOICE_PCM", "La file audio locale dépasse quinze secondes.")
+        }
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack,
+                              completionHandler: AssistVoiceCallbacks.playback(release: {
+            // This exact old session receives its own credit, even when stop
+            // discards the buffer. Never credit a later response's generation.
+            Task { for _ in 0..<credits { await session.acknowledgePlaybackFrame() } }
+        }) { [weak self] in
+            guard let self, self.speechGeneration == token, self.phase == "speaking",
+                  self.currentUtterance?.identifier == identifier else { return }
+            _ = self.pcmDrain.didPlay(bufferId)
+            self.finishFluidSpeechIfDrained()
+        })
+        if !player.isPlaying { player.play() }
+    }
+
+    private func finishFluidSpeechIfDrained() {
+        guard fluidSpeechSession != nil, pcmDrain.isComplete, phase == "speaking" else { return }
+        finishSpeechNaturally()
     }
 
     private func activateAudioSession() throws {
@@ -343,8 +600,8 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     private var isMonitoring: Bool {
-        phase == "speaking" && hasTap && request != nil &&
-        recognitionTask?.state == .running && audioEngine?.isRunning == true &&
+        phase == "speaking" && hasTap && hasLocalInput &&
+        (fluidRuntime != nil || recognitionTask?.state == .running) && audioEngine?.isRunning == true &&
         audioEngine?.inputNode.isVoiceProcessingEnabled == true
     }
 
@@ -443,6 +700,17 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     /// discards scheduled buffers too. Those callbacks must never mean played.
     private func stopSpeechOutput(retainingInput: Bool = false) {
         lifetime.retirePlayback(retainingInput: retainingInput)
+        fluidSpeechTask?.cancel()
+        fluidSpeechTask = nil
+        let retiredSession = fluidSpeechSession
+        fluidSpeechSession = nil
+        fluidSpeechInputClosed = false
+        fluidSpeechChunkCount = 0
+        fluidSpeechTextBytes = 0
+        fluidFrameCredits = 0
+        // Capture the exact retired producer. A delayed cleanup must never
+        // look up and cancel a later session in a reused warm runtime.
+        if let retiredSession { Task { await retiredSession.cancel() } }
         producerWatchdogTask?.cancel()
         producerWatchdogTask = nil
         pcmTransfer?.invalidate()
@@ -463,7 +731,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
 
     private func finishSpeechNaturally() {
         guard phase == "speaking" else { return }
-        let retain = request != nil && recognitionTask != nil && audioEngine?.isRunning == true
+        let retain = hasLocalInput && audioEngine?.isRunning == true
         stopSpeechOutput(retainingInput: retain)
         phase = "idle"
         lastMonitoring = false
@@ -477,12 +745,12 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         retainedInputTask = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .seconds(5)) } catch { return }
             guard let self, self.generation == token, self.lifetime.retained, self.phase == "idle" else { return }
-            self.cancelCurrent()
+            self.cancelCurrent(preservingFluidCache: false)
         }
     }
 
     private func adoptRetainedInput(_ id: String, completion: (String?, NSError?) -> Void) -> Bool {
-        guard phase == "idle", request != nil, audioEngine?.isRunning == true,
+        guard phase == "idle", hasLocalInput, audioEngine?.isRunning == true,
               lifetime.adoptInput() else { return false }
         retainedInputTask?.cancel()
         retainedInputTask = nil
@@ -497,7 +765,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
 
     @objc func invalidate() {
         invalidated = true
-        cancelCurrent()
+        cancelCurrent(preservingFluidCache: false)
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers.removeAll()
         synthesizer.delegate = nil
@@ -526,6 +794,10 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         guard generation == token, phase == "requesting", !invalidated else { return }
         guard UIApplication.shared.applicationState == .active else {
             pendingForegroundAction = { [weak self] in self?.beginCapture(token) }
+            return
+        }
+        if fluidConfiguration != nil {
+            prepareFluid(token: token, speaking: false)
             return
         }
         do {
@@ -622,9 +894,6 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
               UIApplication.shared.applicationState == .active else {
             throw Self.error("E_VOICE_INTERRUPTED", "La session de reconnaissance a été annulée.")
         }
-        guard let recognizer, recognizer.supportsOnDeviceRecognition, recognizer.isAvailable else {
-            throw Self.error("E_VOICE_UNAVAILABLE", "La dictée locale fr-CA est indisponible.")
-        }
         let input = engine.inputNode
         let currentFormat = input.outputFormat(forBus: 0)
         let format = expectedFormat ?? currentFormat
@@ -635,6 +904,38 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             throw Self.error("E_VOICE_AUDIO", "Le format du microphone a changé pendant la construction du graphe vocal.")
         }
         tapInputFormat = Self.routeFormat(format)
+        if let runtime = fluidRuntime {
+            let meter = AssistVoiceInputMeter()
+            inputMeter = meter
+            inputStartedAt = .now
+            inputStoppedAt = nil
+            lastInputDiagnostics = nil
+            inputPort = AVAudioSession.sharedInstance().currentRoute.inputs.first?.portType.rawValue ?? "none"
+            let ring = AssistFluidAudioInput(format: format, meter: meter)
+            fluidInput = ring
+            input.installTap(onBus: 0, bufferSize: 1024, format: format,
+                             block: AssistVoiceCallbacks.audioTap { ring.append($0) })
+            hasTap = true
+            fluidInputTask = Task.detached { [weak self] in
+                while !Task.isCancelled {
+                    if ring.hasFailed {
+                        await self?.receiveFluid(.failure("Le tampon du microphone local est saturé ou son format a changé."), token: token)
+                        return
+                    }
+                    let values = ring.read()
+                    if !values.isEmpty { await runtime.append(values, sampleRate: ring.sampleRate) }
+                    else if ring.isClosed { await runtime.finishInput(); return }
+                    else {
+                        do { try await Task.sleep(for: .milliseconds(10)) } catch { return }
+                    }
+                }
+            }
+            startInputObservation(token: token)
+            return
+        }
+        guard let recognizer, recognizer.supportsOnDeviceRecognition, recognizer.isAvailable else {
+            throw Self.error("E_VOICE_UNAVAILABLE", "La dictée locale fr-CA est indisponible.")
+        }
         let localRequest = SFSpeechAudioBufferRecognitionRequest()
         localRequest.requiresOnDeviceRecognition = true
         localRequest.shouldReportPartialResults = true
@@ -655,6 +956,10 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             sink.append(buffer)
         })
         hasTap = true
+        startInputObservation(token: token)
+    }
+
+    private func startInputObservation(token: UUID) {
         inputTask?.cancel()
         inputTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -789,7 +1094,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         captureInputDiagnostics()
     }
 
-    private func cancelCurrent() {
+    private func cancelCurrent(preservingFluidCache: Bool = true) {
         lifetime.reset()
         // stop/player/engine/deactivation may synchronously notify. Observers
         // must see no owned audio session before any of those boundaries.
@@ -814,6 +1119,29 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         finishingTask?.cancel()
         finishingTask = nil
         stopCapture()
+        if preservingFluidCache, let runtime = fluidRuntime, let configuration = fluidConfiguration {
+            fluidCachedRuntime = (configuration, runtime)
+        } else if !preservingFluidCache { fluidCachedRuntime = nil }
+        let preparation = fluidPreparationTask
+        preparation?.cancel()
+        fluidPreparationTask = nil
+        fluidInput?.close()
+        let inputWorker = fluidInputTask
+        inputWorker?.cancel()
+        fluidInputTask = nil
+        fluidInput = nil
+        fluidConfiguration = nil
+        let runtime = fluidRuntime
+        if runtime != nil || preparation != nil {
+            let prior = fluidShutdownTask
+            fluidShutdownTask = Task {
+                await prior?.value
+                await preparation?.value
+                await runtime?.cancel()
+                await inputWorker?.value
+            }
+        }
+        fluidRuntime = nil
         recognitionTask?.cancel()
         recognitionTask = nil
         request = nil
@@ -832,7 +1160,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private func fail(_ message: String, code: String) {
         emit(kind: "error", message: message)
         settleStart(nil, Self.error(code, message))
-        cancelCurrent()
+        cancelCurrent(preservingFluidCache: false)
     }
 
     private func settleStart(_ value: String?, _ error: NSError?) {
@@ -868,11 +1196,23 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         _ name: Notification.Name, routeReason: UInt?, interruptionType: UInt?, previous: AssistVoiceRouteIdentity?
     ) {
         voicePreview?.handleNotification(name, routeReason: routeReason, interruptionType: interruptionType, previous: previous)
+        if name == UIApplication.didReceiveMemoryWarningNotification {
+            // A quiescent cache is expendable. Do not change provider or voice
+            // midway through an active turn in response to a warning.
+            if phase == "idle", !lifetime.retained { fluidCachedRuntime = nil }
+            return
+        }
         if name == UIApplication.didBecomeActiveNotification {
             let action = pendingForegroundAction
             pendingForegroundAction = nil
             if phase == "requesting" { action?() }
             return
+        }
+        // Release model/voice conditioning even when no audio is currently
+        // active. A permission sheet preserves only its pending first-use flow.
+        if name == UIApplication.didEnterBackgroundNotification ||
+           (name == UIApplication.willResignActiveNotification && phase != "requesting") {
+            fluidCachedRuntime = nil
         }
         // Permission sheets may deactivate the app; actual background cancels.
         if name == UIApplication.willResignActiveNotification && phase == "requesting" { return }
@@ -903,12 +1243,12 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             return
         }
         recordRoute(routeFacts(reason: nil, previous: nil, constructing: false), source: "lifecycle", decision: "cancel")
-        cancelCurrent()
+        cancelCurrent(preservingFluidCache: false)
     }
 
     private func failAudioInterruption() {
         if lifetime.retained {
-            cancelCurrent()
+            cancelCurrent(preservingFluidCache: false)
             pendingAudioError = "Le périphérique audio a changé ou la session a été interrompue. Reprends le mode vocal."
             return
         }
@@ -1023,16 +1363,19 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         let voice = speechVoice ?? canadianVoice()
         let speechPermission = SFSpeechRecognizer.authorizationStatus()
         let micPermission = AVAudioApplication.shared.recordPermission
-        let recognitionAvailable = !invalidated && recognizer?.supportsOnDeviceRecognition == true &&
-            recognizer?.isAvailable == true && speechPermission != .denied && speechPermission != .restricted && micPermission != .denied
-        let synthesisAvailable = !invalidated && voice != nil
+        let fluidReady = fluidConfiguration != nil || AssistAdvancedVoiceResources.shared.configuration != nil
+        let recognitionAvailable = !invalidated && micPermission != .denied && (fluidReady ||
+            (recognizer?.supportsOnDeviceRecognition == true && recognizer?.isAvailable == true &&
+            speechPermission != .denied && speechPermission != .restricted))
+        let synthesisAvailable = !invalidated && (fluidReady || voice != nil)
         var status: [String: Any] = [
             "available": recognitionAvailable && synthesisAvailable,
             "recognitionAvailable": recognitionAvailable, "synthesisAvailable": synthesisAvailable,
             "locale": "fr-CA", "phase": phase, "monitoring": isMonitoring
         ]
         if !audioDiagnostics.lines.isEmpty { status["audioDiagnostics"] = audioDiagnostics.lines }
-        if let voice { status["voiceName"] = voice.name }
+        if fluidReady { status["voiceName"] = "Voix de référence locale · PocketTTS" }
+        else if let voice { status["voiceName"] = voice.name }
         if let lastInputDiagnostics { status["diagnostics"] = lastInputDiagnostics }
         if !recognitionAvailable { status["reason"] = "La dictée locale fr-CA ou ses permissions est indisponible. Aucun service distant ne sera utilisé." }
         else if !synthesisAvailable { status["reason"] = "Installe une voix française canadienne dans les réglages de parole iOS." }

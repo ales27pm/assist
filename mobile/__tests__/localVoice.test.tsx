@@ -1903,3 +1903,114 @@ test('unmount removes listeners and stops the active native session', async () =
   expect(native.cancelVoice).toHaveBeenCalled();
   expect(onTranscript).not.toHaveBeenCalled();
 });
+
+test('response preparation preserves models only after final capture text and native idle at the same epoch', async () => {
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  const sessionId = native.startListening.mock.calls[0][0];
+  await act(async () => {
+    emit({
+      sessionId,
+      kind: 'transcript',
+      phase: 'finishing',
+      text: 'Question finale.',
+      isFinal: true,
+    });
+    emit({ sessionId, kind: 'state', phase: 'idle' });
+  });
+  native.cancelVoice.mockClear();
+  await act(async () => {
+    expect(await result.current.prepareResponse()).toBe(true);
+  });
+  expect(native.cancelVoice).not.toHaveBeenCalled();
+  expect(result.current.phase).toBe('idle');
+});
+
+test.each(['partial', 'error', 'cancelled', 'new-capture'] as const)(
+  'response preparation still cancels audio after %s instead of trusting old completion',
+  async scenario => {
+    const { result } = await renderHookAsync(() =>
+      useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+    );
+    await act(async () => {
+      await result.current.startListening();
+    });
+    const sessionId = native.startListening.mock.calls[0][0];
+    await act(async () => {
+      emit({
+        sessionId,
+        kind: 'transcript',
+        phase: 'finishing',
+        text: 'Texte.',
+        isFinal: scenario !== 'partial',
+      });
+      if (scenario === 'error')
+        emit({
+          sessionId,
+          kind: 'error',
+          phase: 'finishing',
+          message: 'Erreur de capture.',
+        });
+      emit({ sessionId, kind: 'state', phase: 'idle' });
+      if (scenario === 'cancelled') await result.current.cancel();
+      if (scenario === 'new-capture') await result.current.startListening();
+    });
+    native.cancelVoice.mockClear();
+    await act(async () => {
+      expect(await result.current.prepareResponse()).toBe(true);
+    });
+    expect(native.cancelVoice).toHaveBeenCalledTimes(1);
+  },
+);
+
+test('response preparation joins an in-flight stop and never acknowledges it before native', async () => {
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  const pending = deferred<string>();
+  native.cancelVoice.mockReturnValueOnce(pending.promise);
+  let stop!: Promise<boolean>;
+  let preparing!: Promise<boolean>;
+  let completed = false;
+  await act(async () => {
+    stop = result.current.cancel();
+    preparing = result.current.prepareResponse().then(value => {
+      completed = true;
+      return value;
+    });
+  });
+  expect(completed).toBe(false);
+  expect(result.current.phase).toBe('stopping');
+  expect(native.cancelVoice).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    pending.resolve(status());
+    expect(await stop).toBe(true);
+    expect(await preparing).toBe(true);
+  });
+});
+
+test('a natural speech idle cannot stand in for completed capture when input may still be retained', async () => {
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.beginSpeech('reply-retaining-microphone');
+    emit({
+      sessionId: 'reply-retaining-microphone',
+      kind: 'state',
+      phase: 'idle',
+    });
+  });
+  native.cancelVoice.mockClear();
+  await act(async () => {
+    expect(await result.current.prepareResponse()).toBe(true);
+  });
+  expect(native.cancelVoice).toHaveBeenCalledTimes(1);
+});

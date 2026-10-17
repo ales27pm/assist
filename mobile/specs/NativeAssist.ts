@@ -9,6 +9,11 @@ export type ProgressEvent = {
 export interface Spec extends TurboModule {
   getStatus(): Promise<string>;
   getVoiceStatus(): Promise<string>;
+  getAdvancedVoiceState(): Promise<string>;
+  importAdvancedVoicePack(): Promise<string>;
+  setAdvancedVoiceBackend(backend: string, variant: string): Promise<string>;
+  importAdvancedVoiceReference(consentJSON: string): Promise<string>;
+  removeAdvancedVoiceReference(): Promise<string>;
   getSpeechVoices(): Promise<string>;
   setSpeechVoice(voiceId: string): Promise<string>;
   previewSpeechVoice(voiceId: string, segmentsJSON: string, sessionId: string): Promise<string>;

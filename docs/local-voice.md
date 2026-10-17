@@ -379,16 +379,23 @@ les échecs sur plusieurs essais. Sans instrumentation, noter **non mesuré**.
 Les seuils de fin de tour ci-dessus sont des réglages, pas des latences mesurées
 sur iPhone.
 
-## Pourquoi PocketTTS attend
+## PocketTTS et la pile avancée
+
+L’utilisateur a maintenant demandé l’intégration de la pile complète. Le
+[parcours avancé](advanced-local-voice.md) ajoute le chargement strictement
+local, l’import vérifié, la référence consentie, Parakeet, Silero et le streaming
+Pocket dans le graphe VPIO. Apple reste sélectionné tant que les ressources et
+la référence à fournir ne sont pas prêtes. Les calculs suivants décrivent
+l’étude initiale du pack complet, pas la sélection réduite livrée par l’import.
 
 Le [comparatif des voix Apple fr-CA](voice-comparison.md) prépare la référence
 auditive avant ce prototype lourd : phrases identiques entières et segmentées,
 noms masqués, critères d’écoute et choix persistant pour le mode vocal. L’aperçu
 reste une lecture seule, avec un arrêt ciblé, sans capture micro.
 
-PocketTTS French 24L reste un candidat pour une étape ultérieure : il offre une
-session audio incrémentale, mais ni son accent québécois ni sa coexistence
-mémoire avec Gemma ne sont qualifiés pour cette app.
+PocketTTS French 24L offre une session audio incrémentale. Son accent québécois
+et sa coexistence mémoire avec Gemma restent à qualifier sur l’iPhone, même
+après compilation de l’intégration.
 
 À la révision de modèles
 [`91748676`](https://huggingface.co/FluidInference/pocket-tts-coreml/tree/91748676fe3c8b2eb3007b3125253bcd898202c3/v2.1/french_24l),
@@ -406,6 +413,6 @@ ressources. Les chiffres du petit pack anglais ne décrivent pas ce pack frança
 Son
 [annulation de session](https://github.com/FluidInference/FluidAudio/blob/2d6c42ca5f3accc0faf9fee9e0fff5b9b2cf6042/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSession.swift#L34-L42)
 attend la fin de la tâche de génération; elle ne mesure pas l'arrêt audible d'un
-lecteur externe. Une intégration future devra qualifier stockage, mémoire avec
+lecteur externe. L’intégration avancée doit qualifier stockage, mémoire avec
 Gemma, écoute fr-CA, file audio et annulation sur l'iPhone réellement supporté
 avant de remplacer le premier parcours Apple.

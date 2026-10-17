@@ -215,11 +215,13 @@ notes d’écoute partageables, puis choix local persistant pour les prochaines
 réponses. Il n’ouvre pas le microphone. Son implémentation ne constitue pas
 encore un résultat auditif ni une qualification hors réseau sur appareil.
 
-Établir d’abord une référence avec les voix Apple fr-CA installées. Comparer
-ensuite un prototype isolé de PocketTTS French 24L, avant de l’embarquer dans le
-parcours principal. Son nom et sa langue ne prouvent ni l’accent québécois ni le
-débit utilisable avec Gemma sur cet iPhone. Le
-[dossier local](local-voice.md#pourquoi-pockettts-attend) consigne les premières
+L’utilisateur a ensuite autorisé l’[intégration complète optionnelle](advanced-local-voice.md)
+de PocketTTS French24L, Parakeet Redux/Ultra, Silero et AEC VPIO. Les imports
+du pack et de la référence consentie précèdent son activation; les voix Apple
+restent disponibles. Le comparatif fournit la référence auditive. Le nom du
+modèle et sa langue ne prouvent ni l’accent québécois ni le débit utilisable
+avec Gemma sur cet iPhone. Le
+[dossier local](local-voice.md#pockettts-et-la-pile-avancée) consigne les premières
 contraintes du pack français; les chiffres d’un petit pack anglais ou d’un Mac
 ne servent pas de benchmark iPhone.
 

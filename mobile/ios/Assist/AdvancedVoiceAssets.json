@@ -1,0 +1,375 @@
+{
+  "schemaVersion": 1,
+  "sdkRevision": "2d6c42ca5f3accc0faf9fee9e0fff5b9b2cf6042",
+  "groups": {
+    "pocket": {
+      "repository": "FluidInference/pocket-tts-coreml",
+      "revision": "91748676fe3c8b2eb3007b3125253bcd898202c3",
+      "files": [
+        {
+          "path": "cond_prefill.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "133f57c0224610fb3a6ee728aa914049c20ca2ff6798778e4e3ccc25a0acb557"
+        },
+        {
+          "path": "cond_prefill.mlmodelc/coremldata.bin",
+          "size": 3519,
+          "sha256": "851fd8269184aac7f2286d4439692c02f86ab392fe635ff45a39f8243e1fd44e"
+        },
+        {
+          "path": "cond_prefill.mlmodelc/model.mil",
+          "size": 958705,
+          "sha256": "d4f74ab3611cfe0504e40e42ee86b9fd6dbef4f3f221a7329f438f2d141d2af3"
+        },
+        {
+          "path": "cond_prefill.mlmodelc/weights/weight.bin",
+          "size": 586381056,
+          "sha256": "67d8d4f5360674983ff849bf4d218d657f2f21e81a0fa28007f12f98b46078c1"
+        },
+        {
+          "path": "constants_bin/bos_before_voice.bin",
+          "size": 4096,
+          "sha256": "3db3c1dd0a65207fd53125249496a772147e2c41a0e7b0664ff71c5ced7729eb"
+        },
+        {
+          "path": "constants_bin/bos_emb.bin",
+          "size": 128,
+          "sha256": "062f9c68cf2477920027c247050aaa5e6ad4a070192102a730ae6c327e7b7e76"
+        },
+        {
+          "path": "constants_bin/estelle.safetensors",
+          "size": 33035296,
+          "sha256": "f1fa8ea7ea7f39f4d9a14c403ea3bd97af17e63e1e64ca9c8484efaedca93170"
+        },
+        {
+          "path": "constants_bin/speaker_proj_weight.bin",
+          "size": 131072,
+          "sha256": "5d8976cbbbf96bdf96ef6b205a1e5fd5e79e8fb03793c475fd4ca66a2c4a8a9c"
+        },
+        {
+          "path": "constants_bin/text_embed_table.bin",
+          "size": 16388096,
+          "sha256": "8db4694230c0fd8e705dd731b57aa6e41d380c034b593f82b1560273c678d15b"
+        },
+        {
+          "path": "constants_bin/tokenizer.model",
+          "size": 60173,
+          "sha256": "521c85bdb2da10618f4be52021ed1cb2a7a6299b040708487f133193f7b305e2"
+        },
+        {
+          "path": "flow_decoder_fused.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "b83a8ae055446657c1bb78a915622efdec5d796d3438331e5879aa0050dd223b"
+        },
+        {
+          "path": "flow_decoder_fused.mlmodelc/coremldata.bin",
+          "size": 413,
+          "sha256": "b77b677b547d6ce2ee01d58dc20e75cd5a5ecf2ce86b0cb82a32bfc1c6aec496"
+        },
+        {
+          "path": "flow_decoder_fused.mlmodelc/model.mil",
+          "size": 333331,
+          "sha256": "0257898b9a6ce06c961959aae993bb27c558f509fbea7407d094b879f872ec3f"
+        },
+        {
+          "path": "flow_decoder_fused.mlmodelc/weights/weight.bin",
+          "size": 19012608,
+          "sha256": "7feb662b6fb8571b8699c2a70bfaa7b178b9d5dab8e52c2d2b435a68ce60861a"
+        },
+        {
+          "path": "flowlm_stepv2.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "d20222b9d25c929804d534f19b9f51daad549805cb010d9b5f0dd970272ef3f6"
+        },
+        {
+          "path": "flowlm_stepv2.mlmodelc/coremldata.bin",
+          "size": 3561,
+          "sha256": "4e5930318538862799470bd2cc790a6cc6079e9ba9d35249d74fc0850217b096"
+        },
+        {
+          "path": "flowlm_stepv2.mlmodelc/metadata.json",
+          "size": 32730,
+          "sha256": "2adf8b43bde7e0b0e819d0de5754f957b178f0e00b4e36890f3d969d9241473d"
+        },
+        {
+          "path": "flowlm_stepv2.mlmodelc/model.mil",
+          "size": 972951,
+          "sha256": "beee5557da995894668d67bef83f238f22c47bb421be802bc67f3628e9f340a9"
+        },
+        {
+          "path": "flowlm_stepv2.mlmodelc/weights/weight.bin",
+          "size": 303797056,
+          "sha256": "a9bca994f15518be8b91c0c0cae1fa01dfcd9aa1ed03467210be5941ef040576"
+        },
+        {
+          "path": "mimi_decoder.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "53b41de86399328f57b5db0ac2cbfda4f9016f07b484adf9ec050f0a5ff07b23"
+        },
+        {
+          "path": "mimi_decoder.mlmodelc/coremldata.bin",
+          "size": 1777,
+          "sha256": "de15f7cc799bcdefd8e4474a0befe1161788a3e9aa68b4b448af10939cf35e46"
+        },
+        {
+          "path": "mimi_decoder.mlmodelc/metadata.json",
+          "size": 16844,
+          "sha256": "aaca1b55b078095e72ee4826a94297fc070526d9f4cd3507464e7f2afaa73376"
+        },
+        {
+          "path": "mimi_decoder.mlmodelc/model.mil",
+          "size": 107403,
+          "sha256": "e3828a9fe8390cf43770f10c6ef70bf003a2754957c9c02ae91e7e37dc51dd41"
+        },
+        {
+          "path": "mimi_decoder.mlmodelc/weights/weight.bin",
+          "size": 41768256,
+          "sha256": "06dbd8b6f8fd4ffefd443aa5bb8b1927cb6d71f7bbac1117ada13938964d2b0b"
+        },
+        {
+          "path": "mimi_encoderv3.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "1e34526bdf29f919365c3dee8e5bc0924bd290539b16836248d9c4e8b74d71ed"
+        },
+        {
+          "path": "mimi_encoderv3.mlmodelc/coremldata.bin",
+          "size": 379,
+          "sha256": "77dbe054007375a2ff2e9b88af8dc4182cc2df9f45687f14a2a75971ae3ae45f"
+        },
+        {
+          "path": "mimi_encoderv3.mlmodelc/model.mil",
+          "size": 69830,
+          "sha256": "ea4d5cc05cceb3d1048d0372061380d786721722ae82fdc5fe02e401255e1f5c"
+        },
+        {
+          "path": "mimi_encoderv3.mlmodelc/weights/weight.bin",
+          "size": 27833152,
+          "sha256": "b2df63f9e2ad8a2085e735ec16ef90c7d90e30a8309757de348317599f048e98"
+        }
+      ]
+    },
+    "ultra": {
+      "repository": "FluidInference/parakeet-ultra-coreml",
+      "revision": "95eaa59a39d4394f047a4dc5cce480388a60d1b6",
+      "files": [
+        {
+          "path": "Decoder.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "fe92b6cfaa012abd5248c0bc877832f19807015abffc60d87b8ccc8ccb48b3b5"
+        },
+        {
+          "path": "Decoder.mlmodelc/coremldata.bin",
+          "size": 560,
+          "sha256": "3b06e66768f0df7e21795f50e2b29300e33eeb1a2579dc42c695279c2d308497"
+        },
+        {
+          "path": "Decoder.mlmodelc/model.mil",
+          "size": 13110,
+          "sha256": "956f600207f88396017ca5c96cfa3acd5bfee60835a5b44b762e033a8fb28955"
+        },
+        {
+          "path": "Decoder.mlmodelc/weights/weight.bin",
+          "size": 23604992,
+          "sha256": "02a0d219f281b9665bc10c8768649403b2eebbbf4b44c627041d948e0de11bb4"
+        },
+        {
+          "path": "Encoder.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "d87101d824d6723cf95304da33755c3c60e762663b9ef2b0c4bd0aa166a09a0d"
+        },
+        {
+          "path": "Encoder.mlmodelc/coremldata.bin",
+          "size": 514,
+          "sha256": "397a84a4062f563cbc5f56077c674f09a61d85be5090f61d2f1932afb92ac0fe"
+        },
+        {
+          "path": "Encoder.mlmodelc/model.mil",
+          "size": 1002653,
+          "sha256": "f5d601568a4171d99a314c0fe3f6bc67715da2623732a3fb566e050ea83e5848"
+        },
+        {
+          "path": "Encoder.mlmodelc/weights/weight.bin",
+          "size": 594211328,
+          "sha256": "315ba01f33cadbf601d43ac7f5c86208b7aa75fdaa34705c9869d5abe3521c9b"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "68d38ca646aebafa7a9329e2efda50f5767c49e89fdb5f77f212072bb66f97c4"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/coremldata.bin",
+          "size": 592,
+          "sha256": "5e3af5a4ce686f6c237cadbd9284e10d333bc0e1546633cd0e430e6194044bc4"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/model.mil",
+          "size": 11777,
+          "sha256": "791b3c3cf3eb2079c84623fc880f6bba008d1366e5f8b03e9a8ed8bd4d7194a0"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/weights/weight.bin",
+          "size": 12642764,
+          "sha256": "3f310b85b82341c53ec383025ab094a4e462ee1c592e1ad7c6bfe39cff66ca25"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "c9beeb989c8d66f8be11df59bc6df277ec76cee404f6865b46243835ef562f6d"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/coremldata.bin",
+          "size": 486,
+          "sha256": "dbde3f2300842c1fd51ef3ff948a0bcffe65ffd2dca10707f2509f32c1d65b1d"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/metadata.json",
+          "size": 2841,
+          "sha256": "2a98699e22d279dd37fa1d238aeb1c6db1df0d6fad687775324157689d8f3acf"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/model.mil",
+          "size": 28181,
+          "sha256": "4b8518a956450fec57f06c2a21bdffc26973f7f1fa6842fb38fe917f896b6b93"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/weights/weight.bin",
+          "size": 491072,
+          "sha256": "129b76e3aeafa8afa3ea76d995b964b145fe83700d579f6ff42c4c38fa0968ea"
+        },
+        {
+          "path": "parakeet_vocab.json",
+          "size": 151122,
+          "sha256": "7ec60e05f1b24480736ec0eed40900f4626bce1fa9a60fd700ec7e2a59198735"
+        }
+      ]
+    },
+    "redux": {
+      "repository": "FluidInference/parakeet-redux-coreml",
+      "revision": "8c5ef97a29cd120dc76b354b3f22b7fec3b486f9",
+      "files": [
+        {
+          "path": "Decoder.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "7f24e7248d57024c6f1c5a2ea306f4a6a89db45a363218523bb6410c4b1aecf0"
+        },
+        {
+          "path": "Decoder.mlmodelc/coremldata.bin",
+          "size": 560,
+          "sha256": "422da51d983e93a3e48cd6d46a17d6c32844452414c8e242fb0caaca2b8af5ed"
+        },
+        {
+          "path": "Decoder.mlmodelc/model.mil",
+          "size": 13110,
+          "sha256": "956f600207f88396017ca5c96cfa3acd5bfee60835a5b44b762e033a8fb28955"
+        },
+        {
+          "path": "Decoder.mlmodelc/weights/weight.bin",
+          "size": 23604992,
+          "sha256": "6c6c88c23ee5492a6b229e8cc636ddadb2b01ae0dd559d9cb63123bebf507d77"
+        },
+        {
+          "path": "Encoder.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "7862e972e09315df099d4bfd320743bf106acbf7fe4343317f9de45b0635d7b7"
+        },
+        {
+          "path": "Encoder.mlmodelc/coremldata.bin",
+          "size": 506,
+          "sha256": "ca0b212fe3c06c3ccd35e508fa61e4dfaad19dd0c55b82e4f5bf8711e7758fd9"
+        },
+        {
+          "path": "Encoder.mlmodelc/model.mil",
+          "size": 965906,
+          "sha256": "165487e314ed93c4a44dfec99d57be4e436e7c3dba6eef49fd3f0daf9de6d0d4"
+        },
+        {
+          "path": "Encoder.mlmodelc/weights/weight.bin",
+          "size": 182389312,
+          "sha256": "adbb5550dc6488717d3a1407b53122fbdb1af5e99c330ee20f8d8cfd9ec49252"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "fc857a756b8c9c9f31aa9e1062766cc0a82ac035ef369d6e1cbe97184921479c"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/coremldata.bin",
+          "size": 592,
+          "sha256": "611ea653e2adede7cc1cfe70da36296844f97e95e2c7dd961d45230e5599389d"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/model.mil",
+          "size": 11777,
+          "sha256": "791b3c3cf3eb2079c84623fc880f6bba008d1366e5f8b03e9a8ed8bd4d7194a0"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/weights/weight.bin",
+          "size": 12642764,
+          "sha256": "73b0288acd115fc4c36038f66b6cbf49233182488febf5d8c787bea4009535f7"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "c9beeb989c8d66f8be11df59bc6df277ec76cee404f6865b46243835ef562f6d"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/coremldata.bin",
+          "size": 486,
+          "sha256": "dbde3f2300842c1fd51ef3ff948a0bcffe65ffd2dca10707f2509f32c1d65b1d"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/metadata.json",
+          "size": 2841,
+          "sha256": "2a98699e22d279dd37fa1d238aeb1c6db1df0d6fad687775324157689d8f3acf"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/model.mil",
+          "size": 28181,
+          "sha256": "4b8518a956450fec57f06c2a21bdffc26973f7f1fa6842fb38fe917f896b6b93"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/weights/weight.bin",
+          "size": 491072,
+          "sha256": "129b76e3aeafa8afa3ea76d995b964b145fe83700d579f6ff42c4c38fa0968ea"
+        },
+        {
+          "path": "parakeet_vocab.json",
+          "size": 151122,
+          "sha256": "7ec60e05f1b24480736ec0eed40900f4626bce1fa9a60fd700ec7e2a59198735"
+        }
+      ]
+    },
+    "silero": {
+      "repository": "FluidInference/silero-vad-coreml",
+      "revision": "b419383c55c110e2c9271fa6ee0ea83d03c70d96",
+      "files": [
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "8067594eb3126ab8318af507f0c00cabfed40d5fedb8a0ee5075dd02e903d909"
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/coremldata.bin",
+          "size": 625,
+          "sha256": "7db35a4fd995222a7fb0129713473b15d1462572ab4a2e5e4d56bcaad9e40f41"
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/metadata.json",
+          "size": 3335,
+          "sha256": "2740be542c611e1ba358e1849b4e265c65cdf0b17192767e1e5de86a31ac94d6"
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/model.mil",
+          "size": 176918,
+          "sha256": "c6a9d1bf22d413265da0a07a1d14151c3ea2fad296b3aa5859275b33ef1c3270"
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/weights/weight.bin",
+          "size": 882304,
+          "sha256": "53ecc8b5081146140ab654c89109cf001f2183abddd7a2411c5081feeffff063"
+        }
+      ]
+    }
+  }
+}

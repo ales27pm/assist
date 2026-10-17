@@ -275,7 +275,7 @@ export function AssistantScreen() {
     };
   }, [cancelGeneration, controller]);
 
-  async function perform(action: () => Promise<void>) {
+  async function perform(action: () => Promise<void>, fromVoice = false) {
     if (operation.current || !NativeAssist) {
       return;
     }
@@ -287,7 +287,10 @@ export function AssistantScreen() {
       spokenRequest.current = null;
       responseSpeech.current?.cancel();
       responseSpeech.current = null;
-      if (!(await cancelVoice())) {
+      const audioReady = fromVoice
+        ? await voice.prepareResponse()
+        : await cancelVoice();
+      if (!audioReady) {
         throw new Error('La voix doit être arrêtée avant de continuer.');
       }
       await action();
@@ -444,7 +447,7 @@ export function AssistantScreen() {
         }
         active.current = null;
       }
-    });
+    }, fromVoice);
     return completed;
   }
 

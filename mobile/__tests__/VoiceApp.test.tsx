@@ -219,8 +219,10 @@ test('a native final automatically sends once, reads by default and waits for re
   const captureId = await enter();
   await final(captureId, 'Salut Québec!', 'finishing');
   expect(native.generate).not.toHaveBeenCalled();
+  native.cancelVoice.mockClear();
   await event({ sessionId: captureId, kind: 'state', phase: 'idle' });
   expect(native.generate).toHaveBeenCalledTimes(1);
+  expect(native.cancelVoice).not.toHaveBeenCalled();
   const request = JSON.parse(native.generate.mock.calls[0][0]);
   expect(request.messages).toEqual([
     { role: 'user', content: 'Salut Québec!' },
