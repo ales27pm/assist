@@ -364,6 +364,89 @@ test('declining permission pauses voice mode without automatic retries or sendin
   expect(native.generate).not.toHaveBeenCalled();
 });
 
+test.each(['inactive', 'background'] as const)(
+  'a native error survives %s and return, then explicit resume waits for stop ACK',
+  async state => {
+    const stopped = deferred<string>();
+    const reason =
+      'La session audio a été interrompue. Reprends pour réessayer.';
+    const audioDiagnostics = ['route reason=2 decision=stop'];
+    await renderAsync(<AssistantScreen />);
+    const retiredId = await enter();
+    native.cancelVoice.mockReturnValueOnce(stopped.promise);
+    await event({
+      sessionId: retiredId,
+      kind: 'error',
+      phase: 'listening',
+      message: reason,
+      audioDiagnostics,
+    });
+    expect(screen.getByText('Mode vocal interrompu')).toBeOnTheScreen();
+    await lifecycle(state);
+    await lifecycle('active');
+    await advance(2_000);
+
+    expect(screen.getByText('Mode vocal interrompu')).toBeOnTheScreen();
+    expect(screen.getByText(reason)).toBeOnTheScreen();
+    expect(screen.queryByText('En pause')).not.toBeOnTheScreen();
+    expect(native.startListening).toHaveBeenCalledTimes(1);
+    expect(native.generate).not.toHaveBeenCalled();
+    expect(native.beginSpeech).not.toHaveBeenCalled();
+    await press('Détails audio');
+    expect(screen.getByText(audioDiagnostics[0])).toBeOnTheScreen();
+
+    await press('Reprendre');
+    expect(native.startListening).toHaveBeenCalledTimes(1);
+    await act(async () => stopped.resolve(voiceState()));
+    expect(native.startListening).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('À ton écoute')).toBeOnTheScreen();
+    expect(screen.queryByText(reason)).not.toBeOnTheScreen();
+    expect(
+      screen.queryByRole('button', { name: 'Détails audio' }),
+    ).not.toBeOnTheScreen();
+    await event({
+      sessionId: retiredId,
+      kind: 'error',
+      phase: 'idle',
+      message: 'Ancienne erreur retardée.',
+    });
+    await final(retiredId, 'Ancienne transcription retardée.');
+    expect(screen.getByText('À ton écoute')).toBeOnTheScreen();
+    expect(
+      screen.queryByText('Ancienne erreur retardée.'),
+    ).not.toBeOnTheScreen();
+    expect(native.startListening).toHaveBeenCalledTimes(2);
+    expect(native.generate).not.toHaveBeenCalled();
+  },
+);
+
+test.each(['manual', 'background'] as const)(
+  'a late native error after %s pause never replaces the paused state or adds an alert',
+  async pause => {
+    const stopped = deferred<string>();
+    await renderAsync(<AssistantScreen />);
+    const retiredId = await enter();
+    native.cancelVoice.mockReturnValueOnce(stopped.promise);
+    if (pause === 'manual') await press('Mettre en pause');
+    else await lifecycle('background');
+    await event({
+      sessionId: retiredId,
+      kind: 'error',
+      phase: 'idle',
+      message: 'Erreur de l’ancienne session.',
+    });
+    await final(retiredId, 'Ancien texte après la pause.');
+    await act(async () => stopped.resolve(voiceState()));
+    if (pause === 'background') await lifecycle('active');
+
+    expect(screen.getByText('En pause')).toBeOnTheScreen();
+    expect(screen.queryByRole('alert')).not.toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: 'Reprendre' })).toBeEnabled();
+    expect(native.startListening).toHaveBeenCalledTimes(1);
+    expect(native.generate).not.toHaveBeenCalled();
+  },
+);
+
 test.each(['no-audio', 'empty-final'] as const)(
   '%s never auto-sends and requires explicit resume',
   async kind => {

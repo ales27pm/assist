@@ -11,11 +11,16 @@ envoi local, lecture progressive et tour suivant. Ce retour valide le parcours
 de l’étape 3 comme base de travail; il ne constitue pas une qualification
 formelle des latences, de l’accent, des permissions ou de toutes les routes.
 
-**Candidat actuel : build 17, interruption vocale pendant la lecture.** Le code
-maintient un STT Apple local avec AEC Apple VPIO pendant le TTS, puis promeut la
-même tâche de reconnaissance lorsque l’utilisateur intervient. Les contrôles
-JavaScript, statiques et bancs natifs passent; l’archive, la livraison et la
-qualification acoustique de ce candidat restent à faire.
+**Build 17 livré : interruption vocale pendant la lecture.** Le code maintient
+un STT Apple local avec AEC Apple VPIO pendant le TTS, puis promeut la même tâche
+de reconnaissance lorsque l’utilisateur intervient. Après livraison TestFlight,
+un essai utilisateur a affiché une interruption audio avant la première
+transcription; sa raison native exacte reste inconnue.
+
+**Candidat actuel : build 18, fiabilité des reconfigurations audio.** Il distingue
+les reconfigurations internes compatibles des changements réels de périphérique,
+vérifie la santé du graphe et conserve l’erreur dans le bon état d’interface.
+La qualification physique de l’interruption vocale reste ouverte.
 
 ## Référence produit et limites
 
@@ -41,8 +46,8 @@ n’est revendiquée pour l’app locale.
 Le parcours clavier et l’envoi manuel restent disponibles. Les étapes 0 à 2
 expliquent les fondations de la référence actuelle; leurs objectifs de mesure
 restent ouverts lorsqu’aucun résultat physique n’est consigné. L’étape 3 possède
-le retour positif du build 16. L’étape 4 est implémentée dans le candidat 17,
-sans être encore qualifiée sur appareil.
+le retour positif du build 16. L’étape 4 est livrée au build 17; le candidat 18
+traite la régression de route observée avant sa qualification sur appareil.
 
 ### 0. Rendre la capture observable et qualifier les enchaînements
 
@@ -142,7 +147,7 @@ Le gain de latence doit rester compatible avec le respect des pauses.
 **Tranche : l’agent parle; l’utilisateur dit « non, attends »; le son s’arrête
 et la nouvelle intervention devient le tour suivant.**
 
-**Implémentée dans le candidat build 17, pas encore livrée ni qualifiée.** Le
+**Livrée au build 17, qualification acoustique encore ouverte.** Le
 choix de cette tranche est un STT local actif pendant la lecture, avec le
 traitement d’écho Apple VPIO et `.voiceChat`. Le TTS est produit par
 `AVSpeechSynthesizer.write` et joué par `AVAudioPlayerNode` dans le même graphe.
@@ -281,6 +286,7 @@ qu’après qualification de la configuration exacte. Aucun engagement SE2 n’e
 pris par cette feuille de route.
 
 Le build 16 constitue la référence fonctionnelle rapportée par l’utilisateur.
-Le candidat 17 ajoute l’interruption vocale; sa livraison et sa qualification
-physique restent distinctes de ses contrôles logiciels. Aucun téléchargement de
+Le build 17 ajoute l’interruption vocale; le candidat 18 corrige sa gestion des
+routes audio. La qualification physique reste distincte des contrôles logiciels,
+de l’archive et de la livraison TestFlight. Aucun téléchargement de
 poids ou remplacement des voix Apple n’est impliqué par cette étape.

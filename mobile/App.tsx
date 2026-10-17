@@ -505,8 +505,9 @@ export function AssistantScreen() {
     const lifecycle = AppState.addEventListener('change', state => {
       // Permission prompts are allowed to finish; background always stops.
       if (
-        state === 'background' ||
-        (state !== 'active' && controller.snapshot().phase !== 'starting')
+        controller.isActive() &&
+        (state === 'background' ||
+          (state !== 'active' && controller.snapshot().phase !== 'starting'))
       ) {
         controller.pause();
       }
@@ -773,6 +774,7 @@ export function AssistantScreen() {
           {tab === 'chat' && speechMode && (
             <VoiceConversationScreen
               {...voiceConversation}
+              audioDiagnostics={voice.audioDiagnostics}
               bargeInReady={voice.status?.phase === 'speaking' && voice.status.monitoring === true}
               readResponses={readResponses}
               onPause={() => {

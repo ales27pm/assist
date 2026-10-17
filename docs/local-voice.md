@@ -7,10 +7,15 @@ sur son iPhone.** Ce retour valide une référence utilisable pour l’étape 3 
 [feuille de route](voice-roadmap.md); il ne remplace pas une qualification
 formelle des latences, des routes audio ou des erreurs.
 
-Le **candidat build 17** ajoute l’interruption par la voix pendant la lecture.
-Ses contrôles JavaScript et bancs natifs passent; à la préparation de ce
-candidat, l’archive, la livraison et les essais acoustiques restent à faire.
-Il ne revendique pas la qualité ou la fluidité de ChatGPT.
+Le **build 17**, livré dans TestFlight interne, ajoute l’interruption par la
+voix pendant la lecture. Un essai utilisateur affiche toutefois une interruption
+audio avant la première transcription. Le message regroupe plusieurs causes :
+la raison exacte reçue sur cet iPhone n’est pas encore établie.
+
+Le **candidat build 18** corrige le traitement trop large des notifications de
+route et conserve l’état d’erreur lors d’un changement d’activité de l’app.
+L’archive, la livraison et les nouveaux essais physiques de ce candidat restent
+à confirmer. Il ne revendique pas la qualité ou la fluidité de ChatGPT.
 
 Les builds 13 à 15 ont été livrés sur TestFlight. Ils utilisaient une dictée vers
 un brouillon, un envoi manuel, puis une lecture facultative; les versions 14 et
@@ -78,7 +83,7 @@ Le build 16 était **demi-duplex**, avec le bouton **Interrompre** pour reprendr
 la parole. Le candidat 17 conserve ce bouton et ajoute le parcours ci-dessous.
 Il ne fournit aucune écoute continue en arrière-plan.
 
-## Interruption vocale du candidat 17
+## Interruption vocale depuis le build 17
 
 Pendant la lecture, le candidat maintient une reconnaissance Apple **locale**
 avec le traitement vocal Apple VPIO activé dans un graphe `.voiceChat`.
@@ -210,11 +215,52 @@ invalide cette demande. Le retour au premier plan ne reprend automatiquement ni
 microphone ni ancienne phrase. Fermer l'écran, quitter vers Réglages ou démonter
 le module annule également le travail vocal.
 
+Le candidat 18 compare les identités des entrées/sorties en mémoire et vérifie
+le moteur, le traitement vocal et les formats du graphe. Une reconfiguration
+interne compatible ne devient plus automatiquement une interruption. Une perte
+de périphérique, un changement effectif, une entrée absente, un moteur inutilisable
+ou une interruption système continuent d’arrêter la session. Une reconfiguration
+acceptée doit aussi être suivie de nouveaux buffers micro; le silence reste valide.
+Aucune fenêtre de démarrage n’ignore toutes les notifications.
+
+En cas d’erreur, **Détails audio** permet de consulter un historique local borné
+à huit lignes de 400 caractères : raison de notification, phase, types de ports,
+état du moteur/traitement vocal, formats et décision. Les identités de ports
+restent privées en mémoire; aucun UID, nom d’accessoire, texte dicté ou audio
+n’est exposé. L’historique survit à l’arrêt et est renouvelé pour une nouvelle
+session. Il n’est pas envoyé à un service.
+
+Une erreur reste **Mode vocal interrompu** après un passage inactif/arrière-plan;
+le retour n’ouvre pas le micro. **Reprendre** attend l’arrêt en cours avant une
+nouvelle capture. Les fermetures et Réglages continuent d’attendre cet arrêt.
+
 Ces garanties de code demandent des essais natifs : les tests JavaScript ne
-prouvent pas la libération effective du microphone, l'arrêt audible ou la
+prouvent pas la libération effective du microphone, l’arrêt audible ou la
 transition correcte entre routes.
 
-## Validation du candidat 17
+## Validation du candidat 18 avant archive
+
+- `npm run check` : **522 tests JavaScript dans 22 suites**, TypeScript,
+  ESLint sans avertissement et génération du bridge réussis.
+- Contrat local : **8 contrôles statiques**; démarrage iOS : **2 contrôles**.
+- Les six sources Swift passent le typecheck Swift6 strict arm64-iOS27.1 sur
+  SDK26.2. Le projet Xcode porte le numéro 18 et passe `plutil`.
+- Bancs natifs synthétiques : duplex **17**, mesure **8**, file **9**, callbacks
+  **9** avec 128 frames et deux pièges d’isolation attendus. Le premier contrôle
+  négatif Intel VM a terminé comme attendu mais sa backtrace était insuffisamment
+  symbolisée; une relance unique a passé le matcher strict.
+- La revue croisée couvre la catégorie propre à l’activation, les notifications
+  retardées, les UID différents malgré le même type de port, les formats et le
+  moteur invalides, les compteurs PCM entre deux reconfigurations, l’annulation
+  et les détails d’erreur reçus dans un ordre différent sur le bridge.
+
+L’archive SDK27.1, l’acceptation Apple et la livraison TestFlight sont des étapes
+séparées, encore à confirmer à la préparation de cette révision. Aucun moteur,
+micro, STT ou TTS réel n’est démarré par ces bancs synthétiques. La raison exacte
+sur l’iPhone du signalement initial et le comportement acoustique restent à
+valider sur l’appareil.
+
+## Référence de validation du build 17
 
 Le contrôle local complet est terminé :
 

@@ -31,6 +31,8 @@ export type VoiceStatus = {
   reason?: string;
   voiceName?: string;
   diagnostics?: VoiceInputDiagnostics;
+  /** Bounded local route/engine observations; no device names, IDs or audio. */
+  audioDiagnostics?: string[];
 };
 
 export type VoiceEvent = {
@@ -39,6 +41,7 @@ export type VoiceEvent = {
   isFinal?: boolean;
   message?: string;
   monitoring?: boolean;
+  audioDiagnostics?: string[];
 } & (
   | { kind: 'input'; phase: 'listening'; diagnostics: VoiceInputDiagnostics }
   | {
@@ -120,6 +123,17 @@ function inputDiagnostics(value: unknown): VoiceInputDiagnostics {
   } as VoiceInputDiagnostics;
 }
 
+function audioHistory(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > 8 ||
+    value.some(line => typeof line !== 'string' || line.length > 400)
+  ) {
+    throw new Error('Historique audio invalide.');
+  }
+  return [...value];
+}
+
 export function parseVoiceStatus(json: string): VoiceStatus {
   const value = object(json);
   if (
@@ -138,6 +152,9 @@ export function parseVoiceStatus(json: string): VoiceStatus {
     ...value,
     ...(value.diagnostics !== undefined && {
       diagnostics: inputDiagnostics(value.diagnostics),
+    }),
+    ...(value.audioDiagnostics !== undefined && {
+      audioDiagnostics: audioHistory(value.audioDiagnostics),
     }),
   } as VoiceStatus;
 }
@@ -169,6 +186,9 @@ export function parseVoiceEvent(json: string): VoiceEvent {
     ...value,
     ...(value.diagnostics !== undefined && {
       diagnostics: inputDiagnostics(value.diagnostics),
+    }),
+    ...(value.audioDiagnostics !== undefined && {
+      audioDiagnostics: audioHistory(value.audioDiagnostics),
     }),
   } as VoiceEvent;
 }

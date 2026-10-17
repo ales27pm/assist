@@ -30,6 +30,7 @@ function controller(extra: Partial<VoiceController> = {}): VoiceController {
     phase: 'idle',
     error: '',
     diagnostics: null,
+    audioDiagnostics: [],
     captureBusy: false,
     startListening: jest.fn(async () => true),
     finishListening: jest.fn(async () => true),
