@@ -1,5 +1,12 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useAppearance } from './appearance';
 import { InterfaceIcon } from './InterfaceIcon';
 import { uiGrammar } from './uiGrammar';
@@ -16,6 +23,9 @@ type Props = {
   onModel: () => void;
   onAppearance: () => void;
   appearanceRef: React.Ref<React.ComponentRef<typeof View>>;
+  readResponses?: boolean;
+  onReadResponsesChange?: (enabled: boolean) => void;
+  voiceAvailable?: boolean;
 };
 
 export function SettingsScreen({
@@ -29,6 +39,9 @@ export function SettingsScreen({
   onModel,
   onAppearance,
   appearanceRef,
+  readResponses = true,
+  onReadResponsesChange,
+  voiceAvailable = true,
 }: Props) {
   const { theme } = useAppearance();
   const { colors } = theme;
@@ -125,6 +138,27 @@ export function SettingsScreen({
             )}
           </View>
         )}
+        <View style={[styles.voiceRow, { borderColor: colors.separator }]}>
+          <View style={styles.rowCopy}>
+            <Text style={[styles.rowTitle, { color: colors.text }]}>
+              Lire les réponses à voix haute
+            </Text>
+            <Text style={[styles.caption, { color: colors.muted }]}>
+              {voiceAvailable
+                ? 'Lecture automatique dans le mode vocal.'
+                : 'Voix locale indisponible. Tu peux désactiver la lecture automatique.'}
+            </Text>
+          </View>
+          <Switch
+            accessibilityLabel="Lire les réponses à voix haute"
+            value={readResponses}
+            disabled={!onReadResponsesChange}
+            aria-disabled={!onReadResponsesChange}
+            onValueChange={onReadResponsesChange}
+            hitSlop={8}
+            style={styles.voiceSwitch}
+          />
+        </View>
         <SettingsRow
           label="Apparence"
           icon="appearance"
@@ -167,6 +201,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   rowCopy: { flex: 1, gap: 4 },
+  voiceRow: {
+    minHeight: 84,
+    paddingVertical: uiGrammar.harmony.space.large,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: uiGrammar.harmony.space.medium,
+    borderBottomWidth: 1,
+  },
+  voiceSwitch: { flexShrink: 0 },
   rowTitle: { ...uiGrammar.type.body, fontWeight: '500' },
   leadingIcon: {
     width: 24,

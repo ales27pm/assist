@@ -115,6 +115,20 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   });
 }
 
+- (void)getVoicePreferences:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice getVoicePreferences:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)setVoicePreferences:(BOOL)readResponses resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice setVoicePreferences:readResponses completion:AssistPromise(resolve, reject)];
+  });
+}
+
 - (void)startListening:(NSString *)sessionId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }

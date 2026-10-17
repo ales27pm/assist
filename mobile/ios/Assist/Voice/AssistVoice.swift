@@ -78,6 +78,18 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         completion(statusJSON(), nil)
     }
 
+    @objc(getVoicePreferences:)
+    func getVoicePreferences(_ completion: (String?, NSError?) -> Void) {
+        let value = UserDefaults.standard.object(forKey: "assist.voice.readResponses") as? Bool ?? true
+        completion(encode(["readResponses": value]), nil)
+    }
+
+    @objc(setVoicePreferences:completion:)
+    func setVoicePreferences(_ readResponses: Bool, completion: (String?, NSError?) -> Void) {
+        UserDefaults.standard.set(readResponses, forKey: "assist.voice.readResponses")
+        completion(encode(["readResponses": readResponses]), nil)
+    }
+
     @objc(startListening:completion:)
     func startListening(_ id: String, completion: @escaping (String?, NSError?) -> Void) {
         guard !invalidated else { completion(nil, Self.error("E_VOICE_INVALIDATED", "La voix est fermée.")); return }
@@ -391,15 +403,18 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     ) -> @Sendable (Notification) -> Void {
         { [weak owner] notification in
             let routeReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            let interruptionType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
             // This observer explicitly runs on the main operation queue. Handle
             // it synchronously so an old route event cannot stop a newer turn.
             MainActor.assumeIsolated { [weak owner] in
-                owner?.handleNotification(name, routeReason: routeReason)
+                owner?.handleNotification(name, routeReason: routeReason, interruptionType: interruptionType)
             }
         }
     }
 
-    private func handleNotification(_ name: Notification.Name, routeReason: UInt?) {
+    private func handleNotification(
+        _ name: Notification.Name, routeReason: UInt?, interruptionType: UInt?
+    ) {
         if name == AVAudioSession.routeChangeNotification &&
             routeReason == AVAudioSession.RouteChangeReason.categoryChange.rawValue { return }
         if name == UIApplication.didBecomeActiveNotification {
@@ -411,6 +426,15 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         // Permission sheets may deactivate the app; actual background cancels.
         if name == UIApplication.willResignActiveNotification && phase == "requesting" { return }
         guard phase != "idle" else { return }
+        if name == AVAudioSession.interruptionNotification || name == AVAudioSession.routeChangeNotification {
+            guard audioSessionActive else { return }
+            // Ending an earlier interruption is not a new failure of a turn.
+            if name == AVAudioSession.interruptionNotification &&
+                interruptionType == AVAudioSession.InterruptionType.ended.rawValue { return }
+            fail("La session audio a été interrompue ou son périphérique a changé. Relance le mode vocal.",
+                 code: "E_VOICE_INTERRUPTED")
+            return
+        }
         cancelCurrent()
     }
 

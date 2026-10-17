@@ -9,6 +9,8 @@ export type ProgressEvent = {
 export interface Spec extends TurboModule {
   getStatus(): Promise<string>;
   getVoiceStatus(): Promise<string>;
+  getVoicePreferences(): Promise<string>;
+  setVoicePreferences(readResponses: boolean): Promise<string>;
   startListening(sessionId: string): Promise<string>;
   stopListening(): Promise<string>;
   cancelVoice(): Promise<string>;

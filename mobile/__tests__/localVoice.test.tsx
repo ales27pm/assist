@@ -120,6 +120,263 @@ test('queries capabilities without starting capture or playback on mount', async
   expect(result.current.captureBusy).toBe(false);
 });
 
+test.each(['listening', 'requesting'])(
+  'startListening reports an accepted %s capture and rejects a duplicate start',
+  async phase => {
+    native.startListening.mockResolvedValueOnce(status(phase));
+    const { result } = await renderHookAsync(() =>
+      useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+    );
+    await act(async () => {
+      expect(await result.current.startListening()).toBe(true);
+      expect(await result.current.startListening()).toBe(false);
+    });
+    expect(native.startListening).toHaveBeenCalledTimes(1);
+    expect(result.current.phase).toBe(phase);
+  },
+);
+
+test('startListening returns false on a rejected or inactive native start and permits retry', async () => {
+  native.startListening
+    .mockRejectedValueOnce(new Error('Micro indisponible.'))
+    .mockResolvedValueOnce(status());
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    expect(await result.current.startListening()).toBe(false);
+  });
+  expect(result.current.error).toBe('Micro indisponible.');
+  await act(async () => {
+    expect(await result.current.startListening()).toBe(false);
+    expect(await result.current.startListening()).toBe(true);
+  });
+  expect(result.current.phase).toBe('listening');
+});
+
+test.each([
+  { enabled: false, appState: 'active' },
+  { enabled: true, appState: 'background' },
+])(
+  'startListening returns false before native capture when blocked by %j',
+  async scenario => {
+    Object.defineProperty(AppState, 'currentState', {
+      value: scenario.appState,
+    });
+    const { result } = await renderHookAsync(() =>
+      useLocalVoice({ onTranscript: jest.fn(), enabled: scenario.enabled }),
+    );
+    await act(async () => {
+      expect(await result.current.startListening()).toBe(false);
+    });
+    expect(native.startListening).not.toHaveBeenCalled();
+  },
+);
+
+test('onEvent preserves final capture identity and waits for a separate native idle event', async () => {
+  const onEvent = jest.fn();
+  const onTranscript = jest.fn();
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript, onEvent, enabled: true }),
+  );
+  await act(async () => {
+    expect(await result.current.startListening()).toBe(true);
+  });
+  const sessionId = native.startListening.mock.calls[0][0];
+  const final = {
+    sessionId,
+    kind: 'transcript',
+    phase: 'finishing',
+    text: 'Le prochain tour est vendredi.',
+    isFinal: true,
+  };
+  const diagnostics = inputDiagnostics();
+  await act(async () => {
+    emit({ sessionId, kind: 'input', phase: 'listening', diagnostics });
+    emit(final);
+  });
+  expect(onEvent.mock.calls.map(call => call[0])).toEqual([
+    { sessionId, kind: 'input', phase: 'listening', diagnostics },
+    final,
+  ]);
+  expect(onTranscript).toHaveBeenCalledWith(final.text);
+  expect(result.current.phase).toBe('finishing');
+  await act(async () => {
+    emit({ sessionId, kind: 'state', phase: 'idle' });
+  });
+  expect(onEvent).toHaveBeenLastCalledWith({
+    sessionId,
+    kind: 'state',
+    phase: 'idle',
+  });
+  expect(result.current.phase).toBe('idle');
+});
+
+test('a natural speech idle event releases its identity before invoking onEvent', async () => {
+  let restart: Promise<boolean> | undefined;
+  const onEvent = jest.fn(event => {
+    if (event.kind === 'state' && event.phase === 'idle') {
+      restart = result.current.startListening();
+    }
+  });
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), onEvent, enabled: true }),
+  );
+  await act(async () => {
+    await result.current.beginSpeech('reply-current');
+    emit({ sessionId: 'reply-current', kind: 'state', phase: 'idle' });
+    expect(await restart).toBe(true);
+  });
+  expect(onEvent).toHaveBeenCalledWith({
+    sessionId: 'reply-current',
+    kind: 'state',
+    phase: 'idle',
+  });
+  expect(result.current.phase).toBe('listening');
+  expect(native.cancelVoice).not.toHaveBeenCalled();
+});
+
+test('onEvent uses the latest callback without resubscribing to native events', async () => {
+  const first = jest.fn();
+  const latest = jest.fn();
+  const { result, rerenderAsync } = await renderHookAsync<
+    ReturnType<typeof useLocalVoice>,
+    { callback: typeof first }
+  >(
+    ({ callback }) =>
+      useLocalVoice({
+        onTranscript: jest.fn(),
+        onEvent: callback,
+        enabled: true,
+      }),
+    {
+      initialProps: { callback: first },
+    },
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  const sessionId = native.startListening.mock.calls[0][0];
+  await rerenderAsync({ callback: latest });
+  await act(async () => {
+    transcript(sessionId, 'Une nouvelle callback.');
+  });
+  expect(first).not.toHaveBeenCalled();
+  expect(latest).toHaveBeenCalledTimes(1);
+  expect(native.onVoiceEvent).toHaveBeenCalledTimes(1);
+});
+
+test('a pending cancellation cannot appear as natural speech completion in onEvent', async () => {
+  const pending = deferred<string>();
+  native.cancelVoice.mockReturnValueOnce(pending.promise);
+  const onEvent = jest.fn();
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), onEvent, enabled: true }),
+  );
+  let cancellation: Promise<boolean>;
+  await act(async () => {
+    await result.current.beginSpeech('reply-cancelled');
+    cancellation = result.current.cancel();
+    emit({ sessionId: 'reply-cancelled', kind: 'state', phase: 'idle' });
+    expect(await result.current.startListening()).toBe(false);
+  });
+  expect(onEvent).not.toHaveBeenCalled();
+  await act(async () => {
+    pending.resolve(status());
+    await cancellation;
+  });
+  expect(result.current.phase).toBe('idle');
+});
+
+test('onEvent rejects stale or malformed events and preserves the current capture', async () => {
+  const onEvent = jest.fn();
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), onEvent, enabled: true }),
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  const sessionId = native.startListening.mock.calls[0][0];
+  await act(async () => {
+    transcript('older-capture', 'Ancien texte', true);
+    emit({
+      sessionId,
+      kind: 'transcript',
+      phase: 'listening',
+      text: 'missing final flag',
+    });
+  });
+  expect(onEvent).not.toHaveBeenCalled();
+  expect(result.current.phase).toBe('listening');
+});
+
+test.each(['hidden', 'background', 'unmounted'])(
+  'onEvent does not deliver current-session events while %s',
+  async lifecycle => {
+    const onEvent = jest.fn();
+    const { result, rerenderAsync, unmountAsync } = await renderHookAsync<
+      ReturnType<typeof useLocalVoice>,
+      { enabled: boolean }
+    >(
+      ({ enabled }) =>
+        useLocalVoice({ onTranscript: jest.fn(), onEvent, enabled }),
+      {
+        initialProps: { enabled: true },
+      },
+    );
+    await act(async () => {
+      await result.current.startListening();
+    });
+    const sessionId = native.startListening.mock.calls[0][0];
+    if (lifecycle === 'hidden') await rerenderAsync({ enabled: false });
+    else if (lifecycle === 'unmounted') await unmountAsync();
+    else await act(async () => stateChanged('background'));
+    await act(async () => {
+      transcript(sessionId, 'Ne pas relancer automatiquement.', true);
+      emit({ sessionId, kind: 'state', phase: 'idle' });
+    });
+    expect(onEvent).not.toHaveBeenCalled();
+  },
+);
+
+test('a retained startListening callback returns false after unmount', async () => {
+  const { result, unmountAsync } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  const startListening = result.current.startListening;
+  await unmountAsync();
+  await act(async () => {
+    expect(await startListening()).toBe(false);
+  });
+  expect(native.startListening).not.toHaveBeenCalled();
+});
+
+test('legacy onTranscript cancellation invalidates onEvent before delivery', async () => {
+  const pending = deferred<string>();
+  native.cancelVoice.mockReturnValueOnce(pending.promise);
+  const onEvent = jest.fn();
+  const onTranscript: jest.Mock<Promise<boolean>, []> = jest.fn(
+    (): Promise<boolean> => result.current.cancel(),
+  );
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript, onEvent, enabled: true }),
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  await act(async () => {
+    transcript(native.startListening.mock.calls[0][0], 'Annule ce tour.');
+  });
+  expect(onTranscript).toHaveBeenCalledTimes(1);
+  expect(onEvent).not.toHaveBeenCalled();
+  expect(result.current.phase).toBe('stopping');
+  await act(async () => {
+    pending.resolve(status());
+    await pending.promise;
+  });
+  expect(result.current.phase).toBe('idle');
+});
+
 test.each([
   { bufferCount: -1 },
   { frameCount: 1.5 },
@@ -267,7 +524,7 @@ test('late command status cannot replace newer input observations', async () => 
   const { result } = await renderHookAsync(() =>
     useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
   );
-  let start: Promise<void>;
+  let start: Promise<boolean>;
   await act(async () => {
     start = result.current.startListening();
     await Promise.resolve();
@@ -376,6 +633,80 @@ test('finishing capture keeps the final local transcript available', async () =>
   expect(result.current.captureBusy).toBe(false);
 });
 
+test('finishListening reports a native stop rejection instead of a successful turn boundary', async () => {
+  native.stopListening.mockRejectedValueOnce(
+    new Error('Arrêt du micro impossible.'),
+  );
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    expect(await result.current.finishListening()).toBe(false);
+    await result.current.startListening();
+    expect(await result.current.finishListening()).toBe(false);
+  });
+  expect(result.current.phase).toBe('idle');
+  expect(result.current.error).toBe('Arrêt du micro impossible.');
+  expect(native.cancelVoice).toHaveBeenCalledTimes(1);
+});
+
+test('finishListening succeeds when final text and native idle arrive before the stop ACK', async () => {
+  const pending = deferred<string>();
+  native.stopListening.mockReturnValueOnce(pending.promise);
+  const onTranscript = jest.fn();
+  const onEvent = jest.fn();
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript, onEvent, enabled: true }),
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  const sessionId = native.startListening.mock.calls[0][0];
+  let finish: Promise<boolean>;
+  await act(async () => {
+    finish = result.current.finishListening();
+    emit({
+      sessionId,
+      kind: 'transcript',
+      phase: 'finishing',
+      text: 'La phrase finale complète.',
+      isFinal: true,
+    });
+    emit({ sessionId, kind: 'state', phase: 'idle' });
+  });
+  expect(result.current.phase).toBe('idle');
+  await act(async () => {
+    pending.resolve(status('finishing'));
+    expect(await finish).toBe(true);
+  });
+  expect(result.current.phase).toBe('idle');
+  expect(onTranscript).toHaveBeenCalledWith('La phrase finale complète.');
+  expect(onEvent.mock.calls.map(call => call[0].kind)).toEqual([
+    'transcript',
+    'state',
+  ]);
+  expect(native.cancelVoice).not.toHaveBeenCalled();
+});
+
+test('finishListening rejects a stop ACK invalidated by cancellation', async () => {
+  const pending = deferred<string>();
+  native.stopListening.mockReturnValueOnce(pending.promise);
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  let finish: Promise<boolean>;
+  await act(async () => {
+    await result.current.startListening();
+    finish = result.current.finishListening();
+    await result.current.cancel();
+  });
+  await act(async () => {
+    pending.resolve(status('finishing'));
+    expect(await finish).toBe(false);
+  });
+  expect(result.current.phase).toBe('idle');
+});
+
 test('cancellation rejects late transcripts, state changes, and errors', async () => {
   const onTranscript = jest.fn();
   const { result } = await renderHookAsync(() =>
@@ -411,7 +742,7 @@ test('a pending native start cannot revive capture after cancellation', async ()
   const { result } = await renderHookAsync(() =>
     useLocalVoice({ onTranscript, enabled: true }),
   );
-  let start: Promise<void>;
+  let start: Promise<boolean>;
   await act(async () => {
     start = result.current.startListening();
     await Promise.resolve();
@@ -423,7 +754,7 @@ test('a pending native start cannot revive capture after cancellation', async ()
   });
   await act(async () => {
     pending.resolve(status('listening'));
-    await start;
+    expect(await start).toBe(false);
     transcript(sessionId, 'Trop tard.', true);
   });
 
@@ -439,7 +770,7 @@ test('an inactive privacy prompt preserves the pending first-time authorization'
   const { result } = await renderHookAsync(() =>
     useLocalVoice({ onTranscript, enabled: true }),
   );
-  let start: Promise<void>;
+  let start: Promise<boolean>;
   await act(async () => {
     start = result.current.startListening();
     await Promise.resolve();
@@ -480,7 +811,7 @@ test('a privacy prompt arriving before the next render preserves authorization',
   const { result } = await renderHookAsync(() =>
     useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
   );
-  let start: Promise<void>;
+  let start: Promise<boolean>;
   await act(async () => {
     start = result.current.startListening();
     const sessionId = native.startListening.mock.calls[0][0];
@@ -505,7 +836,7 @@ test('actual backgrounding cancels pending authorization and rejects its late st
   const { result } = await renderHookAsync(() =>
     useLocalVoice({ onTranscript, enabled: true }),
   );
-  let start: Promise<void>;
+  let start: Promise<boolean>;
   await act(async () => {
     start = result.current.startListening();
     await Promise.resolve();
@@ -713,6 +1044,92 @@ test('an immediately drained progressive finish releases capture without cancell
   });
   expect(result.current.phase).toBe('listening');
   expect(native.cancelVoice).not.toHaveBeenCalled();
+});
+
+test('a natural speech idle before the finish ACK succeeds without reviving playback', async () => {
+  const pending = deferred<string>();
+  native.finishSpeech.mockReturnValueOnce(pending.promise);
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  let finish: Promise<boolean>;
+  await act(async () => {
+    await result.current.beginSpeech('reply-drained');
+    finish = result.current.finishSpeech('reply-drained');
+    emit({ sessionId: 'reply-drained', kind: 'state', phase: 'idle' });
+  });
+  expect(result.current.phase).toBe('idle');
+  await act(async () => {
+    pending.resolve(status('speaking'));
+    expect(await finish).toBe(true);
+  });
+  expect(result.current.phase).toBe('idle');
+  expect(result.current.error).toBe('');
+  expect(native.cancelVoice).not.toHaveBeenCalled();
+});
+
+test.each(['error', 'cancel', 'new-capture'])(
+  'a finish ACK cannot accept a speech completion invalidated by %s',
+  async invalidation => {
+    const pending = deferred<string>();
+    native.finishSpeech.mockReturnValueOnce(pending.promise);
+    const { result } = await renderHookAsync(() =>
+      useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+    );
+    let finish: Promise<boolean>;
+    await act(async () => {
+      await result.current.beginSpeech('reply-ending');
+      finish = result.current.finishSpeech('reply-ending');
+      if (invalidation === 'error') {
+        emit({
+          sessionId: 'reply-ending',
+          kind: 'error',
+          phase: 'speaking',
+          message: 'La lecture a été interrompue.',
+        });
+      } else if (invalidation === 'cancel') {
+        await result.current.cancel();
+      }
+      emit({ sessionId: 'reply-ending', kind: 'state', phase: 'idle' });
+      if (invalidation === 'new-capture') {
+        expect(await result.current.startListening()).toBe(true);
+      }
+    });
+    await act(async () => {
+      pending.resolve(status('speaking'));
+      expect(await finish).toBe(false);
+    });
+    expect(result.current.phase).toBe(
+      invalidation === 'new-capture' ? 'listening' : 'idle',
+    );
+    expect(result.current.error).toBe(
+      invalidation === 'error' ? 'La lecture a été interrompue.' : '',
+    );
+  },
+);
+
+test('a failed speech session rejects its finish ACK even before native idle', async () => {
+  const pending = deferred<string>();
+  native.finishSpeech.mockReturnValueOnce(pending.promise);
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  let finish: Promise<boolean>;
+  await act(async () => {
+    await result.current.beginSpeech('reply-error');
+    finish = result.current.finishSpeech('reply-error');
+    emit({
+      sessionId: 'reply-error',
+      kind: 'error',
+      phase: 'speaking',
+      message: 'Erreur avant idle.',
+    });
+  });
+  await act(async () => {
+    pending.resolve(status('idle'));
+    expect(await finish).toBe(false);
+  });
+  expect(result.current.error).toBe('Erreur avant idle.');
 });
 
 test('a pending progressive begin cannot revive speech after cancellation', async () => {

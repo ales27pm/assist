@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   AppState,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -25,7 +26,10 @@ import { SettingsScreen } from './src/SettingsScreen';
 import { ActionButton, Disclosure } from './src/uiPrimitives';
 import { uiGrammar } from './src/uiGrammar';
 import { useLocalVoice } from './src/useLocalVoice';
-import { VoiceControls } from './src/VoiceControls';
+import { VoiceConversationScreen } from './src/VoiceConversationScreen';
+import { VoiceConversationController } from './src/VoiceConversationController';
+import type { ConversationVoiceState } from './src/VoiceConversationController';
+import { useVoicePreferences } from './src/useVoicePreferences';
 import { ResponseSpeechStream } from './src/responseSpeech';
 import {
   AssistantMark,
@@ -91,17 +95,51 @@ export function AssistantScreen() {
   const mounted = useRef(true);
   const counter = useRef(0);
   const statusVersion = useRef(0);
-  const [readResponses, setReadResponses] = useState(false);
-  const readResponsesEnabled = useRef(false);
+  const preferences = useVoicePreferences();
+  const { readResponses } = preferences;
+  const readResponsesEnabled = useRef(readResponses);
+  readResponsesEnabled.current = readResponses;
+  const [speechMode, setSpeechMode] = useState(false);
+  const [voiceConversation, setVoiceConversation] =
+    useState<ConversationVoiceState>({
+      phase: 'paused',
+      transcript: '',
+      reply: '',
+      error: '',
+      diagnostics: null,
+    });
+  const voiceController = useRef<VoiceConversationController | null>(null);
+  const voiceCommands = useRef<{
+    startCapture: (isCurrent: () => boolean) => Promise<boolean>;
+    finishCapture: () => Promise<void>;
+    cancel: () => Promise<void>;
+    generate: (
+      text: string,
+      isCurrent: () => boolean,
+    ) => Promise<{ text: string; spoken: boolean }>;
+  } | null>(null);
+  if (!voiceController.current) {
+    voiceController.current = new VoiceConversationController({
+      startCapture: valid => voiceCommands.current!.startCapture(valid),
+      finishCapture: () => voiceCommands.current!.finishCapture(),
+      cancel: () => voiceCommands.current!.cancel(),
+      generate: (text, valid) => voiceCommands.current!.generate(text, valid),
+      changed: state => {
+        if (mounted.current) setVoiceConversation(state);
+      },
+    });
+  }
+  const controller = voiceController.current;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const requestPrompt = useRef('');
   const speechIntent = useRef(0);
-  const voiceDraft = useRef('');
   const spokenRequest = useRef<string | null>(null);
   const responseSpeech = useRef<ResponseSpeechStream | null>(null);
   const voice = useLocalVoice({
-    enabled: tab === 'chat',
-    onTranscript: text => {
-      setPrompt(voiceDraft.current ? `${voiceDraft.current}\n${text}` : text);
-    },
+    enabled: tab === 'chat' && speechMode,
+    onTranscript: () => undefined,
+    onEvent: event => controller.event(event),
   });
   const cancelVoice = voice.cancel;
   const speakResponse = voice.speak;
@@ -111,7 +149,7 @@ export function AssistantScreen() {
     responseSpeech.current?.cancel();
     responseSpeech.current = null;
     // Silence audio before waiting for cooperative Gemma cancellation.
-    await cancelVoice();
+    const audioStopped = await cancelVoice();
     const requestId = active.current;
     try {
       const json = await NativeAssist?.cancel();
@@ -133,16 +171,18 @@ export function AssistantScreen() {
         setError(errorMessage(e));
       }
     }
+    return audioStopped;
   }, [cancelVoice]);
 
   useEffect(() => {
     if (tab !== 'chat') {
+      if (controller.isActive()) controller.pause();
       speechIntent.current += 1;
       spokenRequest.current = null;
       responseSpeech.current?.cancel();
       responseSpeech.current = null;
     }
-  }, [tab]);
+  }, [tab, controller]);
 
   useEffect(() => {
     mounted.current = true;
@@ -170,7 +210,11 @@ export function AssistantScreen() {
         const update = parseProgress(event.json);
         if (update.requestId === active.current) {
           setProgress(update);
-          if (spokenRequest.current === update.requestId && readResponsesEnabled.current) {
+          controller.progress(update.text);
+          if (
+            spokenRequest.current === update.requestId &&
+            readResponsesEnabled.current
+          ) {
             responseSpeech.current?.push(update.text);
           }
         }
@@ -185,6 +229,7 @@ export function AssistantScreen() {
     });
     return () => {
       mounted.current = false;
+      controller.pause();
       responseSpeech.current?.cancel();
       responseSpeech.current = null;
       subscription?.remove();
@@ -193,7 +238,7 @@ export function AssistantScreen() {
         NativeAssist?.cancel().catch(() => undefined);
       }
     };
-  }, [cancelGeneration]);
+  }, [cancelGeneration, controller]);
 
   async function perform(action: () => Promise<void>) {
     if (operation.current || !NativeAssist) {
@@ -234,39 +279,59 @@ export function AssistantScreen() {
     }
   }
 
-  async function send() {
-    if (!prompt.trim() || engine.phase !== 'ready' || voice.captureBusy) {
+  async function send(
+    text = prompt,
+    fromVoice = false,
+    isCurrent = () => true,
+  ): Promise<(GenerationResult & { spoken: boolean }) | undefined> {
+    if (
+      !text.trim() ||
+      engine.phase !== 'ready' ||
+      (!fromVoice && voice.captureBusy) ||
+      !isCurrent()
+    ) {
       return;
     }
     const speechVersion = speechIntent.current;
-    const readThisResponse = readResponsesEnabled.current;
+    const readThisResponse = fromVoice && readResponsesEnabled.current;
+    let completed: (GenerationResult & { spoken: boolean }) | undefined;
     await perform(async () => {
+      if (!isCurrent()) return;
       const maxTokens = outputBudget(budget);
+      requestPrompt.current = text.trim();
       setShowExample(false);
       const requestId = `request-${Date.now()}-${++counter.current}`;
-      spokenRequest.current = readThisResponse && readResponsesEnabled.current &&
-        speechVersion === speechIntent.current ? requestId : null;
+      if (fromVoice) controller.expectSpeech(requestId);
+      spokenRequest.current =
+        readThisResponse &&
+        readResponsesEnabled.current &&
+        speechVersion === speechIntent.current
+          ? requestId
+          : null;
       const conversation: Message[] = [
-        ...messages,
-        { role: 'user', content: prompt.trim() },
+        ...messagesRef.current,
+        { role: 'user', content: text.trim() },
       ];
       active.current = requestId;
-      const stream: ResponseSpeechStream | null = spokenRequest.current && voice.streamingSupported
-        ? new ResponseSpeechStream({
-            begin: () => voice.beginSpeech(requestId),
-            enqueue: text => voice.enqueueSpeech(text, requestId),
-            finish: () => voice.finishSpeech(requestId),
-            onError: () => {
-              // A failed optional voice stream must not abort the local answer
-              // or mute a newer capture/response that replaced this one.
-              if (responseSpeech.current === stream) {
-                responseSpeech.current = null;
-                spokenRequest.current = null;
-                cancelVoice();
-              }
-            },
-          })
-        : null;
+      let speechFailed = false;
+      const stream: ResponseSpeechStream | null =
+        spokenRequest.current && voice.streamingSupported
+          ? new ResponseSpeechStream({
+              begin: () => voice.beginSpeech(requestId),
+              enqueue: chunk => voice.enqueueSpeech(chunk, requestId),
+              finish: () => voice.finishSpeech(requestId),
+              onError: () => {
+                speechFailed = true;
+                // A failed optional voice stream must not abort the local answer
+                // or mute a newer capture/response that replaced this one.
+                if (responseSpeech.current === stream) {
+                  responseSpeech.current = null;
+                  spokenRequest.current = null;
+                  cancelVoice();
+                }
+              },
+            })
+          : null;
       responseSpeech.current = stream;
       let speechFinished = false;
       setProgress(null);
@@ -284,34 +349,54 @@ export function AssistantScreen() {
         if (result.requestId !== requestId) {
           throw new Error('Identité de génération incohérente.');
         }
-        if (mounted.current) {
+        if (mounted.current && isCurrent()) {
           setProgress(result);
           setReport(result);
           // Incomplete text is visible but never silently saved as a completed turn.
           if (result.finishReason === 'eos' && result.text.trim().length > 0) {
-            setMessages([
+            const nextMessages: Message[] = [
               ...conversation,
               { role: 'assistant', content: result.text },
-            ]);
-            setPrompt('');
+            ];
+            messagesRef.current = nextMessages;
+            setMessages(nextMessages);
+            if (fromVoice) controller.progress(result.text);
+            if (!fromVoice) setPrompt('');
             setProgress(null);
-            if (spokenRequest.current === requestId && readResponsesEnabled.current &&
-                speechVersion === speechIntent.current) {
+            if (
+              spokenRequest.current === requestId &&
+              readResponsesEnabled.current &&
+              speechVersion === speechIntent.current
+            ) {
               spokenRequest.current = null;
               if (stream) {
                 await stream.finish(result.text);
                 speechFinished = true;
               } else {
                 await speakResponse(result.text, requestId);
+                speechFinished = true;
               }
             }
+            if (speechFailed) {
+              throw new Error(
+                'La réponse est disponible, mais sa lecture a échoué. Reprends pour réessayer.',
+              );
+            }
+            completed = {
+              ...result,
+              spoken: readThisResponse && speechFinished,
+            };
           }
         }
       } finally {
         if (responseSpeech.current === stream) {
           responseSpeech.current = null;
           stream?.cancel();
-          if (stream && !speechFinished && spokenRequest.current === requestId) {
+          if (
+            stream &&
+            !speechFinished &&
+            spokenRequest.current === requestId
+          ) {
             spokenRequest.current = null;
             await cancelVoice();
           }
@@ -319,6 +404,96 @@ export function AssistantScreen() {
         active.current = null;
       }
     });
+    return completed;
+  }
+
+  voiceCommands.current = {
+    cancel: async () => {
+      if (!(await cancelGeneration()))
+        throw new Error('L’arrêt du micro n’a pas été confirmé.');
+    },
+    finishCapture: async () => {
+      if (!(await voice.finishListening())) {
+        throw new Error('La dictée n’a pas pu être finalisée.');
+      }
+    },
+    startCapture: async valid => {
+      if (!valid()) return false;
+      if (!preferences.ready)
+        throw new Error('Les réglages vocaux sont en cours de chargement.');
+      outputBudget(budget);
+      if (!voice.status?.recognitionAvailable)
+        throw new Error(
+          voice.status?.reason || 'La reconnaissance locale est indisponible.',
+        );
+      if (readResponsesEnabled.current && !voice.status?.synthesisAvailable) {
+        throw new Error(
+          'Installe une voix française canadienne ou désactive la lecture dans Réglages.',
+        );
+      }
+      if (readResponsesEnabled.current && !voice.streamingSupported) {
+        throw new Error(
+          'Mets Assist à jour pour utiliser la conversation vocale.',
+        );
+      }
+      if (operation.current || !(await cancelVoice()) || !valid()) return false;
+      return voice.startListening();
+    },
+    generate: async (text, valid) => {
+      const result = await send(text, true, valid);
+      if (!result || result.finishReason !== 'eos' || !result.text.trim()) {
+        throw new Error(
+          'La réponse locale ne s’est pas terminée. Reprends pour réessayer.',
+        );
+      }
+      return { text: result.text, spoken: result.spoken };
+    },
+  };
+
+  useEffect(() => {
+    if (speechMode) controller.start();
+  }, [speechMode, controller]);
+
+  useEffect(() => {
+    if (!speechMode) return;
+    const timer = setInterval(() => controller.tick(), 100);
+    const lifecycle = AppState.addEventListener('change', state => {
+      // Permission prompts are allowed to finish; background always stops.
+      if (
+        state === 'background' ||
+        (state !== 'active' && controller.snapshot().phase !== 'starting')
+      ) {
+        controller.pause();
+      }
+    });
+    return () => {
+      clearInterval(timer);
+      lifecycle.remove();
+    };
+  }, [speechMode, controller]);
+
+  async function closeSpeechMode() {
+    await controller.pause();
+    if (mounted.current && controller.snapshot().phase === 'paused')
+      setSpeechMode(false);
+  }
+
+  async function speechSettings() {
+    await controller.pause();
+    if (mounted.current && controller.snapshot().phase === 'paused')
+      openSettings();
+  }
+
+  function changeSpokenReplies(value: boolean) {
+    readResponsesEnabled.current = value;
+    preferences.change(value);
+    if (!value) {
+      speechIntent.current += 1;
+      spokenRequest.current = null;
+      responseSpeech.current?.cancel();
+      responseSpeech.current = null;
+      cancelVoice();
+    }
   }
 
   const ready = engine.phase === 'ready';
@@ -387,23 +562,27 @@ export function AssistantScreen() {
   }
 
   const generating = busy && active.current !== null;
-  const cannotSend = busy || voice.captureBusy || !ready || !prompt.trim() || !!budgetError;
-  const pendingUserText = progress || generating ? prompt.trim() : '';
-  const screenTitle = {
-    chat: 'Conversation',
-    settings: 'Réglages',
-    model: 'Modèle',
-    lab: 'Diagnostics',
-  }[tab];
+  const cannotSend =
+    busy || voice.captureBusy || !ready || !prompt.trim() || !!budgetError;
+  const pendingUserText = progress || generating ? requestPrompt.current : '';
+  const screenTitle =
+    speechMode && tab === 'chat'
+      ? 'Mode vocal'
+      : {
+          chat: 'Conversation',
+          settings: 'Réglages',
+          model: 'Modèle',
+          lab: 'Diagnostics',
+        }[tab];
   const backDestination =
     tab === 'lab' ? 'model' : tab === 'model' ? modelOrigin : 'chat';
   const backLabel = {
-    chat: 'Conversation',
+    chat: speechMode ? 'Mode vocal' : 'Conversation',
     settings: 'Réglages',
     model: 'Modèle',
   }[backDestination];
   const backAccessibilityLabel = {
-    chat: 'Retour à la conversation',
+    chat: speechMode ? 'Retour au mode vocal' : 'Retour à la conversation',
     settings: 'Retour aux réglages',
     model: 'Retour au modèle',
   }[backDestination];
@@ -427,81 +606,84 @@ export function AssistantScreen() {
         style={styles.shell}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={styles.header}>
-          {tab === 'chat' ? (
-            <>
-              <Text role="heading" style={styles.wordmark}>
-                Assist
-              </Text>
-              <View style={styles.headerActions}>
-                <Pressable
-                  role="button"
-                  aria-label="Réglages"
-                  onPress={() => openSettings()}
-                  style={({ pressed }) => [
-                    styles.settingsControl,
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <InterfaceIcon
-                    name="settings"
-                    size={20}
-                    color={theme.colors.muted}
-                  />
-                  <Text style={styles.headerLabel}>Réglages</Text>
-                </Pressable>
-                <Pressable
-                  role="button"
-                  aria-label="Nouvelle conversation"
-                  aria-disabled={busy || !ready}
-                  disabled={busy || !ready}
-                  onPress={newConversation}
-                  style={({ pressed }) => [
-                    styles.headerControl,
-                    pressed && styles.pressed,
-                    (busy || !ready) && styles.disabled,
-                  ]}
-                >
-                  <InterfaceIcon
-                    name="compose"
-                    size={24}
-                    color={theme.colors.text}
-                  />
-                </Pressable>
-              </View>
-            </>
-          ) : (
-            <>
-              <Pressable
-                role="button"
-                aria-label={backAccessibilityLabel}
-                aria-disabled={tab === 'lab' && busy}
-                disabled={tab === 'lab' && busy}
-                onPress={() => setTab(backDestination)}
-                style={({ pressed }) => [
-                  styles.backControl,
-                  tab === 'lab' && busy && styles.disabled,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <View style={styles.backArrow}>
-                  <InterfaceIcon
-                    name="arrow"
-                    size={20}
-                    color={theme.colors.muted}
-                  />
-                </View>
-                <Text style={styles.headerLabel}>{backLabel}</Text>
-              </Pressable>
-              {tab === 'lab' && (
-                <Text role="heading" style={styles.screenTitle}>
-                  {screenTitle}
+        {!(speechMode && tab === 'chat') && (
+          <View style={styles.header}>
+            {tab === 'chat' ? (
+              <>
+                <Text role="heading" style={styles.wordmark}>
+                  Assist
                 </Text>
-              )}
-            </>
-          )}
-        </View>
+                <View style={styles.headerActions}>
+                  <Pressable
+                    role="button"
+                    aria-label="Réglages"
+                    onPress={() => openSettings()}
+                    style={({ pressed }) => [
+                      styles.settingsControl,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <InterfaceIcon
+                      name="settings"
+                      size={20}
+                      color={theme.colors.muted}
+                    />
+                    <Text style={styles.headerLabel}>Réglages</Text>
+                  </Pressable>
+                  <Pressable
+                    role="button"
+                    aria-label="Nouvelle conversation"
+                    aria-disabled={busy || !ready}
+                    disabled={busy || !ready}
+                    onPress={newConversation}
+                    style={({ pressed }) => [
+                      styles.headerControl,
+                      pressed && styles.pressed,
+                      (busy || !ready) && styles.disabled,
+                    ]}
+                  >
+                    <InterfaceIcon
+                      name="compose"
+                      size={24}
+                      color={theme.colors.text}
+                    />
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <>
+                <Pressable
+                  role="button"
+                  aria-label={backAccessibilityLabel}
+                  aria-disabled={tab === 'lab' && busy}
+                  disabled={tab === 'lab' && busy}
+                  onPress={() => setTab(backDestination)}
+                  style={({ pressed }) => [
+                    styles.backControl,
+                    tab === 'lab' && busy && styles.disabled,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={styles.backArrow}>
+                    <InterfaceIcon
+                      name="arrow"
+                      size={20}
+                      color={theme.colors.muted}
+                    />
+                  </View>
+                  <Text style={styles.headerLabel}>{backLabel}</Text>
+                </Pressable>
+                {tab === 'lab' && (
+                  <Text role="heading" style={styles.screenTitle}>
+                    {screenTitle}
+                  </Text>
+                )}
+              </>
+            )}
+          </View>
+        )}
         {tab === 'chat' &&
+          !speechMode &&
           (showExample ||
             ready ||
             busy ||
@@ -537,13 +719,30 @@ export function AssistantScreen() {
               </Pressable>
             </View>
           )}
-        {!!error && (
+        {!!error && !(speechMode && tab === 'chat') && (
           <Text role="alert" style={styles.error}>
             {error}
           </Text>
         )}
         <View role="region" aria-label={screenTitle} style={styles.workspace}>
-          {tab === 'chat' && (
+          {tab === 'chat' && speechMode && (
+            <VoiceConversationScreen
+              {...voiceConversation}
+              readResponses={readResponses}
+              onPause={() => {
+                controller.pause();
+              }}
+              onResume={() => {
+                controller.start();
+              }}
+              onInterrupt={() => {
+                controller.interrupt();
+              }}
+              onClose={closeSpeechMode}
+              onSettings={speechSettings}
+            />
+          )}
+          {tab === 'chat' && !speechMode && (
             <>
               <ScrollView
                 ref={conversationRef}
@@ -665,30 +864,20 @@ export function AssistantScreen() {
                 )}
               </ScrollView>
               <View style={styles.composerArea}>
-                <VoiceControls
-                  voice={voice}
-                  busy={busy}
-                  readResponses={readResponses}
-                  onReadResponsesChange={value => {
-                    readResponsesEnabled.current = value;
-                    setReadResponses(value);
-                    if (!value) {
-                      speechIntent.current += 1;
-                      spokenRequest.current = null;
-                      responseSpeech.current?.cancel();
-                      responseSpeech.current = null;
-                      if (voice.phase === 'speaking') cancelVoice();
-                    }
-                  }}
-                  onDictate={async () => {
-                    const voiceVersion = speechIntent.current;
-                    spokenRequest.current = null;
-                    responseSpeech.current?.cancel();
-                    responseSpeech.current = null;
-                    if (!(await cancelVoice())) return;
-                    if (operation.current || voiceVersion !== speechIntent.current) return;
-                    voiceDraft.current = prompt.trimEnd();
-                    await voice.startListening();
+                <ActionButton
+                  label="Mode vocal"
+                  hint="Ouvre une conversation locale avec écoute et envoi automatiques."
+                  disabled={
+                    !voice.supported ||
+                    busy ||
+                    !ready ||
+                    !!budgetError ||
+                    !preferences.ready ||
+                    !voice.status?.recognitionAvailable
+                  }
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setSpeechMode(true);
                   }}
                 />
                 <View style={styles.composerRow}>
@@ -713,7 +902,7 @@ export function AssistantScreen() {
                     }
                     aria-disabled={generating ? false : cannotSend}
                     disabled={generating ? false : cannotSend}
-                    onPress={generating ? cancelGeneration : send}
+                    onPress={generating ? cancelGeneration : () => send()}
                     style={({ pressed }) => [
                       styles.sendButton,
                       pressed && styles.pressed,
@@ -761,6 +950,11 @@ export function AssistantScreen() {
               contentContainerStyle={styles.content}
               keyboardShouldPersistTaps="handled"
             >
+              {!!preferences.error && (
+                <Text role="alert" style={styles.error}>
+                  {preferences.error}
+                </Text>
+              )}
               <SettingsScreen
                 modelStatus={
                   !NativeAssist
@@ -774,6 +968,9 @@ export function AssistantScreen() {
                 budget={budget}
                 budgetError={budgetError}
                 busy={busy}
+                readResponses={readResponses}
+                onReadResponsesChange={changeSpokenReplies}
+                voiceAvailable={voice.status?.synthesisAvailable ?? false}
                 responseOpen={showBudget}
                 onToggleResponse={() => setShowBudget(value => !value)}
                 onBudgetChange={setBudget}

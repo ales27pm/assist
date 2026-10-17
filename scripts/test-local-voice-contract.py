@@ -47,7 +47,7 @@ class LocalVoiceSourceContractTests(unittest.TestCase):
             self.assertIn(f"AssistVoiceCallbacks.{role}", self.voice)
 
     def test_typed_voice_surface_is_implemented_by_objc_bridge(self):
-        for name in ("getVoiceStatus", "startListening", "stopListening", "cancelVoice", "speak", "beginSpeech", "enqueueSpeech", "finishSpeech"):
+        for name in ("getVoiceStatus", "getVoicePreferences", "setVoicePreferences", "startListening", "stopListening", "cancelVoice", "speak", "beginSpeech", "enqueueSpeech", "finishSpeech"):
             self.assertRegex(self.spec, rf"\b{name}\([^;]*\): Promise<string>;")
             self.assertRegex(self.bridge, rf"- \(void\){name}:")
         self.assertIn("readonly onVoiceEvent: CodegenTypes.EventEmitter<ProgressEvent>", self.spec)
