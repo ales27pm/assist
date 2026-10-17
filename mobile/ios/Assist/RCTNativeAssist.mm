@@ -70,6 +70,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   AssistCoreAI *_engine;
   AssistModelDirectoryPicker *_picker;
   AssistVoice *_voice;
+  AssistDeviceCapabilities *_deviceCapabilities;
   NSString *_operation;
   BOOL _loaded;
   BOOL _invalidated;
@@ -119,6 +120,127 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
     }];
   }
   return YES;
+}
+
+// Device capabilities are isolated from model/voice lifecycle. They still
+// share the native invalidation boundary so a dismissed React surface cannot
+// leave a picker or one-shot location request alive.
+- (BOOL)prepareDeviceCapabilities:(RCTPromiseRejectBlock)reject {
+  NSAssert(NSThread.isMainThread, @"Adapter coordination must run on main.");
+  if (_invalidated) {
+    AssistReject(reject, AssistError(@"E_INVALIDATED", @"Le module a été fermé."));
+    return NO;
+  }
+  if (!_deviceCapabilities) { _deviceCapabilities = [AssistDeviceCapabilities new]; }
+  return YES;
+}
+
+- (void)getDeviceCapabilityStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities capabilityStatus:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)requestDeviceCapability:(NSString *)capability
+                       resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities requestCapability:capability completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)searchContacts:(NSString *)query limit:(NSString *)limit
+               resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities searchContacts:query limit:limit completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)listCalendarEvents:(NSString *)calendarIdentifier startISO:(NSString *)startISO endISO:(NSString *)endISO
+                     limit:(NSString *)limit resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities listCalendarEvents:calendarIdentifier startISO:startISO endISO:endISO
+                                             limit:limit completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)createCalendarEvent:(NSString *)payloadJSON
+                    resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities createCalendarEvent:payloadJSON completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)listReminders:(BOOL)includeCompleted limit:(NSString *)limit
+              resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities listReminders:includeCompleted limit:limit completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)createReminder:(NSString *)payloadJSON
+               resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities createReminder:payloadJSON completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)getCurrentLocation:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities currentLocation:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)selectPhoto:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities selectPhoto:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)capturePhoto:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities capturePhoto:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)scheduleLocalNotification:(NSString *)payloadJSON
+                          resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities scheduleLocalNotification:payloadJSON completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)getBiometricStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities biometricStatus:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)authenticateWithBiometrics:(NSString *)reason
+                           resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities authenticateWithBiometrics:reason completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)getNativeCapabilityBoundary:(NSString *)feature
+                           resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_deviceCapabilities nativeCapabilityBoundary:feature completion:AssistPromise(resolve, reject)];
+  });
 }
 
 - (void)getVoiceStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
@@ -623,6 +745,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)invalidate {
   dispatch_async(dispatch_get_main_queue(), ^{
     self->_invalidated = YES;
+    [self->_deviceCapabilities invalidate];
     [[AssistAdvancedVoiceResources shared] cancelImports];
     [self->_voice invalidate];
     [self->_engine shutdownMonitoring:^(NSString *result, NSError *error) {}];

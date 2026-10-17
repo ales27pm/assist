@@ -7,6 +7,27 @@ export type ProgressEvent = {
 
 /** Native owns model paths, lifecycle, cancellation, and local inference. */
 export interface Spec extends TurboModule {
+  /** Read-only iOS consent and platform-boundary snapshot; never prompts. */
+  getDeviceCapabilityStatus(): Promise<string>;
+  /** Requests exactly one user-invoked native capability. */
+  requestDeviceCapability(capability: string): Promise<string>;
+  searchContacts(query: string, limit: string): Promise<string>;
+  listCalendarEvents(
+    calendarIdentifier: string,
+    startISO: string,
+    endISO: string,
+    limit: string,
+  ): Promise<string>;
+  createCalendarEvent(payloadJSON: string): Promise<string>;
+  listReminders(includeCompleted: boolean, limit: string): Promise<string>;
+  createReminder(payloadJSON: string): Promise<string>;
+  getCurrentLocation(): Promise<string>;
+  selectPhoto(): Promise<string>;
+  capturePhoto(): Promise<string>;
+  scheduleLocalNotification(payloadJSON: string): Promise<string>;
+  getBiometricStatus(): Promise<string>;
+  authenticateWithBiometrics(reason: string): Promise<string>;
+  getNativeCapabilityBoundary(feature: string): Promise<string>;
   getStatus(): Promise<string>;
   getVoiceStatus(): Promise<string>;
   getAdvancedVoiceState(): Promise<string>;
@@ -14,7 +35,11 @@ export interface Spec extends TurboModule {
   setAdvancedVoiceBackend(backend: string, variant: string): Promise<string>;
   getSpeechVoices(): Promise<string>;
   setSpeechVoice(voiceId: string): Promise<string>;
-  previewSpeechVoice(voiceId: string, segmentsJSON: string, sessionId: string): Promise<string>;
+  previewSpeechVoice(
+    voiceId: string,
+    segmentsJSON: string,
+    sessionId: string,
+  ): Promise<string>;
   stopSpeechVoicePreview(sessionId: string): Promise<string>;
   getVoicePreferences(): Promise<string>;
   setVoicePreferences(readResponses: boolean): Promise<string>;

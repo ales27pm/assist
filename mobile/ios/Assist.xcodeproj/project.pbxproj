@@ -41,6 +41,7 @@
 		A56400000000000000000001 /* AdvancedVoiceAssets.json in Resources */ = {isa = PBXBuildFile; fileRef = A56400000000000000000002; };
 		A56500000000000000000001 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = A56500000000000000000003; };
 		A56600000000000000000001 /* SpeechAttribution.txt in Resources */ = {isa = PBXBuildFile; fileRef = A56600000000000000000002; };
+		A57000000000000000000001 /* AssistDeviceCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57000000000000000000011 /* AssistDeviceCapabilities.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -81,6 +82,7 @@
 		A56200000000000000000002 /* AssistFluidAudioInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Voice/AssistFluidAudioInput.swift; sourceTree = "<group>"; };
 		A56400000000000000000002 /* AdvancedVoiceAssets.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Assist/AdvancedVoiceAssets.json; sourceTree = "<group>"; };
 		A56600000000000000000002 /* SpeechAttribution.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = Assist/SpeechAttribution.txt; sourceTree = "<group>"; };
+		A57000000000000000000011 /* AssistDeviceCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/AssistDeviceCapabilities.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -126,6 +128,7 @@
 				A55300000000000000000012 /* MonitoringAttribution.txt */,
 				A56400000000000000000002 /* AdvancedVoiceAssets.json */,
 				A56600000000000000000002 /* SpeechAttribution.txt */,
+				A57000000000000000000011 /* AssistDeviceCapabilities.swift */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				EA5100120000000000000001 /* SceneDelegate.swift */,
@@ -387,6 +390,7 @@
 				A55000000000000000000004 /* InferencePolicy.swift in Sources */,
 				A55100000000000000000001 /* AssistNumericalProbe.swift in Sources */,
 				A55300000000000000000001 /* AssistRuntimeMonitor.swift in Sources */,
+				A57000000000000000000001 /* AssistDeviceCapabilities.swift in Sources */,
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 				EA5100020000000000000001 /* SceneDelegate.swift in Sources */,
 			);
