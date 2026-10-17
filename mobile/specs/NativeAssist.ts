@@ -13,6 +13,9 @@ export interface Spec extends TurboModule {
   stopListening(): Promise<string>;
   cancelVoice(): Promise<string>;
   speak(text: string, utteranceId: string): Promise<string>;
+  beginSpeech(utteranceId: string): Promise<string>;
+  enqueueSpeech(text: string, utteranceId: string): Promise<string>;
+  finishSpeech(utteranceId: string): Promise<string>;
   getMonitoringSnapshot(): Promise<string>;
   selectModel(): Promise<string>;
   loadModel(): Promise<string>;

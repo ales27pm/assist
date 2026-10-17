@@ -160,7 +160,9 @@ struct VoiceCallbackChecks {
         let expected = AssistVoiceRecognitionSnapshot(
             text: nil,
             isFinal: false,
-            message: withError ? "Synthetic recognition failure." : nil
+            message: withError ? "Synthetic recognition failure." : nil,
+            errorDomain: withError ? "AssistVoiceCallbackChecks" : nil,
+            errorCode: withError ? 1 : nil
         )
         precondition(actual == expected,
                      "Recognition callbacks must preserve a Sendable result/error snapshot.")

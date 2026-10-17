@@ -1,9 +1,15 @@
-# Voix locale — premier parcours iOS
+# Voix locale — parcours iOS et lecture progressive
 
-Ce lot ajoute une dictée et une lecture avec les API système Apple, autour du
-moteur Gemma local existant. Il ne qualifie pas encore leur fonctionnement sur
-un iPhone physique. Une compilation, des tests avec doublures et un aperçu web
-ne prouvent ni la reconnaissance hors réseau, ni l'accent, ni la latence audio.
+Le build 13 a été archivé et livré sur TestFlight. Sur iPhone, l'utilisateur a
+confirmé une dictée après relance, avant toute lecture, puis un envoi manuel et
+une réponse écrite. Il avait aussi entendu une réponse lors d'un essai antérieur.
+L'enchaînement lecture → dictée reste à qualifier : un essai avait échoué avec
+« No speech detected » et le contrôle de lecture a été signalé absent.
+
+Le candidat **build 14** ajoute la lecture progressive, un contrôle de lecture
+sur sa propre ligne et des diagnostics micro agrégés. Les changements de session
+audio visent la transition lecture/dictée; ils ne prouvent pas encore sa réparation
+sur l'appareil. Voir la [feuille de route](voice-roadmap.md) pour les étapes suivantes.
 
 ## Parcours
 
@@ -14,17 +20,26 @@ ne prouvent ni la reconnaissance hors réseau, ni l'accent, ni la latence audio.
    corriger le texte ou l'effacer. Aucun résultat partiel n'est envoyé au modèle.
 3. **Envoyer** soumet explicitement le brouillon au même moteur Gemma que la
    saisie clavier. La dictée ne déclenche aucune action de l'agent à elle seule.
-4. Si les réponses vocales sont activées par l'utilisateur, une réponse Gemma
-   terminée peut être lue par `AVSpeechSynthesizer`, avec une voix `fr-CA`
-   disponible sur l'appareil. Une réponse annulée, échouée ou remplacée ne doit
-   pas être lue.
+4. Si **Lire les réponses** est activé, les instantanés textuels de Gemma sont
+   découpés en phrases ou segments bornés, puis ajoutés à une file Apple TTS
+   identifiée par la réponse. La première phrase peut être lue avant la fin de
+   génération; la fin ferme la file après le dernier segment. Une erreur vocale
+   conserve la réponse texte. Une réponse interrompue peut avoir déjà été
+   partiellement prononcée; aucun segment restant ne doit reprendre ensuite.
 5. L'utilisateur peut arrêter la lecture. Recommencer une dictée interrompt la
-   lecture avant d'ouvrir le microphone.
+   lecture avant d'ouvrir le microphone. Le contrôle de lecture reste sur sa
+   propre ligne, y compris sur un écran étroit.
 
-Le parcours est **half-duplex** : capture et lecture ne fonctionnent pas
-simultanément. Il n'inclut ni interruption détectée par la voix, ni AEC externe,
-ni détection automatique de fin de tour, ni TTS des jetons Gemma en cours de
-génération. La lecture démarre après la réponse complète.
+Le parcours est **demi-duplex** : capture et lecture ne fonctionnent pas
+simultanément. Il n'inclut pas encore de fin de tour automatique, d'interruption
+détectée par la voix ou d'AEC qualifié. L'envoi reste manuel.
+
+Pendant l'écoute, un indicateur montre le signal agrégé reçu, sans prétendre
+qu'il s'agit de parole. En cas d'erreur, un détail local expose nombres de
+buffers/frames, format, type de route, délai du premier buffer, niveau et
+domaine/code d'erreur. Ces diagnostics n'enregistrent ni audio ni transcription.
+Le tap transmet toujours les buffers à Speech de façon synchrone; une tâche
+séparée publie les agrégats au plus cinq fois par seconde.
 
 ## Capacités et confidentialité
 
@@ -76,25 +91,27 @@ pas à établir la libération effective du microphone ou de la session audio.
 
 ## Qualification physique à exécuter
 
-Contrôles exécutés le **16 octobre 2026** sur l'hôte Linux :
+Contrôles du candidat build 14 :
 
-- `cd mobile && npm run check` : typecheck, ESLint, **283 tests JavaScript**
-  et génération du bridge iOS réussis. Les 24 tests vocaux couvrent le brouillon,
-  l'envoi explicite, la lecture facultative, les autorisations différées,
-  les annulations et les événements périmés avec une doublure du module natif.
-- `python3 scripts/test-local-voice-contract.py` : six contrôles statiques de
-  permissions, enregistrement natif, contrat du bridge et exigences locales.
-  Ils ne compilent ni n'exécutent Swift. La CI les inclut désormais.
-- `python3 scripts/test-ios-launch.py` : deux contrôles de configuration de scène
-  réussis; ils ne lancent pas l'app.
-- Build de l'aperçu web et bundle JavaScript iOS Release réussis. Les outils
-  signalent des avertissements amont sur les directives `use client` et un
-  sous-chemin privé React Native; aucun de ces builds ne compile le code iOS.
+- `cd mobile && npm run check` : typecheck, ESLint, **347 tests JavaScript dans
+  17 suites** et génération du bridge iOS réussis. Les doublures couvrent lecture
+  avant fin de génération, ordre des segments, annulation, erreurs facultatives,
+  brouillon, diagnostics et événements périmés; elles ne produisent pas d'audio.
+- `python3 scripts/test-local-voice-contract.py` : **8 contrôles statiques** des
+  permissions, sources Xcode, contrat du bridge et exigences locales réussis.
+- Les quatre sources vocales passent un typecheck Swift 6 strict arm64 iOS avec
+  SDK 26.2. Les harnesses synthétiques vérifient **8 cas de mesure PCM** et
+  **9 cas de file TTS**. Le harness de callbacks a réussi 9 cas positifs et
+  2 pièges d'isolation attendus au second lancement; le premier a été rejeté
+  pour une backtrace insuffisamment symbolisée sur la VM Intel.
+- Le build 13 avait passé l'archive complète SDK 27.1 et ses contrôles de
+  callbacks sur EAS. Le build 14 doit repasser ces étapes avec les nouveaux
+  harnesses, puis être qualifié sur iPhone. Un typecheck avec SDK 26.2 n'est
+  pas une archive SDK 27.1.
 
-Xcode et un compilateur Swift ne sont pas disponibles sur cet hôte. Le nouveau
-code AVFoundation/Speech n'a donc pas encore été compilé contre un SDK Apple,
-ni essayé sur un iPhone. Le fonctionnement audio, les autorisations réelles et
-l'indépendance réseau restent à établir avec le protocole ci-dessous.
+Aucune mesure acoustique, latence iPhone, qualification de l'accent ou capture
+réseau n'est déduite de ces vérifications. Les essais physiques du build 14
+restent à exécuter après sa livraison.
 
 Consigner révision Git, build, iOS, modèle d'iPhone, locale du recognizer,
 identifiant de la voix et état des permissions. Utiliser un build Release avec
@@ -105,7 +122,7 @@ nécessaire. Ne pas effacer de données utilisateur pour préparer les essais.
 | --- | --- |
 | Autorisations | Premier accord, refus, accès révoqué dans Réglages puis retour dans l'app; aucun microphone actif après échec, brouillon conservé |
 | Capacités | Reconnaissance locale ou voix `fr-CA` indisponible : message explicite, saisie/réponse texte utilisable, aucune bascule distante |
-| Parcours | Dicter, arrêter, corriger, attendre : aucune génération avant **Envoyer**; réponse terminée lue uniquement si l'option est activée |
+| Parcours | Dicter, arrêter, corriger, attendre : aucune génération avant **Envoyer**; première phrase lue pendant la génération uniquement si l'option est activée; refaire Dicter après lecture |
 | Annulations | Arrêter pendant dictée, génération et lecture; désactiver les réponses vocales, réinitialiser, puis recommencer; aucune transcription ou lecture périmée |
 | Cycle de vie | Arrière-plan, verrouillage, interruption système et changement de route pendant dictée et lecture; absence de reprise automatique, nouvel essai possible |
 | Français québécois | Phrases avec hésitations, autocorrections, noms locaux, montants et alternance français/anglais; transcription et qualité vocale évaluées séparément |
@@ -119,8 +136,7 @@ d'attribution des journaux du routeur. Compléter par l'examen des dépendances 
 des chemins réseau de l'app. Ne pas confondre un asset Apple déjà installé avec
 un téléchargement déclenché pendant l'essai.
 
-Mesurer séparément parole → texte partiel, arrêt → texte stable, réponse Gemma
-terminée → premier son, et commande d'arrêt → silence. Conserver p50/p95 et les
+Mesurer séparément parole → texte partiel, arrêt → texte stable, premier segment Gemma stable → premier son, fin de parole → premier son, et commande d'arrêt → silence. Conserver p50/p95 et les
 échecs sur plusieurs essais. Sans instrumentation, noter **non mesuré**. Aucun
 budget de latence ni résultat physique de cette fonction n'est établi ici.
 

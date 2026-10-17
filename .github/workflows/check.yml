@@ -40,3 +40,7 @@ jobs:
         run: bash scripts/check-swift.sh
       - name: Native voice callbacks from background queues (no microphone)
         run: bash scripts/check-voice-callbacks.sh
+      - name: Microphone input metrics with synthetic PCM (no microphone)
+        run: bash scripts/check-voice-input.sh
+      - name: Streaming speech queue and cancellation (no playback)
+        run: bash scripts/check-voice-speech-queue.sh

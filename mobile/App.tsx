@@ -26,6 +26,7 @@ import { ActionButton, Disclosure } from './src/uiPrimitives';
 import { uiGrammar } from './src/uiGrammar';
 import { useLocalVoice } from './src/useLocalVoice';
 import { VoiceControls } from './src/VoiceControls';
+import { ResponseSpeechStream } from './src/responseSpeech';
 import {
   AssistantMark,
   ConversationIntro,
@@ -95,6 +96,7 @@ export function AssistantScreen() {
   const speechIntent = useRef(0);
   const voiceDraft = useRef('');
   const spokenRequest = useRef<string | null>(null);
+  const responseSpeech = useRef<ResponseSpeechStream | null>(null);
   const voice = useLocalVoice({
     enabled: tab === 'chat',
     onTranscript: text => {
@@ -106,6 +108,8 @@ export function AssistantScreen() {
   const cancelGeneration = useCallback(async () => {
     speechIntent.current += 1;
     spokenRequest.current = null;
+    responseSpeech.current?.cancel();
+    responseSpeech.current = null;
     // Silence audio before waiting for cooperative Gemma cancellation.
     await cancelVoice();
     const requestId = active.current;
@@ -135,6 +139,8 @@ export function AssistantScreen() {
     if (tab !== 'chat') {
       speechIntent.current += 1;
       spokenRequest.current = null;
+      responseSpeech.current?.cancel();
+      responseSpeech.current = null;
     }
   }, [tab]);
 
@@ -164,6 +170,9 @@ export function AssistantScreen() {
         const update = parseProgress(event.json);
         if (update.requestId === active.current) {
           setProgress(update);
+          if (spokenRequest.current === update.requestId && readResponsesEnabled.current) {
+            responseSpeech.current?.push(update.text);
+          }
         }
       } catch (e) {
         setError(errorMessage(e));
@@ -176,6 +185,8 @@ export function AssistantScreen() {
     });
     return () => {
       mounted.current = false;
+      responseSpeech.current?.cancel();
+      responseSpeech.current = null;
       subscription?.remove();
       lifecycle.remove();
       if (active.current) {
@@ -194,6 +205,8 @@ export function AssistantScreen() {
     setError('');
     try {
       spokenRequest.current = null;
+      responseSpeech.current?.cancel();
+      responseSpeech.current = null;
       if (!(await cancelVoice())) {
         throw new Error('La voix doit être arrêtée avant de continuer.');
       }
@@ -238,6 +251,24 @@ export function AssistantScreen() {
         { role: 'user', content: prompt.trim() },
       ];
       active.current = requestId;
+      const stream: ResponseSpeechStream | null = spokenRequest.current && voice.streamingSupported
+        ? new ResponseSpeechStream({
+            begin: () => voice.beginSpeech(requestId),
+            enqueue: text => voice.enqueueSpeech(text, requestId),
+            finish: () => voice.finishSpeech(requestId),
+            onError: () => {
+              // A failed optional voice stream must not abort the local answer
+              // or mute a newer capture/response that replaced this one.
+              if (responseSpeech.current === stream) {
+                responseSpeech.current = null;
+                spokenRequest.current = null;
+                cancelVoice();
+              }
+            },
+          })
+        : null;
+      responseSpeech.current = stream;
+      let speechFinished = false;
       setProgress(null);
       setReport(null);
       try {
@@ -267,11 +298,24 @@ export function AssistantScreen() {
             if (spokenRequest.current === requestId && readResponsesEnabled.current &&
                 speechVersion === speechIntent.current) {
               spokenRequest.current = null;
-              await speakResponse(result.text, requestId);
+              if (stream) {
+                await stream.finish(result.text);
+                speechFinished = true;
+              } else {
+                await speakResponse(result.text, requestId);
+              }
             }
           }
         }
       } finally {
+        if (responseSpeech.current === stream) {
+          responseSpeech.current = null;
+          stream?.cancel();
+          if (stream && !speechFinished && spokenRequest.current === requestId) {
+            spokenRequest.current = null;
+            await cancelVoice();
+          }
+        }
         active.current = null;
       }
     });
@@ -631,12 +675,16 @@ export function AssistantScreen() {
                     if (!value) {
                       speechIntent.current += 1;
                       spokenRequest.current = null;
+                      responseSpeech.current?.cancel();
+                      responseSpeech.current = null;
                       if (voice.phase === 'speaking') cancelVoice();
                     }
                   }}
                   onDictate={async () => {
                     const voiceVersion = speechIntent.current;
                     spokenRequest.current = null;
+                    responseSpeech.current?.cancel();
+                    responseSpeech.current = null;
                     if (!(await cancelVoice())) return;
                     if (operation.current || voiceVersion !== speechIntent.current) return;
                     voiceDraft.current = prompt.trimEnd();

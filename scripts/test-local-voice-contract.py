@@ -38,13 +38,16 @@ class LocalVoiceSourceContractTests(unittest.TestCase):
         self.assertEqual(source_phase.count("AssistVoice.swift in Sources"), 1)
         self.assertIn("path = Assist/Voice/AssistVoiceCallbacks.swift;", self.project)
         self.assertEqual(source_phase.count("AssistVoiceCallbacks.swift in Sources"), 1)
+        for name in ("AssistVoiceInputMeter", "AssistVoiceSpeechQueue"):
+            self.assertIn(f"path = Assist/Voice/{name}.swift;", self.project)
+            self.assertEqual(source_phase.count(f"{name}.swift in Sources"), 1)
 
     def test_legacy_callbacks_use_the_native_tested_boundary(self):
         for role in ("authorization", "microphone", "recognition", "audioTap"):
             self.assertIn(f"AssistVoiceCallbacks.{role}", self.voice)
 
     def test_typed_voice_surface_is_implemented_by_objc_bridge(self):
-        for name in ("getVoiceStatus", "startListening", "stopListening", "cancelVoice", "speak"):
+        for name in ("getVoiceStatus", "startListening", "stopListening", "cancelVoice", "speak", "beginSpeech", "enqueueSpeech", "finishSpeech"):
             self.assertRegex(self.spec, rf"\b{name}\([^;]*\): Promise<string>;")
             self.assertRegex(self.bridge, rf"- \(void\){name}:")
         self.assertIn("readonly onVoiceEvent: CodegenTypes.EventEmitter<ProgressEvent>", self.spec)

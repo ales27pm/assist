@@ -8,6 +8,8 @@ struct AssistVoiceRecognitionSnapshot: Sendable, Equatable {
     let text: String?
     let isFinal: Bool
     let message: String?
+    var errorDomain: String? = nil
+    var errorCode: Int? = nil
 }
 
 /// Legacy Objective-C callback types do not always carry @Sendable. Forming an
@@ -39,7 +41,9 @@ enum AssistVoiceCallbacks {
             let snapshot = AssistVoiceRecognitionSnapshot(
                 text: result?.bestTranscription.formattedString,
                 isFinal: result?.isFinal ?? false,
-                message: error?.localizedDescription
+                message: error?.localizedDescription,
+                errorDomain: error.map { ($0 as NSError).domain },
+                errorCode: error.map { ($0 as NSError).code }
             )
             Task { @MainActor in receive(snapshot) }
         }

@@ -2,6 +2,7 @@ import { act, renderHookAsync } from '@testing-library/react-native';
 import { AppState, AppStateStatus } from 'react-native';
 import NativeAssist from '../specs/NativeAssist';
 import { useLocalVoice } from '../src/useLocalVoice';
+import { parseVoiceEvent, parseVoiceStatus } from '../src/voice';
 
 jest.mock('../specs/NativeAssist', () => ({
   __esModule: true,
@@ -11,6 +12,9 @@ jest.mock('../specs/NativeAssist', () => ({
     stopListening: jest.fn(),
     cancelVoice: jest.fn(),
     speak: jest.fn(),
+    beginSpeech: jest.fn(),
+    enqueueSpeech: jest.fn(),
+    finishSpeech: jest.fn(),
     onVoiceEvent: jest.fn(),
   },
 }));
@@ -30,6 +34,22 @@ function status(phase = 'idle') {
     phase,
     voiceName: 'Voix de test',
   });
+}
+
+function inputDiagnostics(extra: Record<string, unknown> = {}) {
+  return {
+    bufferCount: 4,
+    frameCount: 1920,
+    sampleRate: 48_000,
+    channels: 1,
+    peak: 0.4,
+    level: 0.2,
+    measured: true,
+    elapsedMs: 200,
+    inputPort: 'MicrophoneBuiltIn',
+    firstBufferDelayMs: 35,
+    ...extra,
+  };
 }
 
 function emit(event: Record<string, unknown>) {
@@ -72,6 +92,9 @@ beforeEach(() => {
   native.stopListening.mockResolvedValue(status('finishing'));
   native.cancelVoice.mockResolvedValue(status());
   native.speak.mockResolvedValue(status('speaking'));
+  native.beginSpeech.mockResolvedValue(status('speaking'));
+  native.enqueueSpeech.mockResolvedValue(status('speaking'));
+  native.finishSpeech.mockResolvedValue(status('speaking'));
   native.onVoiceEvent.mockImplementation(listener => {
     voiceEvent = listener;
     return { remove: removeVoiceListener };
@@ -95,6 +118,215 @@ test('queries capabilities without starting capture or playback on mount', async
   expect(result.current.supported).toBe(true);
   expect(result.current.phase).toBe('idle');
   expect(result.current.captureBusy).toBe(false);
+});
+
+test.each([
+  { bufferCount: -1 },
+  { frameCount: 1.5 },
+  { sampleRate: -48_000 },
+  { channels: '1' },
+  { peak: 1.01 },
+  { level: -0.01 },
+  { measured: 'yes' },
+  { elapsedMs: null },
+  { inputPort: 1 },
+  { firstBufferDelayMs: -1 },
+  { errorDomain: 1 },
+  { errorCode: 1.5 },
+])(
+  'rejects malformed microphone diagnostics %j at either native boundary',
+  extra => {
+    const diagnostics = inputDiagnostics(extra);
+    expect(() =>
+      parseVoiceStatus(
+        JSON.stringify({ ...JSON.parse(status()), diagnostics }),
+      ),
+    ).toThrow();
+    expect(() =>
+      parseVoiceEvent(
+        JSON.stringify({
+          sessionId: 'capture-1',
+          kind: 'input',
+          phase: 'listening',
+          diagnostics,
+        }),
+      ),
+    ).toThrow();
+  },
+);
+
+test('input events require diagnostics and cannot claim a different phase', () => {
+  expect(() =>
+    parseVoiceEvent(
+      JSON.stringify({
+        sessionId: 'capture-1',
+        kind: 'input',
+        phase: 'listening',
+      }),
+    ),
+  ).toThrow();
+  expect(() =>
+    parseVoiceEvent(
+      JSON.stringify({
+        sessionId: 'capture-1',
+        kind: 'input',
+        phase: 'idle',
+        diagnostics: inputDiagnostics(),
+      }),
+    ),
+  ).toThrow();
+});
+
+test('diagnostics retain only measurement fields, without transcript or audio payloads', () => {
+  const parsed = parseVoiceStatus(
+    JSON.stringify({
+      ...JSON.parse(status()),
+      diagnostics: inputDiagnostics({
+        text: 'private transcript',
+        audio: [1, 2, 3],
+      }),
+    }),
+  );
+  expect(parsed.diagnostics).toEqual(inputDiagnostics());
+});
+
+test('metering updates measurements without changing the draft or reviving a finished capture', async () => {
+  const onTranscript = jest.fn();
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript, enabled: true }),
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  const sessionId = native.startListening.mock.calls[0][0];
+  const diagnostics = inputDiagnostics();
+  await act(async () => {
+    emit({ sessionId, kind: 'input', phase: 'listening', diagnostics });
+  });
+  expect(result.current.diagnostics).toEqual(diagnostics);
+  expect(onTranscript).not.toHaveBeenCalled();
+  await act(async () => {
+    await result.current.finishListening();
+  });
+  await act(async () => {
+    emit({ sessionId, kind: 'input', phase: 'listening', diagnostics });
+  });
+  expect(result.current.phase).toBe('finishing');
+  expect(onTranscript).not.toHaveBeenCalled();
+  await act(async () => {
+    transcript(sessionId, 'Le texte final.', true);
+  });
+  expect(result.current.diagnostics).toEqual(diagnostics);
+  expect(onTranscript).toHaveBeenCalledTimes(1);
+});
+
+test('cancelled and stale input events cannot overwrite measurements of the current session', async () => {
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  const oldSession = native.startListening.mock.calls[0][0];
+  const diagnostics = inputDiagnostics();
+  await act(async () => {
+    emit({
+      sessionId: oldSession,
+      kind: 'input',
+      phase: 'listening',
+      diagnostics,
+    });
+    await result.current.cancel();
+    emit({
+      sessionId: oldSession,
+      kind: 'input',
+      phase: 'listening',
+      diagnostics: inputDiagnostics({ bufferCount: 999 }),
+    });
+  });
+  expect(result.current.diagnostics).toEqual(diagnostics);
+  await act(async () => {
+    await result.current.startListening();
+  });
+  expect(result.current.diagnostics).toBeNull();
+  await act(async () => {
+    emit({
+      sessionId: oldSession,
+      kind: 'input',
+      phase: 'listening',
+      diagnostics: inputDiagnostics({ bufferCount: -1 }),
+    });
+  });
+  expect(result.current.diagnostics).toBeNull();
+  expect(result.current.error).toBe('');
+});
+
+test('late command status cannot replace newer input observations', async () => {
+  const pending = deferred<string>();
+  native.startListening.mockReturnValueOnce(pending.promise);
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  let start: Promise<void>;
+  await act(async () => {
+    start = result.current.startListening();
+    await Promise.resolve();
+  });
+  const sessionId = native.startListening.mock.calls[0][0];
+  const diagnostics = inputDiagnostics();
+  await act(async () => {
+    emit({ sessionId, kind: 'input', phase: 'listening', diagnostics });
+  });
+  await act(async () => {
+    pending.resolve(
+      JSON.stringify({
+        ...JSON.parse(status('listening')),
+        diagnostics: inputDiagnostics({
+          bufferCount: 0,
+          frameCount: 0,
+          elapsedMs: 0,
+        }),
+      }),
+    );
+    await start;
+  });
+  expect(result.current.diagnostics).toEqual(diagnostics);
+});
+
+test('terminal errors retain their final input observations after status refresh', async () => {
+  native.getVoiceStatus.mockResolvedValue(
+    JSON.stringify({
+      ...JSON.parse(status()),
+      diagnostics: inputDiagnostics({
+        bufferCount: 0,
+        frameCount: 0,
+        elapsedMs: 0,
+      }),
+    }),
+  );
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.startListening();
+  });
+  const sessionId = native.startListening.mock.calls[0][0];
+  const diagnostics = inputDiagnostics({
+    errorDomain: 'SyntheticDomain',
+    errorCode: -1,
+  });
+  await act(async () => {
+    emit({
+      sessionId,
+      kind: 'error',
+      phase: 'idle',
+      message: 'La dictée s’est arrêtée.',
+      diagnostics,
+    });
+  });
+  expect(result.current.phase).toBe('idle');
+  expect(result.current.diagnostics).toEqual(diagnostics);
+  expect(result.current.error).toBe('La dictée s’est arrêtée.');
 });
 
 test('updates the draft only from partial and final text for the current capture', async () => {
@@ -417,6 +649,172 @@ test('empty responses never start native playback', async () => {
   });
   expect(native.speak).not.toHaveBeenCalled();
   expect(result.current.phase).toBe('idle');
+});
+
+test('progressive speech opens one identity and returns idle only after its own completion', async () => {
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  expect(result.current.streamingSupported).toBe(true);
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  await act(async () => {
+    expect(await result.current.beginSpeech('reply-1')).toBe(true);
+    expect(
+      await result.current.enqueueSpeech('Bonjour de Québec.', 'reply-1'),
+    ).toBe(true);
+    expect(await result.current.finishSpeech('reply-1')).toBe(true);
+  });
+  expect(native.beginSpeech).toHaveBeenCalledWith('reply-1');
+  expect(native.enqueueSpeech).toHaveBeenCalledWith(
+    'Bonjour de Québec.',
+    'reply-1',
+  );
+  expect(native.finishSpeech).toHaveBeenCalledWith('reply-1');
+  expect(result.current.phase).toBe('speaking');
+  await act(async () => {
+    emit({ sessionId: 'other-reply', kind: 'state', phase: 'idle' });
+  });
+  expect(result.current.phase).toBe('speaking');
+  await act(async () => {
+    emit({ sessionId: 'reply-1', kind: 'state', phase: 'idle' });
+  });
+  expect(result.current.phase).toBe('idle');
+});
+
+test('progressive speech cannot queue or finish an old response after cancellation', async () => {
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.beginSpeech('reply-1');
+    await result.current.cancel();
+    expect(
+      await result.current.enqueueSpeech('Réponse périmée.', 'reply-1'),
+    ).toBe(false);
+    expect(await result.current.finishSpeech('reply-1')).toBe(false);
+  });
+  expect(native.enqueueSpeech).not.toHaveBeenCalled();
+  expect(native.finishSpeech).not.toHaveBeenCalled();
+  expect(result.current.phase).toBe('idle');
+});
+
+test('an immediately drained progressive finish releases capture without cancelling it', async () => {
+  native.finishSpeech.mockResolvedValueOnce(status());
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.beginSpeech('reply-1');
+    expect(await result.current.finishSpeech('reply-1')).toBe(true);
+  });
+  expect(result.current.phase).toBe('idle');
+  await act(async () => {
+    await result.current.startListening();
+  });
+  expect(result.current.phase).toBe('listening');
+  expect(native.cancelVoice).not.toHaveBeenCalled();
+});
+
+test('a pending progressive begin cannot revive speech after cancellation', async () => {
+  const pending = deferred<string>();
+  native.beginSpeech.mockReturnValueOnce(pending.promise);
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  let begin: Promise<boolean>;
+  await act(async () => {
+    begin = result.current.beginSpeech('reply-1');
+    await Promise.resolve();
+  });
+  await act(async () => {
+    await result.current.cancel();
+  });
+  await act(async () => {
+    await result.current.startListening();
+  });
+  await act(async () => {
+    pending.resolve(status('speaking'));
+    expect(await begin).toBe(false);
+    emit({ sessionId: 'reply-1', kind: 'state', phase: 'speaking' });
+  });
+  expect(result.current.phase).toBe('listening');
+});
+
+test('a late progressive finish rejection cannot cancel a newer dictation', async () => {
+  let reject!: (error: Error) => void;
+  native.finishSpeech.mockReturnValueOnce(
+    new Promise((_, fail) => {
+      reject = fail;
+    }),
+  );
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.beginSpeech('reply-1');
+  });
+  let finish: Promise<boolean>;
+  await act(async () => {
+    finish = result.current.finishSpeech('reply-1');
+    await Promise.resolve();
+  });
+  await act(async () => {
+    await result.current.cancel();
+  });
+  await act(async () => {
+    await result.current.startListening();
+  });
+  native.cancelVoice.mockClear();
+  await act(async () => {
+    reject(new Error('Old queued response failed.'));
+    expect(await finish).toBe(false);
+  });
+  expect(result.current.phase).toBe('listening');
+  expect(result.current.error).toBe('');
+  expect(native.cancelVoice).not.toHaveBeenCalled();
+});
+
+test('a current progressive queue error is visible and stops only that response', async () => {
+  native.enqueueSpeech.mockRejectedValueOnce(
+    new Error('Lecture vocale indisponible.'),
+  );
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  await act(async () => {
+    await result.current.beginSpeech('reply-1');
+    expect(await result.current.enqueueSpeech('Bonjour.', 'reply-1')).toBe(
+      false,
+    );
+  });
+  expect(result.current.error).toBe('Lecture vocale indisponible.');
+  expect(result.current.phase).toBe('idle');
+  expect(native.cancelVoice).toHaveBeenCalled();
+});
+
+test('a missing progressive API preserves the legacy speech fallback', async () => {
+  const original = NativeAssist!.beginSpeech;
+  Object.defineProperty(NativeAssist, 'beginSpeech', {
+    configurable: true,
+    value: undefined,
+  });
+  try {
+    const { result } = await renderHookAsync(() =>
+      useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+    );
+    expect(result.current.supported).toBe(true);
+    expect(result.current.streamingSupported).toBe(false);
+    await act(async () => {
+      expect(await result.current.beginSpeech('reply-1')).toBe(false);
+      await result.current.speak('Réponse complète.', 'legacy-1');
+    });
+    expect(native.speak).toHaveBeenCalledWith('Réponse complète.', 'legacy-1');
+  } finally {
+    Object.defineProperty(NativeAssist, 'beginSpeech', {
+      configurable: true,
+      value: original,
+    });
+  }
 });
 
 test('a second capture request cannot overlap the active microphone session', async () => {

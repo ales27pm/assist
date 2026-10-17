@@ -43,6 +43,33 @@ const voiceState = (phase = 'idle', recognitionAvailable = true) =>
     }),
   });
 let voiceEvent: (event: { json: string }) => void;
+function diagnostics(extra: Record<string, unknown> = {}) {
+  return {
+    bufferCount: 4,
+    frameCount: 1920,
+    sampleRate: 48_000,
+    channels: 1,
+    peak: 0.4,
+    level: 0.2,
+    measured: true,
+    elapsedMs: 200,
+    inputPort: 'MicrophoneBuiltIn',
+    firstBufferDelayMs: 35,
+    ...extra,
+  };
+}
+async function input(sessionId: string, extra: Record<string, unknown> = {}) {
+  await act(async () =>
+    voiceEvent({
+      json: JSON.stringify({
+        sessionId,
+        kind: 'input',
+        phase: 'listening',
+        diagnostics: diagnostics(extra),
+      }),
+    }),
+  );
+}
 function result(requestId: string, finishReason = 'eos') {
   return JSON.stringify({
     requestId,
@@ -146,6 +173,82 @@ test('dictation preserves the draft, requires explicit Send, and reads only afte
   );
   await press('Arrêter la lecture');
   expect(native.cancelVoice).toHaveBeenCalled();
+});
+
+test('the accessible input meter distinguishes waiting, unavailable level and measured audio without editing text', async () => {
+  await renderAsync(<AssistantScreen />);
+  await type('Mon brouillon.');
+  expect(
+    screen.queryByRole('progressbar', { name: 'Niveau du microphone' }),
+  ).toBeNull();
+  await press('Dicter');
+  const sessionId = native.startListening.mock.calls[0][0];
+  expect(
+    screen.getByRole('progressbar', { name: 'Niveau du microphone' }),
+  ).toHaveAccessibilityValue({ text: 'En attente d’audio du micro.' });
+  await input(sessionId, { measured: false });
+  expect(
+    screen.getByRole('progressbar', { name: 'Niveau du microphone' }),
+  ).toHaveAccessibilityValue({ text: 'Audio reçu · niveau indisponible.' });
+  await input(sessionId);
+  expect(
+    screen.getByRole('progressbar', { name: 'Niveau du microphone' }),
+  ).toHaveAccessibilityValue({
+    min: 0,
+    max: 100,
+    now: 20,
+    text: 'Audio reçu · niveau 20 %.',
+  });
+  expect(screen.getByLabelText('Message')).toHaveDisplayValue('Mon brouillon.');
+  expect(native.generate).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole('button', { name: 'Diagnostic du micro' }),
+  ).toBeNull();
+});
+
+test('microphone diagnostics are collapsed after an error and selectable without replacing the user-facing message', async () => {
+  await renderAsync(<AssistantScreen />);
+  await press('Dicter');
+  const sessionId = native.startListening.mock.calls[0][0];
+  await input(sessionId);
+  await act(async () =>
+    voiceEvent({
+      json: JSON.stringify({
+        sessionId,
+        kind: 'error',
+        phase: 'idle',
+        message: 'La dictée n’a pas pu se terminer. Réessaie.',
+        diagnostics: diagnostics({
+          errorDomain: 'SyntheticSpeechDomain',
+          errorCode: 1101,
+        }),
+      }),
+    }),
+  );
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'La dictée n’a pas pu se terminer. Réessaie.',
+  );
+  expect(screen.getByRole('alert')).not.toHaveTextContent(
+    'SyntheticSpeechDomain',
+  );
+  expect(
+    screen.getByRole('button', { name: 'Diagnostic du micro' }),
+  ).toBeCollapsed();
+  expect(screen.queryByLabelText('Mesures du diagnostic du micro')).toBeNull();
+  await press('Diagnostic du micro');
+  const report = screen.getByLabelText('Mesures du diagnostic du micro');
+  expect(report.props.selectable).toBe(true);
+  expect(report).toHaveTextContent(/Tampons reçus : 4/);
+  expect(report).toHaveTextContent(/Entrée : MicrophoneBuiltIn/);
+  expect(report).toHaveTextContent(/Domaine d’erreur : SyntheticSpeechDomain/);
+  expect(report).toHaveTextContent(/Code d’erreur : 1101/);
+  await press('Dicter');
+  expect(
+    screen.queryByRole('button', { name: 'Diagnostic du micro' }),
+  ).toBeNull();
+  expect(
+    screen.getByRole('progressbar', { name: 'Niveau du microphone' }),
+  ).toHaveAccessibilityValue({ text: 'En attente d’audio du micro.' });
 });
 
 test('text-only and incomplete replies are never spoken', async () => {

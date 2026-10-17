@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A55900000000000000000001 /* AssistVoiceInputMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55900000000000000000011 /* AssistVoiceInputMeter.swift */; };
+		A55A00000000000000000001 /* AssistVoiceSpeechQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55A00000000000000000011 /* AssistVoiceSpeechQueue.swift */; };
 		A55800000000000000000001 /* AssistVoiceCallbacks.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55800000000000000000011 /* AssistVoiceCallbacks.swift */; };
 		A55700000000000000000001 /* AssistVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55700000000000000000011 /* AssistVoice.swift */; };
 		A55400000000000000000001 /* AssistModelLoadProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55400000000000000000011 /* AssistModelLoadProbe.swift */; };
@@ -31,6 +33,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A55900000000000000000011 /* AssistVoiceInputMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Voice/AssistVoiceInputMeter.swift; sourceTree = "<group>"; };
+		A55A00000000000000000011 /* AssistVoiceSpeechQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Voice/AssistVoiceSpeechQueue.swift; sourceTree = "<group>"; };
 		A55800000000000000000011 /* AssistVoiceCallbacks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Voice/AssistVoiceCallbacks.swift; sourceTree = "<group>"; };
 		A55700000000000000000011 /* AssistVoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Voice/AssistVoice.swift; sourceTree = "<group>"; };
 		A55400000000000000000011 /* AssistModelLoadProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistModelLoadProbe.swift; sourceTree = "<group>"; };
@@ -80,6 +84,8 @@
 				A55000000000000000000012 /* ModelDirectoryPicker.swift */,
 				A55700000000000000000011 /* AssistVoice.swift */,
 				A55800000000000000000011 /* AssistVoiceCallbacks.swift */,
+				A55900000000000000000011 /* AssistVoiceInputMeter.swift */,
+				A55A00000000000000000011 /* AssistVoiceSpeechQueue.swift */,
 				A55000000000000000000013 /* AssistCoreAI.swift */,
 				A55000000000000000000014 /* InferencePolicy.swift */,
 				A55100000000000000000011 /* AssistNumericalProbe.swift */,
@@ -329,6 +335,8 @@
 				A55000000000000000000002 /* ModelDirectoryPicker.swift in Sources */,
 				A55700000000000000000001 /* AssistVoice.swift in Sources */,
 				A55800000000000000000001 /* AssistVoiceCallbacks.swift in Sources */,
+				A55900000000000000000001 /* AssistVoiceInputMeter.swift in Sources */,
+				A55A00000000000000000001 /* AssistVoiceSpeechQueue.swift in Sources */,
 				A55000000000000000000003 /* AssistCoreAI.swift in Sources */,
 				A55400000000000000000001 /* AssistModelLoadProbe.swift in Sources */,
 				A55500000000000000000001 /* AssistModelAssetProbe.swift in Sources */,
@@ -349,7 +357,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
@@ -381,7 +389,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
 				LD_RUNPATH_SEARCH_PATHS = (

@@ -144,6 +144,28 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   });
 }
 
+- (void)beginSpeech:(NSString *)utteranceId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice beginSpeech:utteranceId completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)enqueueSpeech:(NSString *)text utteranceId:(NSString *)utteranceId
+              resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice enqueueSpeech:text utteranceId:utteranceId completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)finishSpeech:(NSString *)utteranceId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice finishSpeech:utteranceId completion:AssistPromise(resolve, reject)];
+  });
+}
+
 - (AssistCompletion)refreshResidentStateOnFailure:(AssistCompletion)completion {
   return ^(NSString *result, NSError *error) {
     if (!error) { completion(result, nil); return; }
