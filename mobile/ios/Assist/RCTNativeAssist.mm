@@ -5,6 +5,16 @@
 // AssistVoice exposes this protocol through the generated Swift header.
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
+// The generated Assist Swift interface exposes Expo Swift base classes used by
+// AppDelegate, SceneDelegate, and ExpoModulesProvider. Import Expo's generated
+// interface before Assist-Swift.h so Objective-C++ can resolve those classes.
+#if __has_include(<Expo/Expo-Swift.h>)
+#import <Expo/Expo-Swift.h>
+#elif __has_include("Expo-Swift.h")
+#import "Expo-Swift.h"
+#else
+@import Expo;
+#endif
 #import "Assist-Swift.h"
 
 typedef void (^AssistCompletion)(NSString *_Nullable, NSError *_Nullable);
