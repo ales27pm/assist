@@ -11,6 +11,22 @@ private final class PlaybackProbe {
     let releases = Atomic<Int>(0)
 }
 
+@MainActor
+private final class TeardownNotificationProbe {
+    var ownership = AssistVoiceAudioSessionOwnership()
+    var errors = 0
+    var notifications = 0
+    nonisolated func callback() -> @Sendable (Notification) -> Void {
+        { [self] _ in
+            MainActor.assumeIsolated {
+                notifications += 1
+                // Same ownership gate used by AssistVoice.handleNotification.
+                if ownership.isActive { errors += 1 }
+            }
+        }
+    }
+}
+
 @main
 struct VoiceDuplexChecks {
     private static func buffer(_ format: AVAudioCommonFormat, frames: Int, channels: Int = 1, interleaved: Bool = false, rate: Double = 22_050) -> AVAudioPCMBuffer {
@@ -335,6 +351,45 @@ struct VoiceDuplexChecks {
     }
 
     @MainActor
+    private static func teardownNotifications() {
+        let probe = TeardownNotificationProbe()
+        let center = NotificationCenter()
+        let name = Notification.Name("AssistVoiceSyntheticTeardown")
+        let observer = center.addObserver(forName: name, object: nil, queue: nil, using: probe.callback())
+        defer { center.removeObserver(observer) }
+        probe.ownership.acquire()
+        center.post(name: name, object: nil)
+        precondition(probe.errors == 1) // negative control: the observer sees ownership
+        probe.errors = 0
+        precondition(probe.ownership.relinquish())
+        for _ in ["stopSpeechOutput", "stopCapture", "cancelRecognition", "setActive(false)"] {
+            center.post(name: name, object: nil)
+        }
+        precondition(probe.notifications == 5 && probe.errors == 0)
+        precondition(!probe.ownership.relinquish() && !probe.ownership.isActive)
+        print("PASS: real synchronous notifications at teardown boundaries see relinquished production ownership; deactivation is claimed once.")
+    }
+
+    @MainActor
+    private static func teardownSourceOrdering() throws {
+        let path = "mobile/ios/Assist/Voice/AssistVoice.swift"
+        let source = try String(contentsOfFile: path, encoding: .utf8)
+        guard let start = source.range(of: "    private func cancelCurrent() {"),
+              let end = source.range(of: "    private func fail(", range: start.upperBound..<source.endIndex)
+        else { preconditionFailure("Cannot locate production teardown") }
+        let body = String(source[start.upperBound..<end.lowerBound])
+        guard let fence = body.range(of: "let shouldDeactivate = audioSessionOwnership.relinquish()") else {
+            preconditionFailure("Production teardown must relinquish session ownership")
+        }
+        for boundary in ["stopSpeechOutput()", "stopCapture()", "recognitionTask?.cancel()", "AVAudioSession.sharedInstance().setActive(false"] {
+            guard let call = body.range(of: boundary) else { preconditionFailure("Missing production teardown boundary") }
+            precondition(fence.upperBound < call.lowerBound)
+        }
+        precondition(body.contains("if shouldDeactivate {"))
+        print("PASS: the production cancelCurrent source relinquishes ownership before every notifying stop and uses its captured deactivation claim.")
+    }
+
+    @MainActor
     static func main() async throws {
         DispatchQueue.global().asyncAfter(deadline: .now() + 30) { exit(90) }
         identitiesAndDrain()
@@ -348,6 +403,8 @@ struct VoiceDuplexChecks {
         try converterDraining()
         await unsupportedAndBounded()
         routePolicy()
-        print("PASS: 17 native duplex checks; no engine start, microphone, speech recognition or real TTS.")
+        teardownNotifications()
+        try teardownSourceOrdering()
+        print("PASS: 19 native duplex checks; no engine start, microphone, speech recognition or real TTS.")
     }
 }

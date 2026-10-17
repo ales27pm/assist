@@ -76,7 +76,8 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private var speechQueue = AssistVoiceSpeechQueue()
     private var speechVoice: AVSpeechSynthesisVoice?
     private var hasTap = false
-    private var audioSessionActive = false
+    private var audioSessionOwnership = AssistVoiceAudioSessionOwnership()
+    private var audioSessionActive: Bool { audioSessionOwnership.isActive }
     private var invalidated = false
 
     override init() {
@@ -279,7 +280,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         }
         ownedCategoryTransition = (generation, AssistVoiceOwnedCategoryTransition(
             previous: [before, categoryRoute], target: Self.routeIdentity(audio.currentRoute)))
-        audioSessionActive = true
+        audioSessionOwnership.acquire()
     }
 
     private var isMonitoring: Bool {
@@ -722,6 +723,9 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
 
     private func cancelCurrent() {
         lifetime.reset()
+        // stop/player/engine/deactivation may synchronously notify. Observers
+        // must see no owned audio session before any of those boundaries.
+        let shouldDeactivate = audioSessionOwnership.relinquish()
         routeProgressTask?.cancel()
         routeProgressTask = nil
         routeProgress.cancel()
@@ -747,9 +751,8 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         audioEngine = nil
         player = nil
         lastMonitoring = false
-        if audioSessionActive {
+        if shouldDeactivate {
             try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-            audioSessionActive = false
         }
         phase = "idle"
         settleStart(nil, Self.error("E_VOICE_CANCELLED", "La dictée a été annulée."))

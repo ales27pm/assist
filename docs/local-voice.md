@@ -221,7 +221,9 @@ interne compatible ne devient plus automatiquement une interruption. Une perte
 de périphérique, un changement effectif, une entrée absente, un moteur inutilisable
 ou une interruption système continuent d’arrêter la session. Une reconfiguration
 acceptée doit aussi être suivie de nouveaux buffers micro; le silence reste valide.
-Aucune fenêtre de démarrage n’ignore toutes les notifications.
+Aucune fenêtre de démarrage n’ignore toutes les notifications. L’arrêt retire
+la propriété de la session avant les appels au lecteur, au moteur et à sa
+désactivation; leurs notifications synchrones ne peuvent relancer l’arrêt.
 
 En cas d’erreur, **Détails audio** permet de consulter un historique local borné
 à huit lignes de 400 caractères : raison de notification, phase, types de ports,
@@ -245,7 +247,7 @@ transition correcte entre routes.
 - Contrat local : **8 contrôles statiques**; démarrage iOS : **2 contrôles**.
 - Les six sources Swift passent le typecheck Swift6 strict arm64-iOS27.1 sur
   SDK26.2. Le projet Xcode porte le numéro 18 et passe `plutil`.
-- Bancs natifs synthétiques : duplex **17**, mesure **8**, file **9**, callbacks
+- Bancs natifs synthétiques : duplex **19**, mesure **8**, file **9**, callbacks
   **9** avec 128 frames et deux pièges d’isolation attendus. Le premier contrôle
   négatif Intel VM a terminé comme attendu mais sa backtrace était insuffisamment
   symbolisée; une relance unique a passé le matcher strict.

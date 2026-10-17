@@ -209,3 +209,15 @@ struct AssistVoiceRouteProgressWatch: Sendable {
     }
     mutating func cancel() { identifier = nil }
 }
+
+/// Relinquish ownership before any AVFoundation teardown call can notify us
+/// synchronously. The returned value permits exactly one system deactivation.
+struct AssistVoiceAudioSessionOwnership: Sendable {
+    private(set) var isActive = false
+    mutating func acquire() { isActive = true }
+    mutating func relinquish() -> Bool {
+        let wasActive = isActive
+        isActive = false
+        return wasActive
+    }
+}
