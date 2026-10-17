@@ -381,6 +381,11 @@ sur iPhone.
 
 ## Pourquoi PocketTTS attend
 
+Le [comparatif des voix Apple fr-CA](voice-comparison.md) prépare la référence
+auditive avant ce prototype lourd : phrases identiques entières et segmentées,
+noms masqués, critères d’écoute et choix persistant pour le mode vocal. L’aperçu
+reste une lecture seule, avec un arrêt ciblé, sans capture micro.
+
 PocketTTS French 24L reste un candidat pour une étape ultérieure : il offre une
 session audio incrémentale, mais ni son accent québécois ni sa coexistence
 mémoire avec Gemma ne sont qualifiés pour cette app.

@@ -22,6 +22,7 @@ if [ "$1" = '../scripts/check-voice-callbacks.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL
 if [ "$1" = '../scripts/check-voice-input.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'input' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-voice-speech-queue.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'queue' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-voice-duplex.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'duplex' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-speech-voices.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'speech-voices' ]; then exit 1; fi
 [ "$ASSIST_HOOK_TEST_FAIL" != '${command}' ]
 `,
       { mode: 0o755 },
@@ -49,9 +50,9 @@ test('Android preinstall succeeds without invoking any iOS prerequisites', () =>
   expect(() => readFileSync(logPath, 'utf8')).toThrow();
 });
 
-test('iOS preinstall verifies launch, bundle, host, callbacks, input, speech queue and duplex in order', () => {
+test('iOS preinstall verifies launch, bundle, host, callbacks, input, speech queue, duplex and voice comparison in order', () => {
   runHook('ios');
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\nnode\nbash\nbash\nbash\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\n');
 });
 
 test('iOS preinstall propagates a failed prerequisite and stops subsequent checks', () => {
@@ -78,4 +79,9 @@ test('iOS preinstall propagates speech queue check failures', () => {
 test('iOS preinstall propagates duplex regression failures', () => {
   expect(() => runHook('ios', 'duplex')).toThrow();
   expect(readFileSync(logPath, 'utf8')).toBe('python3\nnode\nbash\nbash\nbash\nbash\nbash\n');
+});
+
+test('iOS preinstall blocks a release when voice comparison contracts fail', () => {
+  expect(() => runHook('ios', 'speech-voices')).toThrow();
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\n');
 });

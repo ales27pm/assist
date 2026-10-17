@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -11,6 +11,8 @@ import { useAppearance } from './appearance';
 import { InterfaceIcon } from './InterfaceIcon';
 import { uiGrammar } from './uiGrammar';
 import { ScreenHeading, SettingsRow, SurfaceGroup } from './uiPrimitives';
+import { VoiceComparisonPanel } from './VoiceComparisonPanel';
+import { scheduleAccessibilityFocus } from './focusAccessibility';
 
 type Props = {
   modelStatus: string;
@@ -45,6 +47,18 @@ export function SettingsScreen({
 }: Props) {
   const { theme } = useAppearance();
   const { colors } = theme;
+  const [comparingVoices, setComparingVoices] = useState(false);
+  const comparisonControl = useRef<React.ComponentRef<typeof View>>(null);
+  const wasComparingVoices = useRef(false);
+  useEffect(() => {
+    const restore = wasComparingVoices.current && !comparingVoices;
+    wasComparingVoices.current = comparingVoices;
+    if (restore)
+      return scheduleAccessibilityFocus(() => comparisonControl.current);
+  }, [comparingVoices]);
+  if (comparingVoices)
+    return <VoiceComparisonPanel onClose={() => setComparingVoices(false)} />;
+
   return (
     <View style={styles.screen}>
       <ScreenHeading title="Réglages" description="Un espace à ton rythme." />
@@ -159,6 +173,14 @@ export function SettingsScreen({
             style={styles.voiceSwitch}
           />
         </View>
+        <SettingsRow
+          label="Voix de l’assistant"
+          value="Comparer les voix fr-CA"
+          onPress={() => setComparingVoices(true)}
+          controlRef={comparisonControl}
+          disabled={busy}
+          stacked
+        />
         <SettingsRow
           label="Apparence"
           icon="appearance"

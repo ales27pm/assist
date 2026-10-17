@@ -115,6 +115,35 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   });
 }
 
+- (void)getSpeechVoices:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice getSpeechVoices:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)setSpeechVoice:(NSString *)voiceId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice setSpeechVoice:voiceId completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)previewSpeechVoice:(NSString *)voiceId segmentsJSON:(NSString *)segmentsJSON sessionId:(NSString *)sessionId
+                  resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice previewSpeechVoice:voiceId segmentsJSON:segmentsJSON sessionId:sessionId completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)stopSpeechVoicePreview:(NSString *)sessionId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepareVoice:reject]) { return; }
+    [self->_voice stopSpeechVoicePreview:sessionId completion:AssistPromise(resolve, reject)];
+  });
+}
+
 - (void)getVoicePreferences:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }

@@ -75,6 +75,8 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private var latestTranscript = ""
     private var speechQueue = AssistVoiceSpeechQueue()
     private var speechVoice: AVSpeechSynthesisVoice?
+    private var voicePreview: AssistSpeechVoicePreview?
+    private let speechVoicePreferenceKey = "assist.voice.speechVoiceId"
     private var hasTap = false
     private var audioSessionOwnership = AssistVoiceAudioSessionOwnership()
     private var audioSessionActive: Bool { audioSessionOwnership.isActive }
@@ -115,6 +117,63 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     func setVoicePreferences(_ readResponses: Bool, completion: (String?, NSError?) -> Void) {
         UserDefaults.standard.set(readResponses, forKey: "assist.voice.readResponses")
         completion(encode(["readResponses": readResponses]), nil)
+    }
+
+    @objc(getSpeechVoices:)
+    func getSpeechVoices(_ completion: (String?, NSError?) -> Void) {
+        completion(speechVoiceCatalogJSON(), nil)
+    }
+
+    @objc(setSpeechVoice:completion:)
+    func setSpeechVoice(_ voiceId: String, completion: (String?, NSError?) -> Void) {
+        guard voiceId.isEmpty || eligibleSpeechVoices().contains(where: { $0.identifier == voiceId }) else {
+            completion(nil, Self.error("E_VOICE_SELECTION", "Cette voix française canadienne n’est plus disponible.")); return
+        }
+        UserDefaults.standard.set(voiceId, forKey: speechVoicePreferenceKey)
+        // An active response/preview owns its voice object until it finishes.
+        completion(speechVoiceCatalogJSON(), nil)
+    }
+
+    @objc(previewSpeechVoice:segmentsJSON:sessionId:completion:)
+    func previewSpeechVoice(_ voiceId: String, segmentsJSON: String, sessionId id: String,
+                            completion: @escaping (String?, NSError?) -> Void) {
+        guard !invalidated, UIApplication.shared.applicationState == .active else {
+            completion(nil, Self.error("E_VOICE_BACKGROUND", "Reviens dans Assist pour écouter une voix.")); return
+        }
+        guard validID(id), !voiceId.isEmpty, voiceId.utf16.count <= 512 else {
+            completion(nil, Self.error("E_VOICE_ID", "Identifiant de l’aperçu vocal invalide.")); return
+        }
+        guard phase == "idle", !lifetime.retained, configuringGeneration == nil,
+              audioEngine == nil, !audioSessionActive, voicePreview == nil else {
+            completion(nil, Self.error("E_VOICE_BUSY", "Mets le mode vocal en pause avant d’écouter une voix.")); return
+        }
+        guard let voice = eligibleSpeechVoices().first(where: { $0.identifier == voiceId }) else {
+            completion(nil, Self.error("E_VOICE_SELECTION", "Cette voix française canadienne n’est plus disponible.")); return
+        }
+        guard let segments = AssistSpeechPreviewPlan.segments(from: segmentsJSON) else {
+            completion(nil, Self.error("E_VOICE_TEXT", "L’aperçu doit contenir de un à douze segments, pour un maximum de 8 192 octets.")); return
+        }
+        let token = UUID()
+        let preview = AssistSpeechVoicePreview(sessionId: id, generation: token) { [weak self] outcome, error in
+            if self?.voicePreview?.generation == token { self?.voicePreview = nil }
+            if let error { completion(nil, error) }
+            else { completion(AssistSpeechPreviewPlan.resultJSON(sessionId: id, outcome: outcome), nil) }
+        }
+        voicePreview = preview
+        preview.start(voice: voice, segments: segments)
+    }
+
+    @objc(stopSpeechVoicePreview:completion:)
+    func stopSpeechVoicePreview(_ id: String, completion: (String?, NSError?) -> Void) {
+        let stopped = voicePreview?.sessionId == id
+        if stopped { stopVoicePreview() }
+        completion(encode(["sessionId": id, "stopped": stopped]), nil)
+    }
+
+    private func stopVoicePreview() {
+        let preview = voicePreview
+        voicePreview = nil
+        preview?.cancel()
     }
 
     @objc(startListening:completion:)
@@ -735,6 +794,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         // stop/player/engine/deactivation may synchronously notify. Observers
         // must see no owned audio session before any of those boundaries.
         let shouldDeactivate = audioSessionOwnership.relinquish()
+        stopVoicePreview()
         routeProgressTask?.cancel()
         routeProgressTask = nil
         routeProgress.cancel()
@@ -807,6 +867,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private func handleNotification(
         _ name: Notification.Name, routeReason: UInt?, interruptionType: UInt?, previous: AssistVoiceRouteIdentity?
     ) {
+        voicePreview?.handleNotification(name, routeReason: routeReason, interruptionType: interruptionType, previous: previous)
         if name == UIApplication.didBecomeActiveNotification {
             let action = pendingForegroundAction
             pendingForegroundAction = nil
@@ -913,15 +974,53 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         }
     }
 
+    private func eligibleSpeechVoices() -> [AVSpeechSynthesisVoice] {
+        AVSpeechSynthesisVoice.speechVoices().filter { voice in
+            // Product allow-list, not a public API guarantee of provenance or
+            // offline execution. Every offered voice still needs offline QA.
+            AssistSpeechVoicePolicy.isEligible(id: voice.identifier, name: voice.name, language: voice.language,
+                quality: Self.voiceQuality(voice), personal: voice.voiceTraits.contains(.isPersonalVoice),
+                novelty: voice.voiceTraits.contains(.isNoveltyVoice))
+        }.sorted {
+            $0.quality.rawValue == $1.quality.rawValue ? $0.identifier < $1.identifier : $0.quality.rawValue > $1.quality.rawValue
+        }.prefix(200).map { $0 }
+    }
+
+    private static func voiceQuality(_ voice: AVSpeechSynthesisVoice) -> String? {
+        switch voice.quality {
+        case .default: return "default"
+        case .enhanced: return "enhanced"
+        case .premium: return "premium"
+        @unknown default: return nil
+        }
+    }
+
     private func canadianVoice() -> AVSpeechSynthesisVoice? {
-        // Never substitute a fr-FR/default voice for the requested dialect.
-        AVSpeechSynthesisVoice.speechVoices()
-            .filter { $0.language.replacingOccurrences(of: "_", with: "-").lowercased() == "fr-ca" }
-            .sorted { $0.quality.rawValue > $1.quality.rawValue }.first
+        let voices = eligibleSpeechVoices()
+        let selected = UserDefaults.standard.string(forKey: speechVoicePreferenceKey) ?? ""
+        let resolution = AssistSpeechVoicePolicy.resolve(identifiers: voices.map(\.identifier), selected: selected)
+        return voices.first(where: { $0.identifier == resolution.id })
+    }
+
+    private func speechVoiceCatalogJSON() -> String {
+        let voices = eligibleSpeechVoices()
+        let selected = UserDefaults.standard.string(forKey: speechVoicePreferenceKey) ?? ""
+        let resolution = AssistSpeechVoicePolicy.resolve(identifiers: voices.map(\.identifier), selected: selected)
+        var catalog: [String: Any] = [
+            "schemaVersion": 1, "locale": "fr-CA",
+            "voices": voices.map { ["id": $0.identifier, "name": $0.name, "language": "fr-CA", "quality": Self.voiceQuality($0)!] },
+            "selectedVoiceId": selected, "resolvedVoiceId": resolution.id.map { $0 as Any } ?? NSNull(),
+            "selectionMissing": resolution.missing
+        ]
+        if let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String,
+           !build.isEmpty, build.utf16.count <= 128 { catalog["nativeBuild"] = build }
+        let os = ProcessInfo.processInfo.operatingSystemVersionString
+        if !os.isEmpty, os.utf16.count <= 128 { catalog["osVersion"] = os }
+        return encode(catalog)
     }
 
     private func statusJSON() -> String {
-        let voice = canadianVoice()
+        let voice = speechVoice ?? canadianVoice()
         let speechPermission = SFSpeechRecognizer.authorizationStatus()
         let micPermission = AVAudioApplication.shared.recordPermission
         let recognitionAvailable = !invalidated && recognizer?.supportsOnDeviceRecognition == true &&
@@ -1018,6 +1117,192 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         Task { @MainActor [weak self] in
             guard let self, self.speechGeneration == token, self.phase == "speaking" else { return }
             self.fail("La production vocale locale a été interrompue.", code: "E_VOICE_PCM")
+        }
+    }
+}
+
+// BEGIN PREVIEW VALUE CONTRACTS — also exercised by the standalone checks.
+enum AssistSpeechVoicePolicy {
+    static func isEligible(id: String, name: String, language: String, quality: String?, personal: Bool, novelty: Bool) -> Bool {
+        id.hasPrefix("com.apple.") && id.utf16.count <= 512 && !name.isEmpty && name.utf16.count <= 160 &&
+        language.replacingOccurrences(of: "_", with: "-").lowercased() == "fr-ca" &&
+        !personal && !novelty && quality.map { ["default", "enhanced", "premium"].contains($0) } == true
+    }
+    static func resolve(identifiers: [String], selected: String) -> (id: String?, missing: Bool) {
+        let found = !selected.isEmpty && identifiers.contains(selected)
+        return (found ? selected : identifiers.first, !selected.isEmpty && !found)
+    }
+}
+
+enum AssistSpeechPreviewPlan {
+    static func segments(from json: String) -> [String]? {
+        guard json.utf8.count <= 65_536, let data = json.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data),
+              let segments = value as? [String], (1...12).contains(segments.count),
+              segments.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 2_400 }),
+              segments.reduce(0, { $0 + $1.utf8.count }) <= 8_192 else { return nil }
+        return segments
+    }
+
+    static func resultJSON(sessionId: String, outcome: String) -> String {
+        let data = try? JSONSerialization.data(withJSONObject: ["sessionId": sessionId, "outcome": outcome], options: [.sortedKeys])
+        return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+}
+
+struct AssistSpeechPreviewLifetime: Sendable {
+    private var generation: UUID?
+    private var pending: Set<UUID> = []
+    var isActive: Bool { generation != nil }
+    mutating func begin(generation: UUID, identifiers: [UUID]) {
+        self.generation = generation
+        pending = Set(identifiers)
+    }
+    func contains(_ identifier: UUID, generation: UUID) -> Bool {
+        self.generation == generation && pending.contains(identifier)
+    }
+    mutating func didFinish(_ identifier: UUID, generation: UUID) -> Bool {
+        guard contains(identifier, generation: generation) else { return false }
+        pending.remove(identifier)
+        return pending.isEmpty
+    }
+    mutating func cancel() { generation = nil; pending.removeAll() }
+}
+// END PREVIEW VALUE CONTRACTS
+
+/// A playback-only preview. It never creates an input engine, Speech request,
+/// audio tap, or privacy prompt. The conversation synthesizer is independent.
+@MainActor
+private final class AssistSpeechVoicePreview: NSObject, AVSpeechSynthesizerDelegate {
+    nonisolated let sessionId: String
+    nonisolated let generation: UUID
+    private let synthesizer = AVSpeechSynthesizer()
+    private var lifetime = AssistSpeechPreviewLifetime()
+    private var ownership = AssistVoiceAudioSessionOwnership()
+    private var completion: ((String, NSError?) -> Void)?
+    private var starting = false
+    private var route: AssistVoiceRouteIdentity?
+    private var ownedCategory: AssistVoiceOwnedCategoryTransition?
+    private var deferredRoutes: [(reason: UInt, previous: AssistVoiceRouteIdentity?, current: AssistVoiceRouteIdentity)] = []
+
+    init(sessionId: String, generation: UUID, completion: @escaping (String, NSError?) -> Void) {
+        self.sessionId = sessionId
+        self.generation = generation
+        self.completion = completion
+        super.init()
+        synthesizer.delegate = self
+        synthesizer.usesApplicationAudioSession = true
+    }
+
+    func start(voice: AVSpeechSynthesisVoice, segments: [String]) {
+        let identifiers = segments.map { _ in UUID() }
+        lifetime.begin(generation: generation, identifiers: identifiers)
+        starting = true
+        let session = AVAudioSession.sharedInstance()
+        let before = Self.identity(session.currentRoute)
+        do {
+            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            guard lifetime.isActive else { return }
+            let afterCategory = Self.identity(session.currentRoute)
+            try session.setActive(true)
+            guard lifetime.isActive, UIApplication.shared.applicationState == .active else {
+                try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+                finish("cancelled")
+                return
+            }
+            ownership.acquire()
+            let target = Self.identity(session.currentRoute)
+            route = target
+            let owned = AssistVoiceOwnedCategoryTransition(previous: [before, afterCategory], target: target)
+            ownedCategory = owned
+            starting = false
+            guard session.category == .playback, session.mode == .spokenAudio, !session.currentRoute.outputs.isEmpty else {
+                throw NSError(domain: "Assist.Voice", code: 1,
+                    userInfo: ["code": "E_VOICE_PREVIEW_AUDIO", NSLocalizedDescriptionKey: "La sortie audio de l’aperçu n’est pas disponible."])
+            }
+            for notification in deferredRoutes {
+                let previousMatches = notification.previous == nil || notification.previous == target
+                let expectedCategory = notification.reason == 3 &&
+                    (previousMatches || notification.previous.map { owned.contains(previous: $0, current: target) } == true) &&
+                    [before, afterCategory, target].contains(notification.current)
+                let stableConfiguration = notification.reason == 8 && notification.current == target && previousMatches
+                guard expectedCategory || stableConfiguration else { finish("cancelled"); return }
+            }
+            deferredRoutes.removeAll()
+            for (text, identifier) in zip(segments, identifiers) {
+                guard lifetime.isActive else { return }
+                let utterance = AssistVoiceUtterance(text: text, generation: generation, identifier: identifier)
+                utterance.voice = voice
+                synthesizer.speak(utterance)
+            }
+        } catch {
+            finish("cancelled", error: NSError(domain: "Assist.Voice", code: 1,
+                userInfo: ["code": "E_VOICE_PREVIEW_AUDIO", NSLocalizedDescriptionKey: "L’aperçu vocal n’a pas pu démarrer : \(error.localizedDescription)"]))
+        }
+    }
+
+    func cancel() { finish("cancelled") }
+
+    private func finish(_ outcome: String, error: NSError? = nil) {
+        guard let callback = completion else { return }
+        completion = nil
+        lifetime.cancel()
+        starting = false
+        deferredRoutes.removeAll()
+        let deactivate = ownership.relinquish()
+        synthesizer.stopSpeaking(at: .immediate)
+        if deactivate { try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation]) }
+        synthesizer.delegate = nil
+        callback(outcome, error)
+    }
+
+    func handleNotification(_ name: Notification.Name, routeReason: UInt?, interruptionType: UInt?, previous: AssistVoiceRouteIdentity?) {
+        guard lifetime.isActive else { return }
+        if name == UIApplication.willResignActiveNotification || name == UIApplication.didEnterBackgroundNotification {
+            cancel(); return
+        }
+        if name == AVAudioSession.interruptionNotification {
+            if interruptionType != AVAudioSession.InterruptionType.ended.rawValue { cancel() }
+            return
+        }
+        guard name == AVAudioSession.routeChangeNotification else { return }
+        let session = AVAudioSession.sharedInstance()
+        guard UIApplication.shared.applicationState == .active,
+              session.category == .playback, session.mode == .spokenAudio,
+              routeReason == 3 || routeReason == 8 else { cancel(); return }
+        let current = Self.identity(session.currentRoute)
+        if starting {
+            guard deferredRoutes.count < 8, let routeReason else { cancel(); return }
+            deferredRoutes.append((routeReason, previous, current))
+            return
+        }
+        let previousMatches = previous == nil || previous == current ||
+            (routeReason == 3 && previous.map { ownedCategory?.contains(previous: $0, current: current) == true } == true)
+        guard ownership.isActive, current == route, previousMatches, !session.currentRoute.outputs.isEmpty else { cancel(); return }
+    }
+
+    private nonisolated static func identity(_ route: AVAudioSessionRouteDescription) -> AssistVoiceRouteIdentity {
+        AssistVoiceRouteIdentity(inputs: route.inputs.map { .init(type: $0.portType.rawValue, uid: $0.uid) },
+                                 outputs: route.outputs.map { .init(type: $0.portType.rawValue, uid: $0.uid) })
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        guard let value = utterance as? AssistVoiceUtterance else { return }
+        let token = value.generation
+        let identifier = value.identifier
+        Task { @MainActor [weak self] in
+            guard let self, self.lifetime.didFinish(identifier, generation: token) else { return }
+            self.finish("completed")
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        guard let value = utterance as? AssistVoiceUtterance else { return }
+        let token = value.generation
+        let identifier = value.identifier
+        Task { @MainActor [weak self] in
+            guard let self, self.lifetime.contains(identifier, generation: token) else { return }
+            self.cancel()
         }
     }
 }

@@ -75,7 +75,10 @@ class LocalVoiceSourceContractTests(unittest.TestCase):
     def test_requested_dialect_has_no_default_voice_fallback(self):
         self.assertIn('Locale(identifier: "fr-CA")', self.voice)
         self.assertIn("AVSpeechSynthesisVoice.speechVoices()", self.voice)
-        self.assertRegex(self.voice, r'\.language[^\n]+==\s*"fr-ca"')
+        # The shared catalog policy receives the real voice language; its
+        # executable Swift checks also reject fr-FR and unknown providers.
+        self.assertRegex(self.voice, r'language:\s*voice\.language')
+        self.assertRegex(self.voice, r'\blanguage\.replacingOccurrences[^\n]+==\s*"fr-ca"')
         self.assertNotRegex(self.voice, r"AVSpeechSynthesisVoice\(language:")
 
 

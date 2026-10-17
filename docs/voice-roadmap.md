@@ -209,6 +209,12 @@ est déduit.
 
 **Tranche : écouter à l’aveugle les mêmes réponses, entières puis segmentées.**
 
+Le [comparatif Apple dans Réglages](voice-comparison.md) prépare cette référence :
+voix disponibles `fr-CA`, noms masqués, cinq phrases fixes et leurs segments,
+notes d’écoute partageables, puis choix local persistant pour les prochaines
+réponses. Il n’ouvre pas le microphone. Son implémentation ne constitue pas
+encore un résultat auditif ni une qualification hors réseau sur appareil.
+
 Établir d’abord une référence avec les voix Apple fr-CA installées. Comparer
 ensuite un prototype isolé de PocketTTS French 24L, avant de l’embarquer dans le
 parcours principal. Son nom et sa langue ne prouvent ni l’accent québécois ni le
