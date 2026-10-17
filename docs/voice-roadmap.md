@@ -17,10 +17,13 @@ de reconnaissance lorsque l’utilisateur intervient. Après livraison TestFligh
 un essai utilisateur a affiché une interruption audio avant la première
 transcription; sa raison native exacte reste inconnue.
 
-**Candidat actuel : build 18, fiabilité des reconfigurations audio.** Il distingue
-les reconfigurations internes compatibles des changements réels de périphérique,
-vérifie la santé du graphe et conserve l’erreur dans le bon état d’interface.
-La qualification physique de l’interruption vocale reste ouverte.
+**Build 18 livré : fiabilité des reconfigurations audio.** L’essai physique
+suivant échoue au contrôle strict du graphe après démarrage, avant transcription.
+
+**Candidat actuel : build 19, format client commun au micro et à la sortie.**
+La liaison mixeur → sortie devient explicite et partage le format du tap micro.
+Les diagnostics nomment les conditions refusées. Le contrôle strict et VPIO
+restent actifs; la qualification physique de l’interruption vocale reste ouverte.
 
 ## Référence produit et limites
 

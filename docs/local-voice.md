@@ -12,10 +12,17 @@ voix pendant la lecture. Un essai utilisateur affiche toutefois une interruption
 audio avant la première transcription. Le message regroupe plusieurs causes :
 la raison exacte reçue sur cet iPhone n’est pas encore établie.
 
-Le **candidat build 18** corrige le traitement trop large des notifications de
-route et conserve l’état d’erreur lors d’un changement d’activité de l’app.
-L’archive, la livraison et les nouveaux essais physiques de ce candidat restent
-à confirmer. Il ne revendique pas la qualité ou la fluidité de ChatGPT.
+Le **build 18**, livré sur TestFlight interne, corrige les reconfigurations de
+route et l’état d’erreur. L’essai utilisateur suivant échoue au contrôle du graphe
+après `engine.start()`, avant la première transcription : « Le graphe audio avec
+annulation d’écho est inutilisable ». La capture ne révèle pas le prédicat fautif.
+
+Le **candidat build 19** configure explicitement la liaison mixeur → sortie au
+même format client que le micro et son tap, avec les vérifications strictes
+après démarrage. Les détails audio nomment la cause du refus et montrent aussi
+les formats complets du tap et du lecteur. L’archive, la livraison et les essais
+physiques de ce candidat restent à confirmer. Aucune parité avec ChatGPT n’est
+revendiquée.
 
 Les builds 13 à 15 ont été livrés sur TestFlight. Ils utilisaient une dictée vers
 un brouillon, un envoi manuel, puis une lecture facultative; les versions 14 et
@@ -239,6 +246,47 @@ nouvelle capture. Les fermetures et Réglages continuent d’attendre cet arrêt
 Ces garanties de code demandent des essais natifs : les tests JavaScript ne
 prouvent pas la libération effective du microphone, l’arrêt audible ou la
 transition correcte entre routes.
+
+## Formats du graphe — candidat 19
+
+Le chemin18 ne configurait explicitement que lecteur → mixeur en48kHz mono.
+La liaison mixeur → sortie restait automatique. Apple précise que cette liaison
+peut suivre le format de sortie au démarrage, tandis que VPIO exige le même
+format client entre la sortie du nœud micro et l’entrée du nœud de sortie.
+Le format du tap18 était relevé avant le démarrage, puis comparé après.
+
+Le candidat19 configure les deux côtés avec le même format client avant le tap
+et avant `prepare/start`. Le lecteur conserve son format canonique48kHz mono;
+le mixeur assure la conversion vers le format client choisi. Le contrôle du
+graphe reste strict, y compris l’égalité des formats I/O de VPIO. Le réarmement
+STT ne reconfigure pas un graphe en cours de lecture.
+
+Les diagnostics indiquent les prédicats refusés et les formats `in/tap/out/player`
+avec fréquence, canaux, type PCM et entrelacement. Ils restent bornés à8lignes
+et400caractères par ligne, sans identifiants ni noms de périphériques.
+
+Sources primaires : [exemple Apple de traitement vocal](https://developer.apple.com/documentation/avfaudio/using-voice-processing),
+[liaison du mixeur principal](https://developer.apple.com/documentation/avfaudio/avaudioengine/mainmixernode),
+[formats client/matériel de sortie](https://developer.apple.com/documentation/avfaudio/avaudiooutputnode).
+Le câblage est corrigé à partir de ces contrats; le prédicat réellement refusé
+sur l’iPhone du signalement18 reste à confirmer avec les détails audio.
+
+## Vérification du candidat 19 avant archive
+
+`npm run check` passe :522tests/22suites, TypeScript, ESLint et codegen.
+Les8contrôles statiques du contrat local et les2contrôles de démarrage passent.
+Six sources Swift6 strict arm64-iOS27.1 passent sur SDK26.2; le projet19 passe
+`plutil`. Le banc duplex passe24contrôles au premier essai, dont deux moteurs
+réels en rendu manuel hors ligne vérifiant le helper de câblage partagé et la
+conversion du lecteur48kHz mono vers des formats client44,1/48kHz mono.
+Le cas implicite stéréo/client mono est constaté avant la connexion explicite;
+la connexion corrigée et le signal converti sont vérifiés après.
+
+Le banc n’active ni microphone ni sortie matérielle ni VPIO réel, reconnaissance
+ou synthèse réelle. Les autres suites natives inchangées seront rejouées dans
+le pré-install EAS. Archive, acceptation Apple et essai iPhone restent des
+étapes distinctes. La cause exacte du signalement18 reste inconnue sans ses
+Détails audio; aucune disparition du problème sur appareil n’est encore prouvée.
 
 ## Validation du candidat 18 avant archive
 

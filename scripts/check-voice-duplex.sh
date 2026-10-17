@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Synthetic duplex lifetime/PCM checks. Never starts an audio engine or ASR.
+# Duplex lifetime/PCM and offline-format checks. No microphone, hardware render or ASR.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ "$(uname -s)" != "Darwin" ]] || ! command -v xcrun >/dev/null 2>&1; then

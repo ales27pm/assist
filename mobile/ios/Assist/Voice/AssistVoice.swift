@@ -513,12 +513,17 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             throw Self.error("E_VOICE_AEC", "Le traitement vocal avec annulation d’écho est indisponible.")
         }
         let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        let mixer = engine.mainMixerNode
+        engine.connect(player, to: mixer, format: playbackFormat)
+        // Construct the mixer/player first: a lazy main mixer otherwise follows
+        // hardware output at start and may renegotiate the VPIO client format.
+        let ioFormat = engine.inputNode.outputFormat(forBus: 0)
+        try AssistVoiceIOWiring.connectOutput(engine: engine, mixer: mixer, format: ioFormat)
         guard generation == token, audioEngine === engine, audioSessionActive,
               UIApplication.shared.applicationState == .active else {
             throw Self.error("E_VOICE_INTERRUPTED", "Le démarrage audio a été interrompu.")
         }
-        try installRecognition(on: engine, token: token)
+        try installRecognition(on: engine, token: token, expectedFormat: ioFormat)
         guard generation == token, audioEngine === engine, audioSessionActive,
               UIApplication.shared.applicationState == .active else {
             throw Self.error("E_VOICE_INTERRUPTED", "Le démarrage audio a été interrompu.")
@@ -553,7 +558,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         graphCommitted = true
     }
 
-    private func installRecognition(on engine: AVAudioEngine, token: UUID) throws {
+    private func installRecognition(on engine: AVAudioEngine, token: UUID, expectedFormat: AVAudioFormat? = nil) throws {
         guard generation == token, audioEngine === engine, audioSessionActive,
               UIApplication.shared.applicationState == .active else {
             throw Self.error("E_VOICE_INTERRUPTED", "La session de reconnaissance a été annulée.")
@@ -562,9 +567,13 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             throw Self.error("E_VOICE_UNAVAILABLE", "La dictée locale fr-CA est indisponible.")
         }
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            throw Self.error("E_VOICE_AUDIO", "Aucune entrée microphone n’est disponible.")
+        let currentFormat = input.outputFormat(forBus: 0)
+        let format = expectedFormat ?? currentFormat
+        guard Self.routeFormat(format).isValid else {
+            throw Self.error("E_VOICE_AUDIO", "Aucune entrée microphone PCM n’est disponible.")
+        }
+        guard Self.routeFormat(format) == Self.routeFormat(currentFormat) else {
+            throw Self.error("E_VOICE_AUDIO", "Le format du microphone a changé pendant la construction du graphe vocal.")
         }
         tapInputFormat = Self.routeFormat(format)
         let localRequest = SFSpeechAudioBufferRecognitionRequest()
@@ -873,10 +882,9 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
 
     private func recordRoute(_ facts: AssistVoiceRouteFacts, source: String, decision: String) {
         let frames = inputMeter?.snapshot().frameCount ?? 0
-        let reason = (source == "route" || source == "interruption") ? facts.reason.map(String.init) ?? "none" : "none"
-        let previous = facts.previous?.diagnosticTypes ?? "none"
-        let line = "source=\(source) reason=\(reason) phase=\(phase) ports=\(facts.current.diagnosticTypes) previous=\(previous) same=\(facts.samePorts) run=\(facts.engineRunning) vp=\(facts.inputVoiceProcessing)/\(facts.outputVoiceProcessing) in=\(facts.input.rate)/\(facts.input.channels) out=\(facts.output.rate)/\(facts.output.channels) pcm=\(frames) decision=\(decision)"
-        audioDiagnostics.append(line)
+        for line in facts.diagnosticLines(source: source, phase: phase, decision: decision, frames: frames) {
+            audioDiagnostics.append(line)
+        }
     }
 
     private func watchRouteProgress() {
