@@ -118,6 +118,7 @@ actor AssistFluidVoiceRuntime: AssistFluidInputProcessor {
     private var speechSession: PocketTtsSession?
 
     init(configuration: AssistAdvancedVoiceConfiguration, monitoring: Bool,
+         progress: @escaping @MainActor @Sendable (AssistFluidLoadFailure.Stage) -> Void,
          receive: @escaping @MainActor @Sendable (AssistFluidVoiceEvent) -> Void) async throws {
         self.receive = receive
         self.capture = AssistFluidCaptureWindow(monitoring: monitoring)
@@ -127,17 +128,24 @@ actor AssistFluidVoiceRuntime: AssistFluidInputProcessor {
         AppLogger.mirrorsToConsole = false
         var stage = AssistFluidLoadFailure.Stage.pocket
         do {
+            try Task.checkCancellation()
+            await progress(stage)
+            try Task.checkCancellation()
             let pocket = PocketTtsManager(defaultVoice: AssistAdvancedVoiceConfiguration.presetVoice, language: .french24L,
                                         offlineDirectory: configuration.pocketDirectory, precision: .int8, placement: .gpu)
             try await pocket.initialize()
             try Task.checkCancellation()
             self.pocket = pocket
             stage = .parakeet
+            await progress(stage)
+            try Task.checkCancellation()
             let version: AsrModelVersion = configuration.variant == "redux" ? .redux : .ultra
             let models = try AsrModels.loadLocal(from: configuration.asrDirectory, version: version)
             try Task.checkCancellation()
             asr = AsrManager(models: models)
             stage = .silero
+            await progress(stage)
+            try Task.checkCancellation()
             let config = MLModelConfiguration()
             config.computeUnits = .cpuOnly
             let vadModel = try await MLModel.load(contentsOf: configuration.vadModelURL, configuration: config)

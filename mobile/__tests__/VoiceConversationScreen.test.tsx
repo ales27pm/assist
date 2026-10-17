@@ -1,6 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 import {
+  act,
   fireEvent,
   renderAsync,
   screen,
@@ -130,6 +131,77 @@ test('only exposes local audio details on request after an error', async () => {
   expect(
     screen.queryByRole('button', { name: 'Détails audio' }),
   ).not.toBeOnTheScreen();
+});
+
+test('shows the latest bounded native preparation stage only during startup', async () => {
+  const firstStage = 'Préparation · Chargement de PocketTTS';
+  const latestStage = 'Préparation · Chargement de Parakeet';
+  const state = props({ phase: 'starting', audioDiagnostics: [firstStage] });
+  const { rerenderAsync } = await renderAsync(
+    <VoiceConversationScreen {...state} />,
+  );
+  expect(
+    screen.getByText(
+      'Le mode vocal local se prépare. Autorise le micro si iOS le demande.',
+    ),
+  ).toBeOnTheScreen();
+  expect(screen.getByText(firstStage)).toBeOnTheScreen();
+  await rerenderAsync(
+    <VoiceConversationScreen
+      {...state}
+      audioDiagnostics={[firstStage, latestStage, 'native debug detail']}
+    />,
+  );
+  expect(screen.getByText(latestStage)).toBeOnTheScreen();
+  expect(screen.queryByText(firstStage)).not.toBeOnTheScreen();
+  expect(screen.queryByText('native debug detail')).not.toBeOnTheScreen();
+  expect(screen.getByLabelText(/^Préparation du mode vocal\./)).toHaveAccessibleName(
+    `Préparation du mode vocal. Le mode vocal local se prépare. Autorise le micro si iOS le demande. ${latestStage}`,
+  );
+  const longStage = `Préparation · ${'A'.repeat(300)}`;
+  await rerenderAsync(
+    <VoiceConversationScreen {...state} audioDiagnostics={[longStage]} />,
+  );
+  expect(screen.getByText(longStage.slice(0, 240))).toBeOnTheScreen();
+  for (const phase of ['listening', 'error'] as const) {
+    await rerenderAsync(
+      <VoiceConversationScreen
+        {...state}
+        phase={phase}
+        audioDiagnostics={[latestStage]}
+      />,
+    );
+    expect(screen.queryByText(latestStage)).not.toBeOnTheScreen();
+  }
+});
+
+test('keeps a longer preparation visible with elapsed time and resets it on resume', async () => {
+  const state = props({ phase: 'starting' });
+  const { rerenderAsync } = await renderAsync(
+    <VoiceConversationScreen {...state} />,
+  );
+  await act(async () => jest.advanceTimersByTime(9_000));
+  expect(screen.queryByText(/Préparation en cours ·/)).not.toBeOnTheScreen();
+  await act(async () => jest.advanceTimersByTime(1_000));
+  expect(screen.getByText('Préparation en cours · 10 s')).toBeOnTheScreen();
+  expect(
+    screen.getByText(
+      'Le premier chargement des modèles locaux peut prendre du temps. Tu peux mettre en pause à tout moment.',
+    ),
+  ).toBeOnTheScreen();
+  await act(async () => jest.advanceTimersByTime(110_000));
+  expect(screen.getByText('Préparation en cours · 120 s')).toBeOnTheScreen();
+  expect(state.onPause).not.toHaveBeenCalled();
+  expect(screen.queryByText('Mode vocal interrompu')).not.toBeOnTheScreen();
+  await rerenderAsync(<VoiceConversationScreen {...state} phase="paused" />);
+  expect(screen.queryByText(/Préparation en cours ·/)).not.toBeOnTheScreen();
+  await act(async () => jest.advanceTimersByTime(5_000));
+  await rerenderAsync(<VoiceConversationScreen {...state} />);
+  expect(screen.queryByText(/Préparation en cours ·/)).not.toBeOnTheScreen();
+  await act(async () => jest.advanceTimersByTime(10_000));
+  expect(screen.getByText('Préparation en cours · 10 s')).toBeOnTheScreen();
+  await rerenderAsync(<VoiceConversationScreen {...state} phase="listening" />);
+  expect(screen.queryByText(/Préparation en cours ·/)).not.toBeOnTheScreen();
 });
 
 test.each([
