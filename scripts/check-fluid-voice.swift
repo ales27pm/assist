@@ -2,6 +2,63 @@ import AVFoundation
 import Dispatch
 import Foundation
 
+/// A controllable VAD/inference boundary for the ACTUAL production worker.
+/// Only the model processor is substituted; ring/worker/capture policy are real.
+private actor RetainedInputProbe: AssistFluidInputProcessor {
+    private var capture = AssistFluidCaptureWindow(monitoring: true)
+    private var order: [String] = []
+    private var firstAppend = true
+    private var appendStarted = false
+    private var startedWaiter: CheckedContinuation<Void, Never>?
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+    private var adoptionWaiter: CheckedContinuation<Void, Never>?
+    private var adopted = false
+    private var failed = false
+    private var hadPartial = false
+    func append(_ samples: [Float], sampleRate: Double) async {
+        precondition(sampleRate == 16_000)
+        if firstAppend {
+            firstAppend = false
+            order.append("append-start")
+            appendStarted = true
+            startedWaiter?.resume(); startedWaiter = nil
+            await withCheckedContinuation { releaseWaiter = $0 }
+            order.append("append-end")
+        }
+        do {
+            _ = try capture.append(samples, probability: samples.first == 0.2 ? 0.9 : 0.1)
+            if capture.reservePartial() { hadPartial = true }
+        } catch { failed = true }
+    }
+    func adoptCapture() -> Bool {
+        order.append("adopt")
+        capture.adoptCapture()
+        if capture.reservePartial() { hadPartial = true }
+        return true
+    }
+    func acknowledged(_ accepted: Bool) {
+        precondition(accepted)
+        order.append("ack")
+        adopted = true
+        adoptionWaiter?.resume(); adoptionWaiter = nil
+    }
+    func finishInput() async {
+        do { try capture.finish(tail: []) } catch { failed = true }
+        order.append("finish")
+    }
+    func fail() { failed = true }
+    func waitForAppend() async {
+        if !appendStarted { await withCheckedContinuation { startedWaiter = $0 } }
+    }
+    func releaseAppend() { releaseWaiter?.resume(); releaseWaiter = nil }
+    func waitForAdoption() async {
+        if !adopted { await withCheckedContinuation { adoptionWaiter = $0 } }
+    }
+    func result() -> (order: [String], samples: [Float], partial: Bool, failed: Bool) {
+        (order, capture.samples, hadPartial, failed)
+    }
+}
+
 /// Synthetic PCM only. No engine, microphone, speech recognizer, model load,
 /// file import or inference; these checks do not prove iPhone audio behavior.
 @main
@@ -164,6 +221,77 @@ struct FluidVoiceChecks {
                      "A short user capture must survive EOT silence beyond the monitor preroll")
         print("PASS sub-VAD-window word survives more than two seconds of EOT silence")
     }
+    private static func retainedCapturePolicy() throws {
+        let shortWord = [Float](repeating: 0.2, count: 1_920)
+        let silence = [Float](repeating: 0, count: 4_096)
+        // TTS monitoring has heard a short word, but no two-window onset.
+        var afterWord = AssistFluidCaptureWindow(monitoring: true)
+        try assertOnset(&afterWord, shortWord, probability: 0.9, expected: false)
+        precondition(!afterWord.reservePartial())
+        afterWord.adoptCapture()
+        afterWord.adoptCapture() // duplicate handoff cannot erase the onset
+        for _ in 0..<9 { try assertOnset(&afterWord, silence, probability: 0.1, expected: false) }
+        precondition(!afterWord.speechStarted && afterWord.reservePartial())
+        precondition(!afterWord.reservePartial())
+        let pendingVADTail: [Float] = [0.15, 0.16, 0.17]
+        try afterWord.finish(tail: pendingVADTail)
+        precondition(Array(afterWord.samples.prefix(shortWord.count)) == shortWord)
+        precondition(Array(afterWord.samples.suffix(pendingVADTail.count)) == pendingVADTail)
+        // The common path adopts first, then receives a sub-window "oui".
+        var beforeWord = AssistFluidCaptureWindow(monitoring: true)
+        beforeWord.adoptCapture()
+        _ = try beforeWord.append(shortWord, probability: 0.9)
+        for _ in 0..<4 { _ = try beforeWord.append(silence, probability: 0.1) }
+        precondition(beforeWord.reservePartial() && !beforeWord.speechStarted)
+        precondition(Array(beforeWord.samples.prefix(shortWord.count)) == shortWord)
+        // An already-qualified onset keeps its existing samples/decode cursor.
+        var qualified = AssistFluidCaptureWindow(monitoring: true)
+        for _ in 0..<4 { _ = try qualified.append(silence, probability: 0.1) }
+        for _ in 0..<2 { _ = try qualified.append(silence, probability: 0.9) }
+        precondition(qualified.speechStarted && qualified.reservePartial())
+        let saved = qualified.samples
+        qualified.adoptCapture()
+        precondition(qualified.samples == saved && !qualified.reservePartial())
+        print("PASS retained TTS→capture before/after short word, VAD tail, idempotence & qualified onset")
+    }
+    private static func retainedWorkerHandoff(cancelled: Bool) async {
+        let word = [Float](repeating: 0.2, count: 1_920)
+        let input = buffer(word, rate: 16_000)
+        let ring = AssistFluidAudioInput(format: input.format, meter: AssistVoiceInputMeter())
+        let probe = RetainedInputProbe()
+        ring.append(input)
+        let worker = Task {
+            await AssistFluidInputWorker.run(ring: ring, processor: probe, didAdopt: { accepted in
+                await probe.acknowledged(accepted)
+            }, failure: { await probe.fail() })
+        }
+        await probe.waitForAppend()
+        precondition(ring.requestCapture())
+        let suspended = await probe.result()
+        precondition(suspended.order == ["append-start"], "Handoff overtook in-flight VAD")
+        if cancelled { worker.cancel(); ring.close() }
+        await probe.releaseAppend()
+        if cancelled {
+            await worker.value
+            let result = await probe.result()
+            precondition(result.order == ["append-start", "append-end"] && !result.failed)
+            precondition(!ring.requestCapture(), "A closed input must not accept a late handoff")
+            print("PASS cancellation during actual worker append prevents adoption ACK / late capture")
+            return
+        }
+        await probe.waitForAdoption()
+        let silence = buffer([Float](repeating: 0, count: 4_096), rate: 16_000)
+        for _ in 0..<9 { ring.append(silence) }
+        ring.close()
+        await worker.value
+        let result = await probe.result()
+        precondition(!result.failed && !ring.hasFailed && result.partial)
+        precondition(result.order == ["append-start", "append-end", "adopt", "ack", "finish"])
+        precondition(Array(result.samples.prefix(word.count)) == word)
+        precondition(result.samples.count == word.count + 9 * 4_096)
+        precondition(!ring.takeCaptureRequest() && !ring.requestCapture())
+        print("PASS actual worker serializes retained capture after suspended VAD and keeps short onset through EOS")
+    }
     private static func boundedUtteranceAndMailbox() throws {
         var capture = AssistFluidCaptureWindow()
         let chunk = [Float](repeating: 0.2, count: 4_096)
@@ -198,9 +326,12 @@ struct FluidVoiceChecks {
         precondition(box.take() == nil)
         print("PASS finite utterance / latest decode coalescing / final priority / cancel clears PCM")
     }
-    static func main() throws {
+    static func main() async throws {
         ringCopyAndWrap(); ringOverflow(); ringCloseAndFormat(); stereo(); concurrentSPSC()
         try resampling(); try onsetAndPreroll(); try nonconsecutiveAndShort(); try shortCaptureSurvivesEOT(); try boundedUtteranceAndMailbox()
-        print("PASS 10 Fluid voice adapter checks · synthetic PCM, no microphone/model/iPhone qualification")
+        try retainedCapturePolicy()
+        await retainedWorkerHandoff(cancelled: false)
+        await retainedWorkerHandoff(cancelled: true)
+        print("PASS 13 Fluid voice adapter checks · synthetic PCM, no microphone/model/iPhone qualification")
     }
 }

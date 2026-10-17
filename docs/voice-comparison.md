@@ -81,7 +81,7 @@ n’est déclaré atteint sur cette base.
 Le prototype lourd doit rester isolé jusqu’à une amélioration auditive et une
 coexistence mémoire constatées sur l’iPhone cible. Les révisions, tailles et
 limites françaises déjà épinglées figurent dans
-[Pourquoi PocketTTS attend](local-voice.md#pourquoi-pockettts-attend).
+[PocketTTS et la pile avancée](local-voice.md#pockettts-et-la-pile-avancée).
 Le protocole reprend exactement les cinq textes, leurs deux découpages et les
 mêmes critères. Une voix fournie par le modèle ne constitue pas une preuve
 d’accent québécois; toute référence québécoise personnelle exige un consentement

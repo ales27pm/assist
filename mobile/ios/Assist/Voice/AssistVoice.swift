@@ -91,6 +91,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private var fluidShutdownTask: Task<Void, Never>?
     private var fluidInput: AssistFluidAudioInput?
     private var fluidInputTask: Task<Void, Never>?
+    private var pendingFluidAdoption: UUID?
     private var fluidSpeechSession: PocketTtsSession?
     private var fluidSpeechTask: Task<Void, Never>?
     private var fluidSpeechInputClosed = false
@@ -749,7 +750,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         }
     }
 
-    private func adoptRetainedInput(_ id: String, completion: (String?, NSError?) -> Void) -> Bool {
+    private func adoptRetainedInput(_ id: String, completion: @escaping (String?, NSError?) -> Void) -> Bool {
         guard phase == "idle", hasLocalInput, audioEngine?.isRunning == true,
               lifetime.adoptInput() else { return false }
         retainedInputTask?.cancel()
@@ -757,10 +758,50 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         sessionId = id
         phase = "listening"
         lastMonitoring = false
-        emitState()
-        if let cachedRecognition { receiveCapture(cachedRecognition) }
-        completion(statusJSON(), nil)
+        if let ring = fluidInput {
+            // The worker may be suspended in VAD. Queue the transition behind
+            // that append instead of racing it with a new actor Task from Main.
+            let adoption = UUID()
+            let token = generation
+            pendingFluidAdoption = adoption
+            startCompletion = completion
+            retainedInputTask = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                guard let self, self.generation == token, self.fluidInput === ring,
+                      self.pendingFluidAdoption == adoption else { return }
+                self.fail("La reprise du microphone local a dépassé son délai. Relance le mode vocal.", code: "E_VOICE_FLUID_ADOPTION")
+            }
+            if !ring.requestCapture() {
+                fail("La capture vocale retenue n’est plus disponible. Reprends le mode vocal.", code: "E_VOICE_FLUID_ADOPTION")
+            }
+        } else {
+            emitState()
+            if let cachedRecognition { receiveCapture(cachedRecognition) }
+            completion(statusJSON(), nil)
+        }
         return true
+    }
+
+    private func completeFluidAdoption(on ring: AssistFluidAudioInput, token: UUID, accepted: Bool) {
+        guard generation == token, fluidInput === ring, pendingFluidAdoption != nil,
+              phase == "listening" || phase == "finishing" else { return }
+        pendingFluidAdoption = nil
+        retainedInputTask?.cancel()
+        retainedInputTask = nil
+        guard accepted else {
+            fail("La capture vocale retenue n’a pas pu être reprise. Relance le mode vocal.", code: "E_VOICE_FLUID_ADOPTION")
+            return
+        }
+        // The worker has made capture active. Settle before replaying a
+        // retained final: its natural cancelCurrent must not reject this start.
+        settleStart(statusJSON(), nil)
+        // Completion itself may synchronously cancel/invalidate the module.
+        guard generation == token, fluidInput === ring,
+              phase == "listening" || phase == "finishing" else { return }
+        emitState()
+        let snapshot = cachedRecognition
+        cachedRecognition = nil
+        if let snapshot { receiveCapture(snapshot) }
     }
 
     @objc func invalidate() {
@@ -917,18 +958,11 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
                              block: AssistVoiceCallbacks.audioTap { ring.append($0) })
             hasTap = true
             fluidInputTask = Task.detached { [weak self] in
-                while !Task.isCancelled {
-                    if ring.hasFailed {
-                        await self?.receiveFluid(.failure("Le tampon du microphone local est saturé ou son format a changé."), token: token)
-                        return
-                    }
-                    let values = ring.read()
-                    if !values.isEmpty { await runtime.append(values, sampleRate: ring.sampleRate) }
-                    else if ring.isClosed { await runtime.finishInput(); return }
-                    else {
-                        do { try await Task.sleep(for: .milliseconds(10)) } catch { return }
-                    }
-                }
+                await AssistFluidInputWorker.run(ring: ring, processor: runtime, didAdopt: { [weak self] accepted in
+                    await self?.completeFluidAdoption(on: ring, token: token, accepted: accepted)
+                }, failure: { [weak self] in
+                    await self?.receiveFluid(.failure("Le tampon du microphone local est saturé ou son format a changé."), token: token)
+                })
             }
             startInputObservation(token: token)
             return
@@ -967,7 +1001,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
                 guard let self, self.generation == token,
                       self.phase == "listening" || self.phase == "speaking" || self.lifetime.retained else { return }
                 self.captureInputDiagnostics()
-                if self.phase == "listening" { self.emit(kind: "input") }
+                if self.phase == "listening", self.pendingFluidAdoption == nil { self.emit(kind: "input") }
                 if self.phase == "speaking", self.lastMonitoring != self.isMonitoring {
                     self.lastMonitoring = self.isMonitoring
                     self.emitState()
@@ -977,6 +1011,11 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     private func receiveRecognition(_ snapshot: AssistVoiceRecognitionSnapshot) {
+        if pendingFluidAdoption != nil {
+            cachedRecognition = snapshot
+            if let text = snapshot.text { latestTranscript = text }
+            return
+        }
         if phase == "speaking" {
             if AssistVoiceDuplexLifetime.containsSpeechText(snapshot.text) {
                 // No RMS-only trigger. The same local request/task already owns
@@ -1096,6 +1135,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
 
     private func cancelCurrent(preservingFluidCache: Bool = true) {
         lifetime.reset()
+        pendingFluidAdoption = nil
         // stop/player/engine/deactivation may synchronously notify. Observers
         // must see no owned audio session before any of those boundaries.
         let shouldDeactivate = audioSessionOwnership.relinquish()

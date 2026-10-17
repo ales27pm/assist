@@ -96,6 +96,12 @@ par défaut du SDK. Les partiels, délais de fin de tour et faux déclenchements
 doivent être mesurés sur iPhone; deux fenêtres ne permettent pas de promettre
 un barge-in inférieur à200 ms.
 
+À la fin de la lecture, le même worker d’entrée passe de la surveillance à la
+capture normale sans remettre à zéro l’audio, le rééchantillonneur ou la queue
+VAD. Un mot bref comme « oui » peut ainsi produire un partiel même sans deux
+fenêtres positives. L’écoute n’est annoncée qu’après cet acquittement; une
+annulation ou un délai dépassé ne peut pas réactiver l’ancienne capture.
+
 Une réponse crée **une seule session PocketTTS**. Chaque unité prosodique rejoint
 `enqueue`; l’état Mimi persiste entre ces segments. Les frames24 kHz mono rejoignent
 le lecteur48 kHz du graphe commun. En interruption : invalider l’identité, arrêter
@@ -106,7 +112,9 @@ entre tours automatiques; fermeture, erreur, arrière-plan et mutation de ressou
 attendent leur nettoyage avant réemploi ou suppression d’une référence.
 
 Les limites du SDK sont64 segments texte et192 frames de sortie (15,36secondes)
-avec erreur explicite si le consommateur ne suit plus. Le chargement refuse
+avec erreur explicite si le consommateur ne suit plus. Une limite supplémentaire
+de150 frames suspend la production jusqu’aux confirmations de lecture effective;
+elle évite de remplir la file pendant une longue réponse. Le chargement refuse
 une réserve d’allocation par app inférieure à2 Go et un état thermique sérieux
 ou critique; ce sont des garde-fous de prototype, pas une mesure du RSS requis.
 L’échec du moteur avancé reste visible; l’application ne réessaie pas une réponse

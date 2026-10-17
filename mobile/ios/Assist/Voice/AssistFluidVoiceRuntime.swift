@@ -13,7 +13,7 @@ struct AssistFluidCaptureWindow {
     private var preRoll: [Float] = []
     private var positiveWindows = 0
     private var lastDecodeSamples = 0
-    private let monitoring: Bool
+    private var monitoring: Bool
 
     init(monitoring: Bool = false) { self.monitoring = monitoring }
 
@@ -38,6 +38,15 @@ struct AssistFluidCaptureWindow {
         samples = preRoll
         preRoll.removeAll(keepingCapacity: false)
         return true
+    }
+    /// The input worker calls this between complete append operations. Keep
+    /// the onset, resampler/VAD tail and any already-qualified utterance; only
+    /// remove the stricter policy used while the assistant was speaking.
+    mutating func adoptCapture() {
+        guard monitoring else { return }
+        monitoring = false
+        if !speechStarted { samples = preRoll }
+        preRoll.removeAll(keepingCapacity: false)
     }
     mutating func reservePartial() -> Bool {
         guard (speechStarted || !monitoring), samples.count - lastDecodeSamples >= 16_000 else { return false }
@@ -92,7 +101,7 @@ enum AssistFluidVoiceEvent: Sendable {
 /// neither ModelHub nor a download-capable convenience initializer is used.
 /// Parakeet receives cumulative snapshots (not delta text) with a fresh decoder:
 /// at most one prediction and one replacement snapshot can be outstanding.
-actor AssistFluidVoiceRuntime {
+actor AssistFluidVoiceRuntime: AssistFluidInputProcessor {
     private let pocket: PocketTtsManager
     private let voice: PocketTtsVoiceData
     private let asr: AsrManager
@@ -173,6 +182,15 @@ actor AssistFluidVoiceRuntime {
         let session = speechSession
         speechSession = nil
         await session?.cancel()
+    }
+
+    /// Serialized by the same worker that drains microphone PCM. No reset,
+    /// decoder replacement or actor suspension may lose the retained onset.
+    func adoptCapture() -> Bool {
+        guard active, !finishing else { return false }
+        capture.adoptCapture()
+        if capture.reservePartial() { enqueueDecode(final: false) }
+        return true
     }
 
     /// Called by the single ring-draining worker, never by the audio callback.

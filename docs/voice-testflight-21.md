@@ -39,12 +39,12 @@ Le candidat isolé passe TypeScript, ESLint, codegen iOS et **672 tests/27 suite
 Le provisionneur passe7 tests locaux; les contrats historiques voix 8 et lancement 2
 restent verts. Le module FluidAudio arm64 iOS27.1 et les neuf sources vocales
 passent le compilateur Swift6 strict sur SDK26.2. Les bancs sans modèles passent :
-SDK11tests, capture/rééchantillonnage10 et fichiers/SHA-256 5. La preuve compare
+SDK11tests, capture/rééchantillonnage13 et fichiers/SHA-256 5. La preuve compare
 les empreintes exactes des sources testées au candidat. L’archive EAS/SDK27.1
 et l’acceptation TestFlight restent des étapes séparées; les logs privés ne
 contiennent ni enregistrement ni clé App Store Connect.
 
-L’IPA doit contenir le produit Swift FluidAudio, les neuf sources vocales,
+L’IPA doit contenir FluidAudio et l’implémentation vocale compilés,
 le manifeste des poids et les attributions. Aucun gros poids, consentement,
 audio de référence ou secret n’appartient à l’archive de l’application.
 
@@ -59,6 +59,13 @@ comme preuve partielle, distincte de ces contrôles positifs et du passage EAS.
 La passe suivante confirme entrée8, file9, duplex25, comparatif6, capture10,
 fichiers5 et SDK11 sur la VM; aucun test de rendu matériel ou d’inférence
 n’est impliqué.
+
+Le deuxième essai a passé les huit suites natives sur EAS puis a été annulé
+avant archive et soumission pour corriger la transition surveillance→capture.
+Cette correction conserve les mots courts après une réponse. Les neuf fichiers
+Swift passent à nouveau le contrôle strict; les13 groupes de capture incluent
+le vrai worker suspendu à une frontière VAD, l’acquittement ordonné, le pré-roll
+conservé et l’annulation sans reprise. Les25 contrôles duplex passent aussi.
 
 ## Notes TestFlight fr-CA
 

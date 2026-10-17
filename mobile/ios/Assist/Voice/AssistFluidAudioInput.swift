@@ -16,6 +16,9 @@ final class AssistFluidAudioInput: @unchecked Sendable {
     private let consumed = Atomic<UInt64>(0)
     private let open = Atomic<Bool>(true)
     private let failed = Atomic<Bool>(false)
+    // Main requests adoption; only the single PCM worker consumes this marker.
+    // Unlike an actor call launched from Main, it cannot overtake append/VAD.
+    private let captureRequested = Atomic<Bool>(false)
     let meter: AssistVoiceInputMeter
 
     nonisolated init(format: AVAudioFormat, meter: AssistVoiceInputMeter) {
@@ -67,6 +70,14 @@ final class AssistFluidAudioInput: @unchecked Sendable {
         }
     }
     private nonisolated func fail() { failed.store(true, ordering: .releasing) }
+    nonisolated func requestCapture() -> Bool {
+        guard open.load(ordering: .acquiring), !failed.load(ordering: .acquiring) else { return false }
+        captureRequested.store(true, ordering: .releasing)
+        return true
+    }
+    nonisolated func takeCaptureRequest() -> Bool {
+        captureRequested.exchange(false, ordering: .acquiringAndReleasing)
+    }
     nonisolated func close() { open.store(false, ordering: .releasing) }
     nonisolated var hasFailed: Bool { failed.load(ordering: .acquiring) }
     nonisolated var isClosed: Bool { !open.load(ordering: .acquiring) }
@@ -81,6 +92,39 @@ final class AssistFluidAudioInput: @unchecked Sendable {
         for index in 0..<count { result[index] = samples[Int((read + UInt64(index)) % UInt64(Self.capacity))] }
         consumed.store(read + UInt64(count), ordering: .releasing)
         return result
+    }
+}
+
+/// Each processor is actor confined; only this worker feeds append/adoption.
+/// Its protocol also lets the no-microphone harness suspend the real worker at
+/// an inference boundary and verify command ordering/cancellation.
+protocol AssistFluidInputProcessor: Actor {
+    func append(_ samples: [Float], sampleRate: Double) async
+    func adoptCapture() -> Bool
+    func finishInput() async
+}
+
+enum AssistFluidInputWorker {
+    nonisolated static func run(
+        ring: AssistFluidAudioInput, processor: any AssistFluidInputProcessor,
+        didAdopt: @escaping @Sendable (Bool) async -> Void,
+        failure: @escaping @Sendable () async -> Void
+    ) async {
+        while !Task.isCancelled {
+            if ring.hasFailed { await failure(); return }
+            if ring.takeCaptureRequest() {
+                let accepted = await processor.adoptCapture()
+                guard !Task.isCancelled else { return }
+                await didAdopt(accepted)
+            }
+            guard !Task.isCancelled else { return }
+            let values = ring.read()
+            if !values.isEmpty { await processor.append(values, sampleRate: ring.sampleRate) }
+            else if ring.isClosed { await processor.finishInput(); return }
+            else {
+                do { try await Task.sleep(for: .milliseconds(10)) } catch { return }
+            }
+        }
     }
 }
 
