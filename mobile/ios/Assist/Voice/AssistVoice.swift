@@ -435,8 +435,9 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
                     }
                     runtime = try await AssistFluidVoiceRuntime(
                         configuration: configuration, monitoring: speaking,
-                        progress: { [weak self] stage in
-                            self?.recordPreparation("Chargement de \(stage.label)", token: token)
+                        progress: { [weak self] stage, detail in
+                            let suffix = detail.map { " · \($0)" } ?? ""
+                            self?.recordPreparation("Chargement de \(stage.label)\(suffix)", token: token)
                         }, receive: receive)
                 }
                 guard self.generation == token, self.phase == "requesting", !Task.isCancelled else {

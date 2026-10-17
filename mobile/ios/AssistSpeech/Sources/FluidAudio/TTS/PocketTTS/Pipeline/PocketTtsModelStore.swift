@@ -93,7 +93,10 @@ public actor PocketTtsModelStore {
     }
 
     /// Load all four CoreML models and the constants bundle.
-    public func loadIfNeeded() async throws {
+    public func loadIfNeeded(
+        progress: (@Sendable (PocketTtsModelLoadAttempt) async -> Void)? = nil
+    ) async throws {
+        try Task.checkCancellation()
         guard condStepModel == nil && stateModelsStore == nil else { return }
 
         let languageRoot: URL
@@ -184,9 +187,16 @@ public actor PocketTtsModelStore {
         var loadedModels: [MLModel] = []
         for spec in modelSpecs {
             let modelURL = languageRoot.appendingPathComponent(spec.file)
-            let model = try MLModel(contentsOf: modelURL, configuration: spec.config)
+            let model = try await PocketTtsModelLoader.load(
+                component: spec.file, units: spec.config.computeUnits, progress: progress
+            ) { units in
+                let configuration = MLModelConfiguration()
+                configuration.computeUnits = units
+                return try await MLModel.load(contentsOf: modelURL, configuration: configuration)
+            }
+            try Task.checkCancellation()
             loadedModels.append(model)
-            logger.info("Loaded \(spec.file) (computeUnits=\(spec.config.computeUnits.pocketTtsLabel))")
+            logger.info("Loaded \(spec.file)")
         }
 
         // In v2.1 the conditioner IS cond_prefill (no per-token cond_step).

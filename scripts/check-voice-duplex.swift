@@ -556,6 +556,20 @@ struct VoiceDuplexChecks {
         precondition(!failure.diagnosticLine.contains("reference.wav") && !failure.localizedDescription.contains("Speaker Name"))
         print("PASS: model-stage and native cause survive without private descriptions or paths")
 
+        let modelLoad = NSError(domain: "FluidAudio.PocketModelLoad", code: 0, userInfo: [
+            NSUnderlyingErrorKey: NSError(domain: "com.apple.CoreML", code: 0),
+            "PocketTtsComponent": "cond_prefill.mlmodelc", "PocketTtsComputeUnits": "cpuAndGPU",
+            "PocketTtsRetried": true,
+        ])
+        let modelFailure = AssistFluidLoadFailure(stage: .pocket, error: modelLoad)
+        precondition(modelFailure.diagnosticLine == "load stage=pocket model=cond_prefill.mlmodelc units=cpuAndGPU retried=1 cause=FluidAudio.PocketModelLoad:0 > com.apple.CoreML:0")
+        let privateMetadata = NSError(domain: "FluidAudio.PocketModelLoad", code: 0, userInfo: [
+            "PocketTtsComponent": "/private/reference.wav", "PocketTtsComputeUnits": "secret transcript",
+        ])
+        let redactedModel = AssistFluidLoadFailure(stage: .pocket, error: privateMetadata)
+        precondition(redactedModel.diagnosticLine == "load stage=pocket cause=FluidAudio.PocketModelLoad:0")
+        print("PASS: exact Pocket model and retry route are retained, arbitrary paths remain excluded")
+
         let hostile = NSError(domain: "/private/person.wav", code: 42,
                               userInfo: [NSLocalizedDescriptionKey: "consent document"])
         let reference = AssistFluidLoadFailure(stage: .session, error: hostile)

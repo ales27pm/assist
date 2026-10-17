@@ -118,7 +118,7 @@ actor AssistFluidVoiceRuntime: AssistFluidInputProcessor {
     private var speechSession: PocketTtsSession?
 
     init(configuration: AssistAdvancedVoiceConfiguration, monitoring: Bool,
-         progress: @escaping @MainActor @Sendable (AssistFluidLoadFailure.Stage) -> Void,
+         progress: @escaping @MainActor @Sendable (AssistFluidLoadFailure.Stage, String?) -> Void,
          receive: @escaping @MainActor @Sendable (AssistFluidVoiceEvent) -> Void) async throws {
         self.receive = receive
         self.capture = AssistFluidCaptureWindow(monitoring: monitoring)
@@ -129,22 +129,25 @@ actor AssistFluidVoiceRuntime: AssistFluidInputProcessor {
         var stage = AssistFluidLoadFailure.Stage.pocket
         do {
             try Task.checkCancellation()
-            await progress(stage)
+            await progress(stage, nil)
             try Task.checkCancellation()
             let pocket = PocketTtsManager(defaultVoice: AssistAdvancedVoiceConfiguration.presetVoice, language: .french24L,
                                         offlineDirectory: configuration.pocketDirectory, precision: .int8, placement: .gpu)
-            try await pocket.initialize()
+            try await pocket.initialize(progress: { attempt in
+                let retry = attempt.retry ? " · reprise CPU/GPU" : ""
+                await progress(.pocket, "\(attempt.component) · \(attempt.computeUnits)\(retry)")
+            })
             try Task.checkCancellation()
             self.pocket = pocket
             stage = .parakeet
-            await progress(stage)
+            await progress(stage, nil)
             try Task.checkCancellation()
             let version: AsrModelVersion = configuration.variant == "redux" ? .redux : .ultra
             let models = try AsrModels.loadLocal(from: configuration.asrDirectory, version: version)
             try Task.checkCancellation()
             asr = AsrManager(models: models)
             stage = .silero
-            await progress(stage)
+            await progress(stage, nil)
             try Task.checkCancellation()
             let config = MLModelConfiguration()
             config.computeUnits = .cpuOnly

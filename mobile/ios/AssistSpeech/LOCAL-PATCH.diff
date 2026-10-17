@@ -84,7 +84,7 @@
      public let language: PocketTtsLanguage
      public let precision: PocketTtsPrecision
      public let placement: PocketTtsModelPlacement
-@@ -69,6 +70,23 @@
+@@ -69,21 +70,44 @@
      ) {
          self.language = language
          self.directory = directory
@@ -108,8 +108,14 @@
          self.precision = precision
          self.placement = placement
          self.computeUnits = computeUnits
-@@ -78,12 +96,15 @@
-     public func loadIfNeeded() async throws {
+     }
+ 
+     /// Load all four CoreML models and the constants bundle.
+-    public func loadIfNeeded() async throws {
++    public func loadIfNeeded(
++        progress: (@Sendable (PocketTtsModelLoadAttempt) async -> Void)? = nil
++    ) async throws {
++        try Task.checkCancellation()
          guard condStepModel == nil && stateModelsStore == nil else { return }
  
 -        let languageRoot = try await PocketTtsResourceDownloader.ensureModels(
@@ -130,7 +136,26 @@
          self.languageRootDirectory = languageRoot
  
          logger.info(
-@@ -382,11 +403,13 @@
+@@ -163,9 +187,16 @@
+         var loadedModels: [MLModel] = []
+         for spec in modelSpecs {
+             let modelURL = languageRoot.appendingPathComponent(spec.file)
+-            let model = try MLModel(contentsOf: modelURL, configuration: spec.config)
++            let model = try await PocketTtsModelLoader.load(
++                component: spec.file, units: spec.config.computeUnits, progress: progress
++            ) { units in
++                let configuration = MLModelConfiguration()
++                configuration.computeUnits = units
++                return try await MLModel.load(contentsOf: modelURL, configuration: configuration)
++            }
++            try Task.checkCancellation()
+             loadedModels.append(model)
+-            logger.info("Loaded \(spec.file) (computeUnits=\(spec.config.computeUnits.pocketTtsLabel))")
++            logger.info("Loaded \(spec.file)")
+         }
+ 
+         // In v2.1 the conditioner IS cond_prefill (no per-token cond_step).
+@@ -382,11 +413,13 @@
          guard let languageRoot = languageRootDirectory else {
              throw PocketTTSError.modelNotFound("PocketTTS repository not loaded")
          }
@@ -149,7 +174,7 @@
          voiceCache[voice] = data
          return data
      }
-@@ -408,6 +431,13 @@
+@@ -408,6 +441,13 @@
          let config = MLModelConfiguration()
          config.computeUnits = computeUnits.resolvedMimiEncoder
  
@@ -369,7 +394,7 @@
          // Get conditioning output [1, num_frames, 1024]
 --- a/Sources/FluidAudio/TTS/PocketTTS/PocketTtsManager.swift
 +++ b/Sources/FluidAudio/TTS/PocketTTS/PocketTtsManager.swift
-@@ -62,6 +62,24 @@
+@@ -62,13 +62,33 @@
          self.language = language
      }
  
@@ -394,7 +419,18 @@
      public var isAvailable: Bool {
          isInitialized
      }
-@@ -397,6 +415,7 @@
+ 
+     /// Initialize by downloading and loading all PocketTTS models.
+-    public func initialize() async throws {
+-        try await modelStore.loadIfNeeded()
++    public func initialize(
++        progress: (@Sendable (PocketTtsModelLoadAttempt) async -> Void)? = nil
++    ) async throws {
++        try await modelStore.loadIfNeeded(progress: progress)
+         isInitialized = true
+         logger.notice("PocketTtsManager initialized")
+     }
+@@ -397,6 +417,7 @@
      /// ```
      public func cloneVoice(from audioURL: URL) async throws -> PocketTtsVoiceData {
          try await modelStore.loadMimiEncoderIfNeeded()
@@ -402,11 +438,88 @@
          return try await modelStore.cloneVoice(from: audioURL)
      }
  
-@@ -407,6 +426,7 @@
+@@ -407,6 +428,7 @@
      /// - Returns: Voice conditioning data.
      public func cloneVoice(from samples: [Float]) async throws -> PocketTtsVoiceData {
          try await modelStore.loadMimiEncoderIfNeeded()
 +        try Task.checkCancellation()
          return try await modelStore.cloneVoice(from: samples)
      }
+ 
+--- a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsModelLoader.swift
++++ b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsModelLoader.swift
+@@ -0,0 +1,73 @@
++#if TTS
++@preconcurrency import CoreML
++import Foundation
++
++/// One load attempt for the same local PocketTTS model and weights.
++public struct PocketTtsModelLoadAttempt: Sendable {
++    public let component: String
++    public let computeUnits: String
++    public let retry: Bool
++}
++
++/// Retries a Core ML load rejected under automatic placement on CPU/GPU once.
++/// Explicit compute-unit choices and cancellation are never retried.
++enum PocketTtsModelLoader {
++    /// Inherit the caller's actor so an operation can return a non-Sendable
++    /// Core ML object without introducing a different isolation domain.
++    static func load<T>(
++        component: String,
++        units: MLComputeUnits,
++        progress: (@Sendable (PocketTtsModelLoadAttempt) async -> Void)? = nil,
++        isolation: isolated (any Actor)? = #isolation,
++        operation: nonisolated(nonsending) (MLComputeUnits) async throws -> T
++    ) async throws -> T {
++        var currentUnits = units
++        var retried = false
++
++        while true {
++            try Task.checkCancellation()
++            if let progress {
++                await progress(PocketTtsModelLoadAttempt(
++                    component: component,
++                    computeUnits: currentUnits.pocketTtsLabel,
++                    retry: retried))
++                try Task.checkCancellation()
++            }
++
++            do {
++                try Task.checkCancellation()
++                let result = try await operation(currentUnits)
++                try Task.checkCancellation()
++                return result
++            } catch {
++                if error is CancellationError { throw error }
++                try Task.checkCancellation()
++
++                let underlying = error as NSError
++                if !retried, currentUnits == .all,
++                    underlying.domain == "com.apple.CoreML" {
++                    retried = true
++                    currentUnits = .cpuAndGPU
++                    continue
++                }
++
++                // Keep paths and localized descriptions in the underlying
++                // error only. The app may expose these allowlisted fields.
++                var context: [String: Any] = [
++                    NSUnderlyingErrorKey: underlying,
++                    "PocketTtsComponent": component,
++                    "PocketTtsComputeUnits": currentUnits.pocketTtsLabel,
++                    "PocketTtsRetried": retried,
++                ]
++                if retried {
++                    context["PocketTtsInitialComputeUnits"] = units.pocketTtsLabel
++                }
++                throw NSError(
++                    domain: "FluidAudio.PocketModelLoad",
++                    code: underlying.code,
++                    userInfo: context)
++            }
++        }
++    }
++}
++#endif
  
