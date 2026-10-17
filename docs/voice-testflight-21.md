@@ -48,6 +48,18 @@ L’IPA doit contenir le produit Swift FluidAudio, les neuf sources vocales,
 le manifeste des poids et les attributions. Aucun gros poids, consentement,
 audio de référence ou secret n’appartient à l’archive de l’application.
 
+Le premier essai EAS21 s’est arrêté avant archive dans le banc duplex : son
+localisateur source exigeait l’ancienne signature `cancelCurrent()`. Le contrôle
+accepte maintenant la déclaration unique avec paramètres, teste les deux
+signatures et refuse l’ambiguïté; les assertions d’ownership/ordre restent
+identiques. Les callbacks9/128frames, deux contrôles négatifs d’isolation,
+entrée8 et file9 ont déjà passé sur le serveur SDK27.1 dans cet essai. Une
+sortie de crash négatif insuffisamment symboliquée sur la VM Intel est conservée
+comme preuve partielle, distincte de ces contrôles positifs et du passage EAS.
+La passe suivante confirme entrée8, file9, duplex25, comparatif6, capture10,
+fichiers5 et SDK11 sur la VM; aucun test de rendu matériel ou d’inférence
+n’est impliqué.
+
 ## Notes TestFlight fr-CA
 
 Pile vocale locale optionnelle : PocketTTS français24 couches, Parakeet Redux/Ultra et Silero avec annulation d’écho iOS. Apple reste activé par défaut.

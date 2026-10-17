@@ -407,10 +407,33 @@ struct VoiceDuplexChecks {
     }
 
     @MainActor
+    private static func teardownDeclaration(in source: String) throws -> Range<String.Index>? {
+        // Arguments belong to the production lifecycle, not to this source
+        // locator. Require exactly one declaration and retain the order checks.
+        let pattern = #"(?m)^    private func cancelCurrent\([^\n]*\) \{$"#
+        let matches = try NSRegularExpression(pattern: pattern).matches(
+            in: source, range: NSRange(source.startIndex..<source.endIndex, in: source))
+        guard matches.count == 1 else { return nil }
+        return Range(matches[0].range, in: source)
+    }
+
+    @MainActor
+    private static func teardownLocatorRegression() throws {
+        for declaration in ["    private func cancelCurrent() {",
+                            "    private func cancelCurrent(preservingFluidCache: Bool = true) {"] {
+            let found = try teardownDeclaration(in: declaration + "\n        lifetime.reset()\n    }\n")
+            precondition(found != nil)
+        }
+        let ambiguous = try teardownDeclaration(in: "    private func cancelCurrent() {\n    private func cancelCurrent(flag: Bool) {\n")
+        precondition(ambiguous == nil)
+        print("PASS: teardown locator handles lifecycle parameters and rejects ambiguous declarations.")
+    }
+
+    @MainActor
     private static func teardownSourceOrdering() throws {
         let path = "mobile/ios/Assist/Voice/AssistVoice.swift"
         let source = try String(contentsOfFile: path, encoding: .utf8)
-        guard let start = source.range(of: "    private func cancelCurrent() {"),
+        guard let start = try teardownDeclaration(in: source),
               let end = source.range(of: "    private func fail(", range: start.upperBound..<source.endIndex)
         else { preconditionFailure("Cannot locate production teardown") }
         let body = String(source[start.upperBound..<end.lowerBound])
@@ -513,9 +536,10 @@ struct VoiceDuplexChecks {
         await unsupportedAndBounded()
         routePolicy()
         teardownNotifications()
+        try teardownLocatorRegression()
         try teardownSourceOrdering()
         try offlineWiringAndConversion()
         try wiringSourceOrdering()
-        print("PASS: 24 native duplex checks; offline engines only are started; no microphone, hardware output, recognition or real TTS.")
+        print("PASS: 25 native duplex checks; offline engines only are started; no microphone, hardware output, recognition or real TTS.")
     }
 }
