@@ -5,7 +5,7 @@ import React_RCTAppDelegate
 import ReactAppDependencyProvider
 
 @main
-class AppDelegate: ExpoAppDelegate, ExpoReactNativeFactoryProvider {
+class AppDelegate: ExpoAppDelegate {
   var window: UIWindow?
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
@@ -24,6 +24,11 @@ class AppDelegate: ExpoAppDelegate, ExpoReactNativeFactoryProvider {
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }
+
+// Expo's factory provider bridges UIKit's scene delegate and the application
+// delegate. UIKit owns this lifecycle on the main actor, so declare the
+// conformance explicitly for Swift 6's strict-concurrency checking.
+extension AppDelegate: @MainActor ExpoReactNativeFactoryProvider {}
 
 class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {
   override func sourceURL(for bridge: RCTBridge) -> URL? {
