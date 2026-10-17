@@ -10,6 +10,9 @@ export type EngineState = {
   phase: Phase;
   contextCapacity: number;
   bundledModelAvailable?: boolean;
+  selectedModelAvailable?: boolean;
+  selectedModelName?: string | null;
+  selectedModelError?: string | null;
   modelName?: string | null;
   error?: string | null;
   loadElapsedMs?: number | null;
@@ -74,6 +77,12 @@ export function parseState(json: string): EngineState {
     !finite(value.contextCapacity) ||
     (value.bundledModelAvailable !== undefined &&
       typeof value.bundledModelAvailable !== 'boolean') ||
+    (value.selectedModelAvailable !== undefined &&
+      typeof value.selectedModelAvailable !== 'boolean') ||
+    (value.selectedModelName != null &&
+      typeof value.selectedModelName !== 'string') ||
+    (value.selectedModelError != null &&
+      typeof value.selectedModelError !== 'string') ||
     (value.modelName != null && typeof value.modelName !== 'string') ||
     (value.error != null && typeof value.error !== 'string') ||
     (value.loadElapsedMs != null && !finite(value.loadElapsedMs))

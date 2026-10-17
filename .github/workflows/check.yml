@@ -24,6 +24,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: python3 ../scripts/test-ios-launch.py
+      - run: python3 ../scripts/test-local-voice-contract.py
       - run: python3 ../scripts/test-export-contracts.py
       - run: bash ../scripts/test-preflight.sh
       - run: node --test ../scripts/test-bundle-gemma.mjs
@@ -37,3 +38,9 @@ jobs:
           persist-credentials: false
       - name: Foundation and CryptoKit contracts (does not compile Core AI)
         run: bash scripts/check-swift.sh
+      - name: Native voice callbacks from background queues (no microphone)
+        run: bash scripts/check-voice-callbacks.sh
+      - name: Microphone input metrics with synthetic PCM (no microphone)
+        run: bash scripts/check-voice-input.sh
+      - name: Streaming speech queue and cancellation (no playback)
+        run: bash scripts/check-voice-speech-queue.sh

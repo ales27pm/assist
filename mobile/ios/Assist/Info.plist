@@ -47,6 +47,10 @@
 	</dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>En mode vocal, Assist écoute vos messages et vos interruptions pendant ses réponses. L’audio reste sur cet iPhone.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Assist reconnaît vos messages et interruptions en français canadien sur cet iPhone. Le mode vocal reste désactivé si la reconnaissance locale est indisponible.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 	  <!-- Do not change NSAllowsArbitraryLoads to true, or you will risk app rejection! -->

@@ -186,7 +186,10 @@ Assist ; aucune signature, installation ou modification n’a été effectuée s
 l’application distincte monGARS.
 
 Le sélecteur n’effectue pas de copie durable : le dossier doit rester disponible
-sur l’iPhone, et doit être sélectionné à nouveau après fermeture de l’app.
+sur l’iPhone. Les builds décrits ci-dessus demandaient une nouvelle sélection
+après fermeture de l’app. La version de travail ajoute la
+[restauration par signet privé](model-restoration.md), avec revalidation avant
+chargement explicite ; ce nouveau parcours reste à vérifier sur iPhone.
 L’historique de conversation est également limité au processus pour cette étape.
 Les contrôles de structure ne certifient pas l’identité cryptographique des poids.
 

@@ -46,7 +46,10 @@ test('comparison report preserves both asset identities and the failing baseline
     { ...report, assets: undefined },
     { ...report, assets: [assets[0], assets[0]] },
     { ...report, assets: [assets[0], { ...assets[1], variant: 'unknown' }] },
-    { ...report, assets: [assets[0], { ...assets[1], fixtureAssetSHA256: 'bad' }] },
+    {
+      ...report,
+      assets: [assets[0], { ...assets[1], fixtureAssetSHA256: 'bad' }],
+    },
     { ...report, summary: { ...report.summary, cases: 24 } },
     { ...report, summary: { ...report.summary, failed: 49 } },
   ]) {
@@ -69,6 +72,31 @@ test('preserves detected capacity rather than replacing it with 32K target', () 
   expect(
     parseState('{"phase":"ready","contextCapacity":8192}').contextCapacity,
   ).toBe(8192);
+});
+test('preserves native selection restoration without implying a loaded model', () => {
+  const state = parseState(
+    JSON.stringify({
+      phase: 'idle',
+      contextCapacity: 0,
+      selectedModelAvailable: true,
+      selectedModelName: 'Gemma-local',
+      selectedModelError: null,
+    }),
+  );
+  expect(state.selectedModelAvailable).toBe(true);
+  expect(state.selectedModelName).toBe('Gemma-local');
+  expect(state.phase).toBe('idle');
+});
+test.each([
+  { selectedModelAvailable: 'true' },
+  { selectedModelName: 42 },
+  { selectedModelError: false },
+])('rejects malformed restored model metadata %s', metadata => {
+  expect(() =>
+    parseState(
+      JSON.stringify({ phase: 'idle', contextCapacity: 0, ...metadata }),
+    ),
+  ).toThrow();
 });
 test('accepts native bundled-model availability without inferring it for older states', () => {
   expect(

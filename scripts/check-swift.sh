@@ -11,6 +11,10 @@ NATIVE=mobile/ios/Assist/Inference
   "$NATIVE/InferencePolicy.swift" "$NATIVE/InferencePolicyChecks.swift" -o "$CHECK_DIR/policy"
 "$CHECK_DIR/policy"
 "$SWIFTC" -swift-version 6 -strict-concurrency=complete \
+  mobile/ios/Assist/ModelDirectoryBookmark.swift \
+  scripts/check-model-directory-bookmark.swift -o "$CHECK_DIR/model-bookmark"
+"$CHECK_DIR/model-bookmark"
+"$SWIFTC" -swift-version 6 -strict-concurrency=complete \
   "$NATIVE/AssistRuntimeMonitor.swift" scripts/check-runtime-monitor.swift -o "$CHECK_DIR/monitor"
 "$CHECK_DIR/monitor"
 "$SWIFTC" -swift-version 6 -strict-concurrency=complete \

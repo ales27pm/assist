@@ -18,6 +18,7 @@ sortie se partagent le contexte disponible.
 - [Embarquer un export Gemma vérifié dans l’IPA](docs/bundled-gemma.md)
 - [Protocole de qualification sur iPhone](docs/qualification.md)
 - [Architecture et limites du prototype](docs/architecture.md)
+- [Premier parcours vocal local en français canadien](docs/local-voice.md)
 - [Vérifications exécutées et blocages](docs/verification.md)
 
 Contrôles depuis la racine :

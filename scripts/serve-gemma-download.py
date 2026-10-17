@@ -164,7 +164,7 @@ def handler(directory, archive_fingerprint):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", required=True, type=Path)
-    parser.add_argument("--bind", default="127.0.0.1", choices=["127.0.0.1", "100.125.44.127"])
+    parser.add_argument("--bind", default="127.0.0.1", choices=["127.0.0.1"])
     parser.add_argument("--port", type=int, default=9451)
     args = parser.parse_args()
     directory = args.directory.resolve(strict=True)

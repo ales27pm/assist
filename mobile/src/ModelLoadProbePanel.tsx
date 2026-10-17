@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, Share, StyleSheet, Text, View } from 'react-native';
 import NativeAssist from '../specs/NativeAssist';
+import { AssistTheme, useAppearance } from './appearance';
+import { uiGrammar } from './uiGrammar';
 import {
   LoadProbeReport,
   loadProbeFunctions,
@@ -20,6 +22,8 @@ export function ModelLoadProbePanel({
   modelLoaded,
   perform,
 }: Props) {
+  const { theme } = useAppearance();
+  const styles = createStyles(theme);
   const [functionIndex, setFunctionIndex] = useState(0);
   const [report, setReport] = useState<LoadProbeReport | null>(null);
   const [error, setError] = useState('');
@@ -188,28 +192,30 @@ export function ModelLoadProbePanel({
   );
 }
 
-const styles = StyleSheet.create({
-  disabled: { opacity: 0.4 },
-  panel: {
-    backgroundColor: '#142329',
-    borderColor: '#34494c',
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 18,
-    gap: 12,
-  },
-  title: { color: '#e3efea', fontSize: 22, fontWeight: '600' },
-  text: { color: '#a7b8b6', fontSize: 15, lineHeight: 22 },
-  button: {
-    backgroundColor: '#b1d8c8',
-    borderRadius: 9,
-    padding: 14,
-    minHeight: 48,
-  },
-  buttonText: {
-    color: '#132925',
-    fontSize: 16,
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-});
+const createStyles = (theme: AssistTheme) =>
+  StyleSheet.create({
+    disabled: { opacity: 0.4 },
+    panel: {
+      gap: 12,
+    },
+    title: {
+      ...uiGrammar.type.body,
+      color: theme.colors.text,
+      fontWeight: '600',
+    },
+    text: { ...uiGrammar.type.label, color: theme.colors.muted },
+    button: {
+      backgroundColor: theme.colors.accent,
+      borderRadius: uiGrammar.radius.control,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      minHeight: 52,
+      justifyContent: 'center',
+    },
+    buttonText: {
+      ...uiGrammar.type.label,
+      color: theme.colors.onAccent,
+      textAlign: 'center',
+      fontWeight: '600',
+    },
+  });

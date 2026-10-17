@@ -1,0 +1,511 @@
+{
+  "scope": "Shared final-reference alignment across the existing whole-app UI. Browser uses actually unavailable NativeAssist; no native iPhone build or inference proof.",
+  "recorded_at": "2026-10-16T20:53:09.633428+00:00",
+  "sources": {
+    "mobile/App.tsx": "ad342b5d08a4ea798467542601814cdc449cf4538bd1a4ddbf4b2e1ca672241e",
+    "mobile/preview/index.html": "c382a25d6476e2f5774766e799ec0003020544be25c75d25d3a5f79fe988da83",
+    "mobile/src/uiGrammar.ts": "3e7c02fddfb958829d5b92c77f2b86129d3bfd9d3eaf9fbb93367942f0fe2808",
+    "mobile/src/AppearancePicker.tsx": "418c61d5e8122d42e2682d9fbd753c846b6161e8d2e966ab999481c106cc8d36",
+    "mobile/src/ConversationIntro.tsx": "3a969b1990499c4423545ea72b47ae7bb2293e1ed3af346d6731d5963e35f67f",
+    "mobile/src/DiagnosticsWorkspace.tsx": "f66dec6dd05f6713a2c07fe6fdbb9273746d4ae4cbb03a148bad5898346c9170",
+    "mobile/src/InterfaceIcon.tsx": "913dfe82d783a216262c361dec68fef0ab51b07fc5beb5dc10c4988c0e107504",
+    "mobile/src/ModelAssetProbePanel.tsx": "dd6f3562e6b324d242df771bdc7d4fdb7eddb26bf9088c4c9c26935b81736b95",
+    "mobile/src/ModelLoadProbePanel.tsx": "2f409162e31b32fca0c3ca2cbe11db87181763ad41daaa033c00377dcd06aa46",
+    "mobile/src/ModelWorkspace.tsx": "a5f3404b256e4151584a97bb126d390276241fa6a61b8968cc183494124e2e81",
+    "mobile/src/MonitoringPanel.tsx": "8e40f1537ae4700ff0e764cb02ae07df198a8c0c43d76757a56630aacee36225",
+    "mobile/src/SettingsScreen.tsx": "dcfcdc07616c0d28a2a42bd6de8db3ef5c98847d0034ffd9926ba47efac2f62a",
+    "mobile/src/SpecializationRepairPanel.tsx": "a3e5caac32575049314398a571ae34dfef31e3f504fcf8d9b53f3ce39553b721",
+    "mobile/src/appearance.tsx": "f8de14ec48510b7409b7ffb16cea44c9a496fadf516e419b0dd73538b605e2f5",
+    "mobile/src/uiPrimitives.tsx": "cd49caf3cbfe47ad82ca0505934f9fd25e5babe6fc4b09857596c0017f4a506c"
+  },
+  "reference": {
+    "source": "https://chatgpt.com/share/6ad28adf-17ac-83ea-9a49-96977bd06dec",
+    "image": "references/assist-share-final.png",
+    "sha256": "b20b56135bb3eff5192583c9abeef4b3dd275c472a1510b916cd00d2d1f577a7",
+    "kind": "Final image in the public shared conversation; design concept, not runtime evidence",
+    "symbol": "Closed circle and separate central upright seed; golden proportion between outer diameter and geometric seed height"
+  },
+  "checks": {
+    "npm run check - merged workspace": {
+      "exit_code": 1,
+      "tests_passed": 273,
+      "tests_failed": 5,
+      "suites_passed": 14,
+      "suites_failed": 1,
+      "failing_suite": "__tests__/VoiceApp.test.tsx",
+      "log": "/tmp/assist-shared-merged-final-check.log",
+      "codegen_reached": false,
+      "scope": "Includes concurrent voice additions, left unchanged. TypeScript and ESLint passed; Jest failed in five new voice integration tests."
+    },
+    "UI navigation suites - merged workspace": {
+      "exit_code": 0,
+      "suites_passed": 2,
+      "tests_passed": 30,
+      "log": "/tmp/assist-shared-concurrent-ui-tests.log"
+    },
+    "TypeScript - merged workspace": {
+      "exit_code": 0,
+      "log": "/tmp/assist-shared-concurrent-typecheck.log"
+    },
+    "npm run preview:build - merged workspace": {
+      "exit_code": 0,
+      "log": "/tmp/assist-shared-concurrent-preview.log"
+    },
+    "Metro iOS JavaScript bundle - merged workspace": {
+      "exit_code": 0,
+      "log": "/tmp/assist-shared-concurrent-metro.log",
+      "native_compilation": false
+    }
+  },
+  "browser": {
+    "url": "http://127.0.0.1:5174/",
+    "contextualModelBack": 1,
+    "diagnosticsBack": 1,
+    "lazyFiles": true,
+    "budgetRetained": "256",
+    "draftRetained": "Mon idée à conserver",
+    "themes": [
+      {
+        "name": "Natif clair",
+        "checked": "true",
+        "loadDisabled": true,
+        "importDisabled": true
+      },
+      {
+        "name": "Graphite",
+        "checked": "true",
+        "loadDisabled": true,
+        "importDisabled": true
+      },
+      {
+        "name": "Bleu profond",
+        "checked": "true",
+        "loadDisabled": true,
+        "importDisabled": true
+      }
+    ],
+    "captures": [
+      {
+        "route": "settings",
+        "theme": "light",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "home",
+        "theme": "light",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "chat",
+        "theme": "light",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "model",
+        "theme": "light",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "diagnostics",
+        "theme": "light",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "settings",
+        "theme": "graphite",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "home",
+        "theme": "graphite",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "chat",
+        "theme": "graphite",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "model",
+        "theme": "graphite",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "diagnostics",
+        "theme": "graphite",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "settings",
+        "theme": "blue",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "home",
+        "theme": "blue",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "chat",
+        "theme": "blue",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "model",
+        "theme": "blue",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "route": "diagnostics",
+        "theme": "blue",
+        "sizes": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      }
+    ],
+    "keyboard": {
+      "homeChecked": "true",
+      "endChecked": "true",
+      "restoredFocus": true
+    },
+    "errors": []
+  },
+  "browser_evidence": "/tmp/assist-shared-browser.json",
+  "captures": [
+    {
+      "file": "shared-reference/entity-settings-light.png",
+      "sha256": "f913a64daf96676d3551b3f23de1650d3b2e0b0400765b3deace0405e527a6a7"
+    },
+    {
+      "file": "shared-reference/entity-home-light.png",
+      "sha256": "fb9469a807b1b690e38f488570303dac7f99599bb764f5e1525d092b63eba485"
+    },
+    {
+      "file": "shared-reference/entity-chat-light.png",
+      "sha256": "c4936a66ab0c1c6a1f6f0e2c260111d5b39af92943f2ce5bdc3b9a5307e29fd8"
+    },
+    {
+      "file": "shared-reference/entity-model-light.png",
+      "sha256": "7a4050a14e3ab57cd3ce46785528df18b22f529238088dde8aace05f4740febe"
+    },
+    {
+      "file": "shared-reference/entity-diagnostics-light.png",
+      "sha256": "5edd315a9bcd3779f017e2f06fca649625d20241a73f11f9697a3e28bff267f5"
+    },
+    {
+      "file": "shared-reference/entity-settings-graphite.png",
+      "sha256": "e391aa4a0b81b1a7e121f29cea314e0b7791f622e23c4e263ed5659a1136cd45"
+    },
+    {
+      "file": "shared-reference/entity-home-graphite.png",
+      "sha256": "b3c87066d66c9bf9edeebd725e7c38945a0d52fea47a4e0c046a8fdeb019e85d"
+    },
+    {
+      "file": "shared-reference/entity-chat-graphite.png",
+      "sha256": "507cbb13cfa4f0f4906c63b9bcce80dd092a772b1bcfd186b59e89a1f59473d6"
+    },
+    {
+      "file": "shared-reference/entity-model-graphite.png",
+      "sha256": "1f7679aefb512fa42936c237d6349085673a725e0f0a14a30dedc76fd461e55d"
+    },
+    {
+      "file": "shared-reference/entity-diagnostics-graphite.png",
+      "sha256": "33b2a325c13b4c9934675e2c75b4d6e880bbbb56c6ae80f32db491d4efd738e7"
+    },
+    {
+      "file": "shared-reference/entity-settings-blue.png",
+      "sha256": "f9d7d663752ad535f2056b7a89110065a2d16f9486ec4b01714b739bb365e112"
+    },
+    {
+      "file": "shared-reference/entity-home-blue.png",
+      "sha256": "caa70c0be16a639e14aea66eb560a24cf8f936f7bb2a7a9c116a9a7eb265eaa3"
+    },
+    {
+      "file": "shared-reference/entity-chat-blue.png",
+      "sha256": "820b488c8becb5a323536496c460d21ecf130e1013fd6b207d709f56dbc5ef5c"
+    },
+    {
+      "file": "shared-reference/entity-model-blue.png",
+      "sha256": "13b162f5aa0caa3176fa107814340986399b4a19f65581fd20e692e1027e5734"
+    },
+    {
+      "file": "shared-reference/entity-diagnostics-blue.png",
+      "sha256": "188af3718a4014a1292c88b5c498212fccfdbbeefd26dc988681300323c2b55f"
+    }
+  ],
+  "palette": {
+    "tokens_unchanged": true,
+    "source_sha256": "f8de14ec48510b7409b7ffb16cea44c9a496fadf516e419b0dd73538b605e2f5",
+    "previous_calculation": "verification-before-shared-reference.json",
+    "scope": "Previous 57 opaque token-pair calculations are historical evidence for those exact pairs. Surface roles changed in this revision; this is not an all-state contrast or WCAG conformance claim."
+  },
+  "regressions_verified_with_protocol_fixtures": [
+    "cancel/reset/load/unload/history/report behavior",
+    "invalid budget recovery through settings",
+    "diagnostic first-open laziness and report retention across collapsing/navigation",
+    "complete specialization wrapper with48measured outputs retained while saved native marker is smaller",
+    "saved file identity reports shown as historical until current attempt verified"
+  ],
+  "native_device_validation": false,
+  "ux_score": {
+    "current": null,
+    "previous": 8.4,
+    "previous_status": "provisional agent audit predating this revision; not current UI score"
+  },
+  "previous_record": "verification-before-shared-reference.json",
+  "capture_context": {
+    "model": "Opened from Settings; contextual back is Retour aux réglages. Primary browser run also verified opening the model from Conversation.",
+    "native_scope": "Concurrent voice/native changes were preserved. Native behavior has not been validated; latest merged test failures are reported above."
+  },
+  "ui_refinement_snapshot": {
+    "sources": {
+      "mobile/App.tsx": "d021ac0ba57f6800d335d67019c29bd6ac14630e2eb2c932c30b0b9ba93189ab",
+      "mobile/preview/index.html": "c382a25d6476e2f5774766e799ec0003020544be25c75d25d3a5f79fe988da83",
+      "mobile/src/uiGrammar.ts": "3e7c02fddfb958829d5b92c77f2b86129d3bfd9d3eaf9fbb93367942f0fe2808",
+      "mobile/src/AppearancePicker.tsx": "418c61d5e8122d42e2682d9fbd753c846b6161e8d2e966ab999481c106cc8d36",
+      "mobile/src/ConversationIntro.tsx": "3a969b1990499c4423545ea72b47ae7bb2293e1ed3af346d6731d5963e35f67f",
+      "mobile/src/DiagnosticsWorkspace.tsx": "f66dec6dd05f6713a2c07fe6fdbb9273746d4ae4cbb03a148bad5898346c9170",
+      "mobile/src/InterfaceIcon.tsx": "913dfe82d783a216262c361dec68fef0ab51b07fc5beb5dc10c4988c0e107504",
+      "mobile/src/ModelAssetProbePanel.tsx": "dd6f3562e6b324d242df771bdc7d4fdb7eddb26bf9088c4c9c26935b81736b95",
+      "mobile/src/ModelLoadProbePanel.tsx": "2f409162e31b32fca0c3ca2cbe11db87181763ad41daaa033c00377dcd06aa46",
+      "mobile/src/ModelWorkspace.tsx": "a5f3404b256e4151584a97bb126d390276241fa6a61b8968cc183494124e2e81",
+      "mobile/src/MonitoringPanel.tsx": "8e40f1537ae4700ff0e764cb02ae07df198a8c0c43d76757a56630aacee36225",
+      "mobile/src/SettingsScreen.tsx": "dcfcdc07616c0d28a2a42bd6de8db3ef5c98847d0034ffd9926ba47efac2f62a",
+      "mobile/src/SpecializationRepairPanel.tsx": "a3e5caac32575049314398a571ae34dfef31e3f504fcf8d9b53f3ce39553b721",
+      "mobile/src/appearance.tsx": "f8de14ec48510b7409b7ffb16cea44c9a496fadf516e419b0dd73538b605e2f5",
+      "mobile/src/uiPrimitives.tsx": "cd49caf3cbfe47ad82ca0505934f9fd25e5babe6fc4b09857596c0017f4a506c"
+    },
+    "checks": {
+      "npm run check": {
+        "exit_code": 0,
+        "tests_passed": 259,
+        "suites_passed": 13,
+        "log": "/tmp/assist-shared-final-check.log"
+      },
+      "npm run preview:build": {
+        "exit_code": 0,
+        "log": "/tmp/assist-shared-final-preview.log"
+      },
+      "Metro iOS JavaScript bundle": {
+        "exit_code": 0,
+        "log": "/tmp/assist-shared-final-metro.log",
+        "native_compilation": false
+      },
+      "prettier": {
+        "exit_code": 0,
+        "log": "/tmp/assist-shared-final-format.log"
+      }
+    },
+    "scope": "UI refinement validated before concurrent voice integration; 259 tests passed in 13 suites. These are not results for the later merged state."
+  },
+  "concurrent_voice_sources": {
+    "mobile/src/voice.ts": "2eecb3975375c0456748487073dbdd590956079c2512b0f67d9e7be86582c48a",
+    "mobile/src/VoiceControls.tsx": "caf5574e15f4447c3942a7849bea8c872d337c857e17df8a943d4ec056132452",
+    "mobile/src/useLocalVoice.ts": "1332a7fa480e6b68c0a6c34d0304ffffc1ed9485a5d42f87467c6b51c2f3a3ce",
+    "mobile/specs/NativeAssist.ts": "644b2df4dbcdf433ea83c0e93539972805d18bf08868617c5dc86cb4b14e5a49"
+  },
+  "post_voice_browser_smoke": {
+    "url": "http://127.0.0.1:5174/",
+    "voiceControlsAbsentWithoutNative": true,
+    "markDiameter": 48,
+    "markBorderStyle": "solid",
+    "modelLoadDisabled": true,
+    "home": 1,
+    "pageErrors": []
+  },
+  "browser_scope": "30 layout combinations and theme keyboard/focus checks completed for the UI refinement. After concurrent voice integration, a fresh reload and home/settings/model smoke check confirmed unchanged UI and absent unsupported voice controls.",
+  "source_drift_during_last_check": [
+    "mobile/src/VoiceControls.tsx",
+    "mobile/src/useLocalVoice.ts",
+    "mobile/App.tsx"
+  ],
+  "working_tree_at_handoff": {
+    "mobile/src/ModelAssetProbePanel.tsx": "dd6f3562e6b324d242df771bdc7d4fdb7eddb26bf9088c4c9c26935b81736b95",
+    "mobile/src/ModelLoadProbePanel.tsx": "2f409162e31b32fca0c3ca2cbe11db87181763ad41daaa033c00377dcd06aa46",
+    "mobile/src/MonitoringPanel.tsx": "8e40f1537ae4700ff0e764cb02ae07df198a8c0c43d76757a56630aacee36225",
+    "mobile/src/SettingsScreen.tsx": "dcfcdc07616c0d28a2a42bd6de8db3ef5c98847d0034ffd9926ba47efac2f62a",
+    "mobile/src/AppearancePicker.tsx": "418c61d5e8122d42e2682d9fbd753c846b6161e8d2e966ab999481c106cc8d36",
+    "mobile/src/uiPrimitives.tsx": "cd49caf3cbfe47ad82ca0505934f9fd25e5babe6fc4b09857596c0017f4a506c",
+    "mobile/src/ModelWorkspace.tsx": "a5f3404b256e4151584a97bb126d390276241fa6a61b8968cc183494124e2e81",
+    "mobile/src/SpecializationRepairPanel.tsx": "a3e5caac32575049314398a571ae34dfef31e3f504fcf8d9b53f3ce39553b721",
+    "mobile/src/DiagnosticsWorkspace.tsx": "f66dec6dd05f6713a2c07fe6fdbb9273746d4ae4cbb03a148bad5898346c9170",
+    "mobile/src/InterfaceIcon.tsx": "913dfe82d783a216262c361dec68fef0ab51b07fc5beb5dc10c4988c0e107504",
+    "mobile/src/voice.ts": "2eecb3975375c0456748487073dbdd590956079c2512b0f67d9e7be86582c48a",
+    "mobile/src/specializationRepair.ts": "0af004284070df466082b77e756214402d3eed040206cc5b57f096cef1044f02",
+    "mobile/src/VoiceControls.tsx": "5a5d26a2fa330553f35cb6494c207bfc142c5539b997ce5396e9dbbb7d52a498",
+    "mobile/src/loadProbe.ts": "fc6d51ce9daf01a5139173fe5716ced7482ec2946e709c754adb3b7471594a9d",
+    "mobile/src/protocol.ts": "cd83aa12232fd1c7a8464a21e516ba12af4a833bf7c1a9886c2b7875676539c0",
+    "mobile/src/useLocalVoice.ts": "b866d447df7c985b628328b39ae2da013c4438ee76a0cd0c8193ea3528673f4e",
+    "mobile/src/appearance.tsx": "f8de14ec48510b7409b7ffb16cea44c9a496fadf516e419b0dd73538b605e2f5",
+    "mobile/src/assetProbe.ts": "7560a34cca41b949631a9087226cfa4316b9801c1b31a9220d230e2eb11533ad",
+    "mobile/src/ConversationIntro.tsx": "3a969b1990499c4423545ea72b47ae7bb2293e1ed3af346d6731d5963e35f67f",
+    "mobile/src/monitoring.ts": "27535fb634f42e36dc84907abec1b2ed23873a32393419e7539a354108bb2a69",
+    "mobile/src/uiGrammar.ts": "3e7c02fddfb958829d5b92c77f2b86129d3bfd9d3eaf9fbb93367942f0fe2808",
+    "mobile/App.tsx": "f81601aa037cc4bcce11d611462c18819e9e4106175f289ac5b6f974e6db79d3",
+    "mobile/specs/NativeAssist.ts": "644b2df4dbcdf433ea83c0e93539972805d18bf08868617c5dc86cb4b14e5a49"
+  },
+  "concurrent_work": "Voice integration continued changing after the last checks. Test results are tied to the recorded checked sources; working_tree_at_handoff records the later observed hashes without claiming they were revalidated."
+}

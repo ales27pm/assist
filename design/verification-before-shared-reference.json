@@ -1,0 +1,1001 @@
+{
+  "scope": "Whole-system UI redesign. Browser uses actual unavailable NativeAssist state; native compilation, iPhone keyboard/safe areas and model inference unverified.",
+  "sources": {
+    "mobile/App.tsx": "1f91b74c7e4160114cee0d2be889c53f741af81d1499703d6ab8c2b86bf3e2ef",
+    "mobile/preview/index.html": "c382a25d6476e2f5774766e799ec0003020544be25c75d25d3a5f79fe988da83",
+    "mobile/src/uiGrammar.ts": "8fbaf1e0c02c2423a1e9a791b04c4dcf0e8c9e80daf7731595b06f4528489fcd",
+    "mobile/src/AppearancePicker.tsx": "418c61d5e8122d42e2682d9fbd753c846b6161e8d2e966ab999481c106cc8d36",
+    "mobile/src/ConversationIntro.tsx": "9ce4bd718b97e2d850df422eb2a5f6364723ba32076c006395e36fe2c289b401",
+    "mobile/src/DiagnosticsWorkspace.tsx": "f66dec6dd05f6713a2c07fe6fdbb9273746d4ae4cbb03a148bad5898346c9170",
+    "mobile/src/HarmonicSeal.tsx": "a8f4ac84958e7b1720d80be50e3c055763262fd0dea89e9ed6e01d30875c2717",
+    "mobile/src/InterfaceIcon.tsx": "40f4ed98cbb54df77f03d10c809f0b3d0232a737f8d89b1d8d801fa81901e33a",
+    "mobile/src/ModelAssetProbePanel.tsx": "dd6f3562e6b324d242df771bdc7d4fdb7eddb26bf9088c4c9c26935b81736b95",
+    "mobile/src/ModelLoadProbePanel.tsx": "2f409162e31b32fca0c3ca2cbe11db87181763ad41daaa033c00377dcd06aa46",
+    "mobile/src/ModelWorkspace.tsx": "c114629d3553fc7fad267d3fb31a3298d4c5a24fcb8943c8b4e0073f9ba86287",
+    "mobile/src/MonitoringPanel.tsx": "8e40f1537ae4700ff0e764cb02ae07df198a8c0c43d76757a56630aacee36225",
+    "mobile/src/SettingsScreen.tsx": "524244d3750ef9d432f9410c195f38e2803932c0494743b90f61966955a50bad",
+    "mobile/src/SpecializationRepairPanel.tsx": "a3e5caac32575049314398a571ae34dfef31e3f504fcf8d9b53f3ce39553b721",
+    "mobile/src/appearance.tsx": "f8de14ec48510b7409b7ffb16cea44c9a496fadf516e419b0dd73538b605e2f5",
+    "mobile/src/uiPrimitives.tsx": "9136dec45040e3871ca9ec93381c8dd12ec88aad405542187e829ec8180e96f3"
+  },
+  "generated_reference": {
+    "mode": "built-in Imagegen",
+    "image": "assist-whole-system-v1.png",
+    "prompt": "whole-system-imagegen-prompt.md",
+    "kind": "concept, not runtime evidence"
+  },
+  "checks": {
+    "npm run check": {
+      "exit_code": 0,
+      "suites_passed": 13,
+      "tests_passed": 259,
+      "log": "/tmp/assist-whole-entity-final-check.log"
+    },
+    "npm run preview:build": {
+      "exit_code": 0,
+      "log": "/tmp/assist-whole-entity-preview.log"
+    },
+    "Metro iOS JavaScript bundle": {
+      "exit_code": 0,
+      "log": "/tmp/assist-whole-entity-metro.log",
+      "native_compilation": false
+    },
+    "prettier": {
+      "exit_code": 0,
+      "log": "/tmp/assist-whole-entity-format.log"
+    }
+  },
+  "browser": {
+    "url": "http://127.0.0.1:5174/",
+    "contextualModelBack": 1,
+    "diagnosticsBack": 1,
+    "lazyFiles": true,
+    "fileControlDisabled": true,
+    "calculationDisabled": true,
+    "budgetRetained": "256",
+    "draftRetained": "Mon idée à conserver",
+    "themes": [
+      {
+        "name": "Natif clair",
+        "checked": "true",
+        "importDisabled": true,
+        "routes": [
+          {
+            "route": "settings",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "model",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "diagnostics",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "home",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "example",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Graphite",
+        "checked": "true",
+        "importDisabled": true,
+        "routes": [
+          {
+            "route": "settings",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "model",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "diagnostics",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "home",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "example",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Bleu profond",
+        "checked": "true",
+        "importDisabled": true,
+        "routes": [
+          {
+            "route": "settings",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "model",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "diagnostics",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "home",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          },
+          {
+            "route": "example",
+            "sizes": [
+              {
+                "width": 320,
+                "overflow": false,
+                "clippedControls": []
+              },
+              {
+                "width": 390,
+                "overflow": false,
+                "clippedControls": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyboard_and_final_capture": {
+    "url": "http://127.0.0.1:5174/",
+    "keyboard": [
+      {
+        "end": "true",
+        "home": "true",
+        "escapeCloses": true,
+        "focusRestored": true
+      }
+    ],
+    "routes": [
+      {
+        "name": "Natif clair",
+        "diagnosticHeadingVisible": true,
+        "overflow": false
+      },
+      {
+        "name": "Graphite",
+        "diagnosticHeadingVisible": true,
+        "overflow": false
+      },
+      {
+        "name": "Bleu profond",
+        "diagnosticHeadingVisible": true,
+        "overflow": false
+      }
+    ]
+  },
+  "contrast": {
+    "source": "/home/ales27pm/assist/mobile/src/appearance.tsx",
+    "source_sha256": "f8de14ec48510b7409b7ffb16cea44c9a496fadf516e419b0dd73538b605e2f5",
+    "generated_at_utc": "2026-10-16T19:57:07.228494+00:00",
+    "method": "WCAG relative sRGB luminance: (Llighter + 0.05) / (Ldarker + 0.05); opaque token colors; normal-text threshold 4.5; requested non-text border pairs threshold 3.0.",
+    "scope": "Only the 57 requested token combinations. Decorative separator colors are excluded from non-text boundary checks. Does not evaluate disabled or pressed opacity, screenshots, focus, image marks, native rendering, human usability, or whole-app WCAG conformance.",
+    "pair_count": 57,
+    "themes": [
+      {
+        "id": "light",
+        "pairs": [
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "background",
+            "foreground": "#18202E",
+            "background": "#F8F9FC",
+            "contrast_ratio": 15.524407,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surface",
+            "foreground": "#18202E",
+            "background": "#FFFFFF",
+            "contrast_ratio": 16.343759,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surfaceRaised",
+            "foreground": "#18202E",
+            "background": "#F0F3F9",
+            "contrast_ratio": 14.704091,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "assistantBubble",
+            "foreground": "#18202E",
+            "background": "#EDF1F8",
+            "contrast_ratio": 14.428026,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "composer",
+            "foreground": "#18202E",
+            "background": "#FFFFFF",
+            "contrast_ratio": 16.343759,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "chip",
+            "foreground": "#18202E",
+            "background": "#EDF1F9",
+            "contrast_ratio": 14.437714,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "activeSurface",
+            "foreground": "#18202E",
+            "background": "#E9EFFF",
+            "contrast_ratio": 14.207652,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "background",
+            "foreground": "#536078",
+            "background": "#F8F9FC",
+            "contrast_ratio": 6.022417,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surface",
+            "foreground": "#536078",
+            "background": "#FFFFFF",
+            "contrast_ratio": 6.34027,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surfaceRaised",
+            "foreground": "#536078",
+            "background": "#F0F3F9",
+            "contrast_ratio": 5.70419,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "chip",
+            "foreground": "#536078",
+            "background": "#EDF1F9",
+            "contrast_ratio": 5.600854,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "activeSurface",
+            "foreground": "#536078",
+            "background": "#E9EFFF",
+            "contrast_ratio": 5.511606,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "placeholder",
+            "background_token": "composer",
+            "foreground": "#627089",
+            "background": "#FFFFFF",
+            "contrast_ratio": 5.002107,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "userText",
+            "background_token": "userBubble",
+            "foreground": "#18202E",
+            "background": "#E8EEFF",
+            "contrast_ratio": 14.090636,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "onAccent",
+            "background_token": "accent",
+            "foreground": "#FFFFFF",
+            "background": "#2455DC",
+            "contrast_ratio": 6.162198,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "danger",
+            "background_token": "dangerSurface",
+            "foreground": "#AB263B",
+            "background": "#FFF0F2",
+            "contrast_ratio": 6.184341,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "composer",
+            "foreground": "#7C869A",
+            "background": "#FFFFFF",
+            "contrast_ratio": 3.662573,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "chip",
+            "foreground": "#7C869A",
+            "background": "#EDF1F9",
+            "contrast_ratio": 3.235435,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "surfaceRaised",
+            "foreground": "#7C869A",
+            "background": "#F0F3F9",
+            "contrast_ratio": 3.295129,
+            "threshold": 3.0,
+            "passes": true
+          }
+        ],
+        "minima": {
+          "text": {
+            "foreground_token": "placeholder",
+            "background_token": "composer",
+            "contrast_ratio": 5.002107,
+            "threshold": 4.5,
+            "passes": true
+          },
+          "nontext_border": {
+            "foreground_token": "border",
+            "background_token": "chip",
+            "contrast_ratio": 3.235435,
+            "threshold": 3.0,
+            "passes": true
+          }
+        },
+        "failures": []
+      },
+      {
+        "id": "graphite",
+        "pairs": [
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "background",
+            "foreground": "#F5F5F2",
+            "background": "#101113",
+            "contrast_ratio": 17.295217,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surface",
+            "foreground": "#F5F5F2",
+            "background": "#191B1F",
+            "contrast_ratio": 15.78596,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surfaceRaised",
+            "foreground": "#F5F5F2",
+            "background": "#25282E",
+            "contrast_ratio": 13.523635,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "assistantBubble",
+            "foreground": "#F5F5F2",
+            "background": "#202328",
+            "contrast_ratio": 14.428577,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "composer",
+            "foreground": "#F5F5F2",
+            "background": "#1D2025",
+            "contrast_ratio": 14.95504,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "chip",
+            "foreground": "#F5F5F2",
+            "background": "#2D3036",
+            "contrast_ratio": 12.109658,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "activeSurface",
+            "foreground": "#F5F5F2",
+            "background": "#3A2F1B",
+            "contrast_ratio": 11.99846,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "background",
+            "foreground": "#B6BAC2",
+            "background": "#101113",
+            "contrast_ratio": 9.708028,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surface",
+            "foreground": "#B6BAC2",
+            "background": "#191B1F",
+            "contrast_ratio": 8.860862,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surfaceRaised",
+            "foreground": "#B6BAC2",
+            "background": "#25282E",
+            "contrast_ratio": 7.59099,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "chip",
+            "foreground": "#B6BAC2",
+            "background": "#2D3036",
+            "contrast_ratio": 6.797306,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "activeSurface",
+            "foreground": "#B6BAC2",
+            "background": "#3A2F1B",
+            "contrast_ratio": 6.73489,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "placeholder",
+            "background_token": "composer",
+            "foreground": "#AFB6C0",
+            "background": "#1D2025",
+            "contrast_ratio": 7.992716,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "userText",
+            "background_token": "userBubble",
+            "foreground": "#F5F5F2",
+            "background": "#333841",
+            "contrast_ratio": 10.784179,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "onAccent",
+            "background_token": "accent",
+            "foreground": "#1B160C",
+            "background": "#FFB52B",
+            "contrast_ratio": 10.19687,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "danger",
+            "background_token": "dangerSurface",
+            "foreground": "#FF9EA7",
+            "background": "#3C2028",
+            "contrast_ratio": 7.486304,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "composer",
+            "foreground": "#767E8A",
+            "background": "#1D2025",
+            "contrast_ratio": 3.983978,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "chip",
+            "foreground": "#767E8A",
+            "background": "#2D3036",
+            "contrast_ratio": 3.225977,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "surfaceRaised",
+            "foreground": "#767E8A",
+            "background": "#25282E",
+            "contrast_ratio": 3.602656,
+            "threshold": 3.0,
+            "passes": true
+          }
+        ],
+        "minima": {
+          "text": {
+            "foreground_token": "muted",
+            "background_token": "activeSurface",
+            "contrast_ratio": 6.73489,
+            "threshold": 4.5,
+            "passes": true
+          },
+          "nontext_border": {
+            "foreground_token": "border",
+            "background_token": "chip",
+            "contrast_ratio": 3.225977,
+            "threshold": 3.0,
+            "passes": true
+          }
+        },
+        "failures": []
+      },
+      {
+        "id": "blue",
+        "pairs": [
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "background",
+            "foreground": "#F3F7FF",
+            "background": "#09172E",
+            "contrast_ratio": 16.665664,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surface",
+            "foreground": "#F3F7FF",
+            "background": "#0E2140",
+            "contrast_ratio": 14.927893,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surfaceRaised",
+            "foreground": "#F3F7FF",
+            "background": "#172D50",
+            "contrast_ratio": 12.803706,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "assistantBubble",
+            "foreground": "#F3F7FF",
+            "background": "#102A4D",
+            "contrast_ratio": 13.393238,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "composer",
+            "foreground": "#F3F7FF",
+            "background": "#0E2444",
+            "contrast_ratio": 14.440258,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "chip",
+            "foreground": "#F3F7FF",
+            "background": "#183258",
+            "contrast_ratio": 11.955564,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "activeSurface",
+            "foreground": "#F3F7FF",
+            "background": "#153869",
+            "contrast_ratio": 10.856961,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "background",
+            "foreground": "#AFBFD8",
+            "background": "#09172E",
+            "contrast_ratio": 9.599901,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surface",
+            "foreground": "#AFBFD8",
+            "background": "#0E2140",
+            "contrast_ratio": 8.598895,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surfaceRaised",
+            "foreground": "#AFBFD8",
+            "background": "#172D50",
+            "contrast_ratio": 7.375303,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "chip",
+            "foreground": "#AFBFD8",
+            "background": "#183258",
+            "contrast_ratio": 6.886749,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "activeSurface",
+            "foreground": "#AFBFD8",
+            "background": "#153869",
+            "contrast_ratio": 6.253922,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "placeholder",
+            "background_token": "composer",
+            "foreground": "#B6C6DF",
+            "background": "#0E2444",
+            "contrast_ratio": 8.956993,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "userText",
+            "background_token": "userBubble",
+            "foreground": "#FFFFFF",
+            "background": "#2861D7",
+            "contrast_ratio": 5.553557,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "onAccent",
+            "background_token": "accent",
+            "foreground": "#09172E",
+            "background": "#83ADFF",
+            "contrast_ratio": 7.997857,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "danger",
+            "background_token": "dangerSurface",
+            "foreground": "#FF9AA7",
+            "background": "#3D2035",
+            "contrast_ratio": 7.162873,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "composer",
+            "foreground": "#7E96B8",
+            "background": "#0E2444",
+            "contrast_ratio": 5.125014,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "chip",
+            "foreground": "#7E96B8",
+            "background": "#183258",
+            "contrast_ratio": 4.243168,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "surfaceRaised",
+            "foreground": "#7E96B8",
+            "background": "#172D50",
+            "contrast_ratio": 4.544183,
+            "threshold": 3.0,
+            "passes": true
+          }
+        ],
+        "minima": {
+          "text": {
+            "foreground_token": "userText",
+            "background_token": "userBubble",
+            "contrast_ratio": 5.553557,
+            "threshold": 4.5,
+            "passes": true
+          },
+          "nontext_border": {
+            "foreground_token": "border",
+            "background_token": "chip",
+            "contrast_ratio": 4.243168,
+            "threshold": 3.0,
+            "passes": true
+          }
+        },
+        "failures": []
+      }
+    ],
+    "failures": []
+  },
+  "regressions_verified_with_protocol_fixtures": [
+    "cancel/reset/load/unload/history/report behavior",
+    "invalid budget recovery through settings",
+    "diagnostic first-open laziness and report retention across collapsing/navigation",
+    "complete specialization wrapper with48measured outputs retained while saved native marker is smaller",
+    "saved file identity reports shown as historical until current attempt verified"
+  ],
+  "native_device_validation": false,
+  "ux_score": {
+    "current": null,
+    "previous": 8.4,
+    "previous_status": "provisional agent audit predating this revision; not current UI score"
+  },
+  "previous_record": "verification-before-whole-system.json",
+  "console": {
+    "url": "http://127.0.0.1:5174/",
+    "pageErrors": [],
+    "consoleErrors": [],
+    "home": 1
+  }
+}

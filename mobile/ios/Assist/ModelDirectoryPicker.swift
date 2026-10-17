@@ -5,19 +5,58 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// Keeps access to the user-selected directory local to the native module.
-/// No multi-gigabyte copy, persistent bookmark, or path is returned to JS.
+/// Persists only an app-private directory bookmark; no copy or path goes to JS.
 @MainActor
 @objc(AssistModelDirectoryPicker)
 final class ModelDirectoryPicker: NSObject, UIDocumentPickerDelegate {
-  private var selectedURL: URL?
-  private var hasSecurityScope = false
+  private let bookmark = AssistModelDirectoryBookmark(dependencies: .init(
+    read: { try AssistModelDirectoryBookmark.read(from: .standard) },
+    write: { try AssistModelDirectoryBookmark.write($0, to: .standard) },
+    resolve: { data in
+      var stale = false
+      let url = try URL(resolvingBookmarkData: data, options: [.withoutUI],
+                        relativeTo: nil, bookmarkDataIsStale: &stale)
+      return .init(url: url, isStale: stale)
+    },
+    create: { try $0.bookmarkData(options: .minimalBookmark,
+                                 includingResourceValuesForKeys: nil, relativeTo: nil) },
+    startAccess: { $0.startAccessingSecurityScopedResource() },
+    stopAccess: { $0.stopAccessingSecurityScopedResource() },
+    validate: { url in
+      if let error = await ModelDirectoryPicker.validationError(for: url) { throw error }
+    },
+    allowsUnscopedAccess: { url in
+      let manager = FileManager.default
+      // These roots come from the running app's container, never from JavaScript,
+      // a bookmark payload, a user preference or an external path.
+      let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).standardizedFileURL
+      // Canonicalize only the trusted system-provided home (e.g. /var versus
+      // /private/var), never a Documents/Library symlink controlled by app data.
+      let roots = [home, home.resolvingSymlinksInPath()].flatMap { container in
+        ["Documents", "Library"].map { container.appendingPathComponent($0, isDirectory: true) }
+      }
+      return AssistModelDirectoryBookmark.isTrustedDirectory(url, roots: roots) { candidate in
+        guard let attributes = try? manager.attributesOfItem(atPath: candidate.path) else { return false }
+        return attributes[.type] as? FileAttributeType == .typeDirectory
+      }
+    }
+  ))
   private var selectionCompletion: ((String?, NSError?) -> Void)?
   private weak var documentPicker: UIDocumentPickerViewController?
   private var selectionVersion = 0
-  private var accessVersion = 0
+  private var bookmarkSelectionToken: UInt64?
   private var validatingSelection = false
 
-  @objc var modelName: String? { selectedURL?.lastPathComponent }
+  @objc var modelName: String? { bookmark.selectedURL?.lastPathComponent }
+
+  /// Restores metadata/access only. Loading the engine always remains explicit.
+  @objc(selectionStatus:)
+  func selectionStatus(_ completion: @escaping ([String: Any]) -> Void) {
+    Task { @MainActor in
+      await bookmark.restoreIfNeeded()
+      completion(bookmark.publicStatus)
+    }
+  }
 
   @objc(selectWithCompletion:)
   func select(completion: @escaping (String?, NSError?) -> Void) {
@@ -30,6 +69,7 @@ final class ModelDirectoryPicker: NSObject, UIDocumentPickerDelegate {
       return
     }
     selectionVersion += 1
+    bookmarkSelectionToken = bookmark.beginSelection()
     selectionCompletion = completion
     let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
     picker.allowsMultipleSelection = false
@@ -45,24 +85,18 @@ final class ModelDirectoryPicker: NSObject, UIDocumentPickerDelegate {
       finish(nil, Self.error("E_MODEL_DIRECTORY", "Sélectionne un dossier local de modèle."))
       return
     }
-    let acquired = candidate.startAccessingSecurityScopedResource()
+    guard let bookmarkToken = bookmarkSelectionToken else { return }
     let requestedVersion = selectionVersion
     validatingSelection = true
     Task { @MainActor [weak self] in
-      let validationError = await Self.validationError(for: candidate)
-      guard let self, self.selectionVersion == requestedVersion,
-            self.selectionCompletion != nil else {
-        if acquired { candidate.stopAccessingSecurityScopedResource() }
-        return
-      }
-      if let validationError {
-        if acquired { candidate.stopAccessingSecurityScopedResource() }
-        self.finish(nil, validationError)
-      } else {
-        self.releaseAccess()
-        self.selectedURL = candidate
-        self.hasSecurityScope = acquired
+      guard let self else { return }
+      do {
+        try await self.bookmark.select(candidate, token: bookmarkToken)
+        guard self.selectionVersion == requestedVersion, self.selectionCompletion != nil else { return }
         self.finish(candidate.lastPathComponent, nil)
+      } catch {
+        guard self.selectionVersion == requestedVersion, self.selectionCompletion != nil else { return }
+        self.finish(nil, error as NSError)
       }
     }
   }
@@ -72,60 +106,29 @@ final class ModelDirectoryPicker: NSObject, UIDocumentPickerDelegate {
     finish(nil, Self.error("E_CANCELLED", "Sélection du modèle annulée."))
   }
 
-  /// Reacquires access after unload; a selection exists only for this process.
+  /// Restores/revalidates the private bookmark and reacquires access after unload.
   @objc(withSelectedPath:)
   func withSelectedPath(_ completion: @escaping (String?, NSError?) -> Void) {
-    guard let selectedURL else {
-      completion(nil, Self.error("E_NO_MODEL", "Sélectionne d’abord un dossier de modèle."))
-      return
-    }
-    // Own a separate scope while walking: invalidation may release the retained
-    // selection before the background walk has finished using its URLs.
-    let acquired = selectedURL.startAccessingSecurityScopedResource()
-    let requestedVersion = accessVersion
-    Task { @MainActor [weak self] in
-      let validationError = await Self.validationError(for: selectedURL)
-      guard let self, self.accessVersion == requestedVersion,
-            self.selectedURL == selectedURL else {
-        if acquired { selectedURL.stopAccessingSecurityScopedResource() }
-        completion(nil, Self.error("E_CANCELLED", "Le module a été fermé."))
-        return
-      }
-      if let validationError {
-        if acquired { selectedURL.stopAccessingSecurityScopedResource() }
-        self.releaseAccess()
-        completion(nil, validationError)
-      } else {
-        if self.hasSecurityScope {
-          if acquired { selectedURL.stopAccessingSecurityScopedResource() }
-        } else {
-          // Transfer this walk's scope to the load/probe until releaseAccess.
-          self.hasSecurityScope = acquired
-        }
-        completion(selectedURL.path, nil)
-      }
+    Task { @MainActor in
+      do { completion(try await bookmark.withSelectedURL().path, nil) }
+      catch { completion(nil, error as NSError) }
     }
   }
 
   @objc func releaseAccess() {
-    accessVersion += 1
-    if hasSecurityScope {
-      selectedURL?.stopAccessingSecurityScopedResource()
-      hasSecurityScope = false
-    }
+    bookmark.releaseAccess()
   }
 
   @objc func invalidate() {
     cancelSelection()
-    releaseAccess()
-    selectedURL = nil
+    bookmark.invalidate()
   }
 
   @objc func cancelSelection() {
     selectionVersion += 1
     // The adapter also calls this when invalidating before a load/probe starts.
     // Cancel pending validation without revoking a worker's scoped access.
-    accessVersion += 1
+    bookmark.cancelPendingWork()
     documentPicker?.dismiss(animated: false)
     finish(nil, Self.error("E_CANCELLED", "Le module a été fermé."))
   }
@@ -133,6 +136,8 @@ final class ModelDirectoryPicker: NSObject, UIDocumentPickerDelegate {
   private func finish(_ name: String?, _ error: NSError?) {
     let completion = selectionCompletion
     selectionCompletion = nil
+    if let token = bookmarkSelectionToken { bookmark.endSelection(token: token) }
+    bookmarkSelectionToken = nil
     validatingSelection = false
     documentPicker = nil
     completion?(name, error)

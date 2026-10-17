@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, Share, StyleSheet, Text, View } from 'react-native';
 import NativeAssist from '../specs/NativeAssist';
+import { AssistTheme, useAppearance } from './appearance';
+import { uiGrammar } from './uiGrammar';
 import {
   AssetProbeErrorCode,
   ModelAssetProbeReport,
@@ -30,7 +32,10 @@ export function ModelAssetProbePanel({
   modelLoaded,
   perform,
 }: Props) {
+  const { theme } = useAppearance();
+  const styles = createStyles(theme);
   const [report, setReport] = useState<ModelAssetProbeReport | null>(null);
+  const [historicalReport, setHistoricalReport] = useState(false);
   const [error, setError] = useState('');
   const alive = useRef(true);
   const version = useRef(0);
@@ -53,7 +58,9 @@ export function ModelAssetProbePanel({
             alive.current &&
             version.current === requestedVersion
           ) {
-            setReport(parseAssetProbeReport(json));
+            const saved = parseAssetProbeReport(json);
+            setReport(saved);
+            setHistoricalReport(saved !== null);
           }
         })
         .catch(() => {
@@ -82,6 +89,7 @@ export function ModelAssetProbePanel({
       // invalidates both visible evidence and pending restores/manual results.
       version.current += 1;
       setReport(null);
+      setHistoricalReport(false);
       setError('');
     }
   }, [selected, selectionVersion]);
@@ -92,6 +100,7 @@ export function ModelAssetProbePanel({
     }
     await perform(async () => {
       const requestedVersion = ++version.current;
+      let returnedAttemptId: string | null = null;
       setError('');
       try {
         const parsed = parseAssetProbeReport(
@@ -100,8 +109,10 @@ export function ModelAssetProbePanel({
         if (!parsed) {
           throw new Error('Rapport absent.');
         }
+        returnedAttemptId = parsed.attempt.id;
         if (alive.current && version.current === requestedVersion) {
           setReport(parsed);
+          setHistoricalReport(false);
         }
       } catch {
         if (alive.current && version.current === requestedVersion) {
@@ -114,6 +125,7 @@ export function ModelAssetProbePanel({
           );
           if (alive.current && version.current === requestedVersion && saved) {
             setReport(saved);
+            setHistoricalReport(saved.attempt.id !== returnedAttemptId);
           }
         } catch {
           if (alive.current && version.current === requestedVersion) {
@@ -164,6 +176,12 @@ export function ModelAssetProbePanel({
       )}
       {report && (
         <>
+          {historicalReport && (
+            <Text style={styles.text}>
+              Rapport précédent. Il ne prouve pas l’identité du dossier
+              actuellement sélectionné.
+            </Text>
+          )}
           <Text selectable style={styles.text}>
             Référence : {report.expectedModelName}
             {'\n'}Essai du {report.attempt.startedAtUTC}
@@ -216,28 +234,30 @@ export function ModelAssetProbePanel({
   );
 }
 
-const styles = StyleSheet.create({
-  disabled: { opacity: 0.4 },
-  panel: {
-    backgroundColor: '#142329',
-    borderColor: '#34494c',
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 18,
-    gap: 12,
-  },
-  title: { color: '#e3efea', fontSize: 22, fontWeight: '600' },
-  text: { color: '#a7b8b6', fontSize: 15, lineHeight: 22 },
-  button: {
-    backgroundColor: '#b1d8c8',
-    borderRadius: 9,
-    padding: 14,
-    minHeight: 48,
-  },
-  buttonText: {
-    color: '#132925',
-    fontSize: 16,
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-});
+const createStyles = (theme: AssistTheme) =>
+  StyleSheet.create({
+    disabled: { opacity: 0.4 },
+    panel: {
+      gap: 12,
+    },
+    title: {
+      ...uiGrammar.type.body,
+      color: theme.colors.text,
+      fontWeight: '600',
+    },
+    text: { ...uiGrammar.type.label, color: theme.colors.muted },
+    button: {
+      backgroundColor: theme.colors.accent,
+      borderRadius: uiGrammar.radius.control,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      minHeight: 52,
+      justifyContent: 'center',
+    },
+    buttonText: {
+      ...uiGrammar.type.label,
+      color: theme.colors.onAccent,
+      textAlign: 'center',
+      fontWeight: '600',
+    },
+  });

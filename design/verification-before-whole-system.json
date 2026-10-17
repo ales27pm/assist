@@ -1,0 +1,905 @@
+{
+  "scope": "Browser rendering and local checks. Native iPhone compilation, keyboard, safe areas and inference are unverified.",
+  "sources": {
+    "mobile/App.tsx": "c67cbb581b62368ea3233e1884145fca63c3dbc50c18e236e5889093febfcf7a",
+    "mobile/src/appearance.tsx": "f8de14ec48510b7409b7ffb16cea44c9a496fadf516e419b0dd73538b605e2f5",
+    "mobile/src/AppearancePicker.tsx": "418c61d5e8122d42e2682d9fbd753c846b6161e8d2e966ab999481c106cc8d36",
+    "mobile/src/ConversationIntro.tsx": "8c49a269f401934a627ba449f25d1b0dd5f5aa78beaad07aaf91dd2cfdae8d79",
+    "mobile/src/InterfaceIcon.tsx": "40f4ed98cbb54df77f03d10c809f0b3d0232a737f8d89b1d8d801fa81901e33a",
+    "mobile/src/uiGrammar.ts": "8fbaf1e0c02c2423a1e9a791b04c4dcf0e8c9e80daf7731595b06f4528489fcd",
+    "mobile/preview/index.html": "a5500a81324f9bccb2a49bbc49b09e8cce67c5f4505cae5618c14bc71199e6da",
+    "mobile/src/HarmonicSeal.tsx": "a8f4ac84958e7b1720d80be50e3c055763262fd0dea89e9ed6e01d30875c2717"
+  },
+  "checks": {
+    "npm run check": {
+      "exit_code": 0,
+      "suites_passed": 12,
+      "tests_passed": 255,
+      "log": "/tmp/assist-harmonic-check.log"
+    },
+    "npm run preview:build": {
+      "exit_code": 0,
+      "log": "/tmp/assist-harmonic-preview.log"
+    },
+    "iOS JavaScript Metro bundle": {
+      "exit_code": 0,
+      "native_compilation": false,
+      "log": "/tmp/assist-harmonic-metro.log"
+    },
+    "prettier": {
+      "exit_code": 0
+    },
+    "git diff --check": {
+      "exit_code": 0
+    }
+  },
+  "contrast": {
+    "source": "/home/ales27pm/assist/mobile/src/appearance.tsx",
+    "source_sha256": "f8de14ec48510b7409b7ffb16cea44c9a496fadf516e419b0dd73538b605e2f5",
+    "generated_at_utc": "2026-10-16T19:57:07.228494+00:00",
+    "method": "WCAG relative sRGB luminance: (Llighter + 0.05) / (Ldarker + 0.05); opaque token colors; normal-text threshold 4.5; requested non-text border pairs threshold 3.0.",
+    "scope": "Only the 57 requested token combinations. Decorative separator colors are excluded from non-text boundary checks. Does not evaluate disabled or pressed opacity, screenshots, focus, image marks, native rendering, human usability, or whole-app WCAG conformance.",
+    "pair_count": 57,
+    "themes": [
+      {
+        "id": "light",
+        "pairs": [
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "background",
+            "foreground": "#18202E",
+            "background": "#F8F9FC",
+            "contrast_ratio": 15.524407,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surface",
+            "foreground": "#18202E",
+            "background": "#FFFFFF",
+            "contrast_ratio": 16.343759,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surfaceRaised",
+            "foreground": "#18202E",
+            "background": "#F0F3F9",
+            "contrast_ratio": 14.704091,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "assistantBubble",
+            "foreground": "#18202E",
+            "background": "#EDF1F8",
+            "contrast_ratio": 14.428026,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "composer",
+            "foreground": "#18202E",
+            "background": "#FFFFFF",
+            "contrast_ratio": 16.343759,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "chip",
+            "foreground": "#18202E",
+            "background": "#EDF1F9",
+            "contrast_ratio": 14.437714,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "activeSurface",
+            "foreground": "#18202E",
+            "background": "#E9EFFF",
+            "contrast_ratio": 14.207652,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "background",
+            "foreground": "#536078",
+            "background": "#F8F9FC",
+            "contrast_ratio": 6.022417,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surface",
+            "foreground": "#536078",
+            "background": "#FFFFFF",
+            "contrast_ratio": 6.34027,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surfaceRaised",
+            "foreground": "#536078",
+            "background": "#F0F3F9",
+            "contrast_ratio": 5.70419,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "chip",
+            "foreground": "#536078",
+            "background": "#EDF1F9",
+            "contrast_ratio": 5.600854,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "activeSurface",
+            "foreground": "#536078",
+            "background": "#E9EFFF",
+            "contrast_ratio": 5.511606,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "placeholder",
+            "background_token": "composer",
+            "foreground": "#627089",
+            "background": "#FFFFFF",
+            "contrast_ratio": 5.002107,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "userText",
+            "background_token": "userBubble",
+            "foreground": "#18202E",
+            "background": "#E8EEFF",
+            "contrast_ratio": 14.090636,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "onAccent",
+            "background_token": "accent",
+            "foreground": "#FFFFFF",
+            "background": "#2455DC",
+            "contrast_ratio": 6.162198,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "danger",
+            "background_token": "dangerSurface",
+            "foreground": "#AB263B",
+            "background": "#FFF0F2",
+            "contrast_ratio": 6.184341,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "composer",
+            "foreground": "#7C869A",
+            "background": "#FFFFFF",
+            "contrast_ratio": 3.662573,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "chip",
+            "foreground": "#7C869A",
+            "background": "#EDF1F9",
+            "contrast_ratio": 3.235435,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "surfaceRaised",
+            "foreground": "#7C869A",
+            "background": "#F0F3F9",
+            "contrast_ratio": 3.295129,
+            "threshold": 3.0,
+            "passes": true
+          }
+        ],
+        "minima": {
+          "text": {
+            "foreground_token": "placeholder",
+            "background_token": "composer",
+            "contrast_ratio": 5.002107,
+            "threshold": 4.5,
+            "passes": true
+          },
+          "nontext_border": {
+            "foreground_token": "border",
+            "background_token": "chip",
+            "contrast_ratio": 3.235435,
+            "threshold": 3.0,
+            "passes": true
+          }
+        },
+        "failures": []
+      },
+      {
+        "id": "graphite",
+        "pairs": [
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "background",
+            "foreground": "#F5F5F2",
+            "background": "#101113",
+            "contrast_ratio": 17.295217,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surface",
+            "foreground": "#F5F5F2",
+            "background": "#191B1F",
+            "contrast_ratio": 15.78596,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surfaceRaised",
+            "foreground": "#F5F5F2",
+            "background": "#25282E",
+            "contrast_ratio": 13.523635,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "assistantBubble",
+            "foreground": "#F5F5F2",
+            "background": "#202328",
+            "contrast_ratio": 14.428577,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "composer",
+            "foreground": "#F5F5F2",
+            "background": "#1D2025",
+            "contrast_ratio": 14.95504,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "chip",
+            "foreground": "#F5F5F2",
+            "background": "#2D3036",
+            "contrast_ratio": 12.109658,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "activeSurface",
+            "foreground": "#F5F5F2",
+            "background": "#3A2F1B",
+            "contrast_ratio": 11.99846,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "background",
+            "foreground": "#B6BAC2",
+            "background": "#101113",
+            "contrast_ratio": 9.708028,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surface",
+            "foreground": "#B6BAC2",
+            "background": "#191B1F",
+            "contrast_ratio": 8.860862,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surfaceRaised",
+            "foreground": "#B6BAC2",
+            "background": "#25282E",
+            "contrast_ratio": 7.59099,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "chip",
+            "foreground": "#B6BAC2",
+            "background": "#2D3036",
+            "contrast_ratio": 6.797306,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "activeSurface",
+            "foreground": "#B6BAC2",
+            "background": "#3A2F1B",
+            "contrast_ratio": 6.73489,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "placeholder",
+            "background_token": "composer",
+            "foreground": "#AFB6C0",
+            "background": "#1D2025",
+            "contrast_ratio": 7.992716,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "userText",
+            "background_token": "userBubble",
+            "foreground": "#F5F5F2",
+            "background": "#333841",
+            "contrast_ratio": 10.784179,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "onAccent",
+            "background_token": "accent",
+            "foreground": "#1B160C",
+            "background": "#FFB52B",
+            "contrast_ratio": 10.19687,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "danger",
+            "background_token": "dangerSurface",
+            "foreground": "#FF9EA7",
+            "background": "#3C2028",
+            "contrast_ratio": 7.486304,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "composer",
+            "foreground": "#767E8A",
+            "background": "#1D2025",
+            "contrast_ratio": 3.983978,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "chip",
+            "foreground": "#767E8A",
+            "background": "#2D3036",
+            "contrast_ratio": 3.225977,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "surfaceRaised",
+            "foreground": "#767E8A",
+            "background": "#25282E",
+            "contrast_ratio": 3.602656,
+            "threshold": 3.0,
+            "passes": true
+          }
+        ],
+        "minima": {
+          "text": {
+            "foreground_token": "muted",
+            "background_token": "activeSurface",
+            "contrast_ratio": 6.73489,
+            "threshold": 4.5,
+            "passes": true
+          },
+          "nontext_border": {
+            "foreground_token": "border",
+            "background_token": "chip",
+            "contrast_ratio": 3.225977,
+            "threshold": 3.0,
+            "passes": true
+          }
+        },
+        "failures": []
+      },
+      {
+        "id": "blue",
+        "pairs": [
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "background",
+            "foreground": "#F3F7FF",
+            "background": "#09172E",
+            "contrast_ratio": 16.665664,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surface",
+            "foreground": "#F3F7FF",
+            "background": "#0E2140",
+            "contrast_ratio": 14.927893,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "surfaceRaised",
+            "foreground": "#F3F7FF",
+            "background": "#172D50",
+            "contrast_ratio": 12.803706,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "assistantBubble",
+            "foreground": "#F3F7FF",
+            "background": "#102A4D",
+            "contrast_ratio": 13.393238,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "composer",
+            "foreground": "#F3F7FF",
+            "background": "#0E2444",
+            "contrast_ratio": 14.440258,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "chip",
+            "foreground": "#F3F7FF",
+            "background": "#183258",
+            "contrast_ratio": 11.955564,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "text",
+            "background_token": "activeSurface",
+            "foreground": "#F3F7FF",
+            "background": "#153869",
+            "contrast_ratio": 10.856961,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "background",
+            "foreground": "#AFBFD8",
+            "background": "#09172E",
+            "contrast_ratio": 9.599901,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surface",
+            "foreground": "#AFBFD8",
+            "background": "#0E2140",
+            "contrast_ratio": 8.598895,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "surfaceRaised",
+            "foreground": "#AFBFD8",
+            "background": "#172D50",
+            "contrast_ratio": 7.375303,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "chip",
+            "foreground": "#AFBFD8",
+            "background": "#183258",
+            "contrast_ratio": 6.886749,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "muted",
+            "background_token": "activeSurface",
+            "foreground": "#AFBFD8",
+            "background": "#153869",
+            "contrast_ratio": 6.253922,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "placeholder",
+            "background_token": "composer",
+            "foreground": "#B6C6DF",
+            "background": "#0E2444",
+            "contrast_ratio": 8.956993,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "userText",
+            "background_token": "userBubble",
+            "foreground": "#FFFFFF",
+            "background": "#2861D7",
+            "contrast_ratio": 5.553557,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "onAccent",
+            "background_token": "accent",
+            "foreground": "#09172E",
+            "background": "#83ADFF",
+            "contrast_ratio": 7.997857,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "text",
+            "foreground_token": "danger",
+            "background_token": "dangerSurface",
+            "foreground": "#FF9AA7",
+            "background": "#3D2035",
+            "contrast_ratio": 7.162873,
+            "threshold": 4.5,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "composer",
+            "foreground": "#7E96B8",
+            "background": "#0E2444",
+            "contrast_ratio": 5.125014,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "chip",
+            "foreground": "#7E96B8",
+            "background": "#183258",
+            "contrast_ratio": 4.243168,
+            "threshold": 3.0,
+            "passes": true
+          },
+          {
+            "kind": "nontext_border",
+            "foreground_token": "border",
+            "background_token": "surfaceRaised",
+            "foreground": "#7E96B8",
+            "background": "#172D50",
+            "contrast_ratio": 4.544183,
+            "threshold": 3.0,
+            "passes": true
+          }
+        ],
+        "minima": {
+          "text": {
+            "foreground_token": "userText",
+            "background_token": "userBubble",
+            "contrast_ratio": 5.553557,
+            "threshold": 4.5,
+            "passes": true
+          },
+          "nontext_border": {
+            "foreground_token": "border",
+            "background_token": "chip",
+            "contrast_ratio": 4.243168,
+            "threshold": 3.0,
+            "passes": true
+          }
+        },
+        "failures": []
+      }
+    ],
+    "failures": []
+  },
+  "symbol_reduction": {
+    "artifact": "assist-symbol-reduction.png",
+    "source": "Browser clone of actual AssistantMark geometry, scaled to 12/24/48 px, monochrome, inverted and 3px blur at48px",
+    "human_recall_test": false
+  },
+  "ux_score": {
+    "current": null,
+    "previous": 8.4,
+    "previous_status": "provisional, predates this revision; not a score for current code"
+  },
+  "previous_browser": {
+    "url": "http://127.0.0.1:5174/",
+    "composer": {
+      "initial": {
+        "x": 24.03125,
+        "y": 757.9375,
+        "width": 277.96875,
+        "height": 52
+      },
+      "send": {
+        "x": 314,
+        "y": 757.9375,
+        "width": 52,
+        "height": 52
+      },
+      "threeLines": {
+        "x": 24.03125,
+        "y": 713.9375,
+        "width": 277.96875,
+        "height": 96
+      },
+      "capped": {
+        "x": 24.03125,
+        "y": 665.9375,
+        "width": 277.96875,
+        "height": 144
+      },
+      "cleared": {
+        "x": 24.03125,
+        "y": 757.9375,
+        "width": 277.96875,
+        "height": 52
+      }
+    },
+    "keyboard": {
+      "endChecked": "true",
+      "homeChecked": "true",
+      "focusRestored": true
+    },
+    "themes": [
+      {
+        "name": "Natif clair",
+        "viewports": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "name": "Graphite",
+        "viewports": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      },
+      {
+        "name": "Bleu profond",
+        "viewports": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ]
+      }
+    ],
+    "modelControl": "Modèle · Moteur iOS indisponible",
+    "engineDisabled": true
+  },
+  "previous_browser_scope": "Earlier revision checks for unchanged composer and keyboard behavior; not repeated as part of geometry rendering checks.",
+  "browser": {
+    "url": "http://127.0.0.1:5174/",
+    "geometry": {
+      "width": 144,
+      "height": 88.984375,
+      "aspect": 1.6182616330114135,
+      "phi": 1.618033988749895,
+      "rings": [
+        {
+          "id": "harmonic-ring-0-left",
+          "left": 0,
+          "top": 0,
+          "width": 88.984375,
+          "height": 88.984375,
+          "bounded": true
+        },
+        {
+          "id": "harmonic-ring-0-right",
+          "left": 55,
+          "top": 0,
+          "width": 88.984375,
+          "height": 88.984375,
+          "bounded": true
+        },
+        {
+          "id": "harmonic-ring-1-left",
+          "left": 27.5,
+          "top": 16.984375,
+          "width": 55,
+          "height": 55,
+          "bounded": true
+        },
+        {
+          "id": "harmonic-ring-1-right",
+          "left": 61.484375,
+          "top": 16.984375,
+          "width": 55,
+          "height": 55,
+          "bounded": true
+        },
+        {
+          "id": "harmonic-ring-2-left",
+          "left": 44.484375,
+          "top": 27.5,
+          "width": 33.984375,
+          "height": 33.984375,
+          "bounded": true
+        },
+        {
+          "id": "harmonic-ring-2-right",
+          "left": 65.5,
+          "top": 27.5,
+          "width": 33.984375,
+          "height": 33.984375,
+          "bounded": true
+        }
+      ],
+      "diameterRatios": [
+        1.6178977272727273,
+        1.6183908045977011
+      ],
+      "pointerEvents": "none"
+    },
+    "results": [
+      {
+        "name": "Natif clair",
+        "widths": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ],
+        "draft": "Aide-moi à clarifier cette idée : ",
+        "hiddenInExample": true,
+        "restored": true
+      },
+      {
+        "name": "Graphite",
+        "widths": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ],
+        "draft": "Aide-moi à clarifier cette idée : ",
+        "hiddenInExample": true,
+        "restored": true
+      },
+      {
+        "name": "Bleu profond",
+        "widths": [
+          {
+            "width": 320,
+            "overflow": false,
+            "clippedControls": []
+          },
+          {
+            "width": 390,
+            "overflow": false,
+            "clippedControls": []
+          }
+        ],
+        "draft": "Aide-moi à clarifier cette idée : ",
+        "hiddenInExample": true,
+        "restored": true
+      }
+    ],
+    "sendDisabled": true
+  },
+  "geometry_scope": "Golden rectangle and six circles: three finite paired levels, exact phi in source and browser subpixel rounding; intro only; artistic inspiration, not a usability superiority claim."
+}

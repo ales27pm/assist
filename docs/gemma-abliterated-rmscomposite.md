@@ -118,6 +118,21 @@ candidat expérimental non testé sur appareil. La capacité déclarée de 32K,
 l'exécution du graphe compilé et le placement ANE ne sont pas qualifiés par
 ces contrôles locaux.
 
+## Page de téléchargement privée
+
+La page responsive est préparée depuis `scripts/gemma-download-page.html` par
+`scripts/serve-gemma-download.py`. Le serveur relit le SHA-256 complet du ZIP
+au démarrage et sert uniquement la page, le ZIP, son `.sha256` et le rapport
+d'intégrité. Il prend en charge `HEAD`, les plages HTTP et `If-Range` pour la
+reprise ; un changement ultérieur de l'identité du ZIP bloque sa distribution.
+
+Le service indépendant écoute sur loopback et passe par un nouvel endpoint
+HTTPS privé Tailscale. Les anciens services et les réglages Funnel sont
+préservés. L'URL et l'état courant restent dans le fichier local
+`download-page/page-state.json` du dossier d'export, avec les rapports HTTP et
+HTTPS. Depuis l'iPhone, ouvrir cette URL dans Safari avec Tailscale connecté.
+Les gros fichiers restent hors Git.
+
 ## Vérification du code de réparation
 
 Le contrôle complet `cd mobile && npm run check` passe : TypeScript, ESLint,
