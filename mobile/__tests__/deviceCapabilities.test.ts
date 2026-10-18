@@ -99,3 +99,124 @@ describe('device capability bridge', () => {
     );
   });
 });
+
+describe('closed calendar read boundary', () => {
+  const startISO = '2026-10-01T00:00:00Z';
+  const endISO = '2026-10-02T00:00:00Z';
+  const event = {
+    id: 'private-event-id',
+    calendarId: 'private-calendar-id',
+    calendarTitle: 'Personal',
+    title: 'Dentiste',
+    startISO: '2026-10-01T10:00:00Z',
+    endISO: '2026-10-01T10:30:00Z',
+    allDay: false,
+  };
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it('accepts a complete bounded native event', async () => {
+    native.listCalendarEvents.mockResolvedValue(
+      JSON.stringify({ events: [event] }),
+    );
+    await expect(
+      listCalendarEvents(startISO, endISO, { limit: 5 }),
+    ).resolves.toEqual({ events: [event] });
+  });
+
+  it.each([
+    ['missing time zone', '2026-10-01T00:00:00', endISO],
+    ['impossible date', '2026-02-30T00:00:00Z', '2026-03-02T00:00:00Z'],
+    ['equal boundaries', startISO, startISO],
+    ['reversed boundaries', endISO, startISO],
+    ['over one year', startISO, '2027-10-03T00:00:00Z'],
+  ])('rejects %s before calling EventKit', async (_label, start, end) => {
+    await expect(
+      listCalendarEvents(start, end, { limit: 5 }),
+    ).rejects.toThrow();
+    expect(native.listCalendarEvents).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown options and overlong calendar identifiers before calling native', async () => {
+    await expect(
+      listCalendarEvents(startISO, endISO, { limit: 5, write: true } as never),
+    ).rejects.toThrow();
+    await expect(
+      listCalendarEvents(startISO, endISO, { calendarId: 'x'.repeat(513) }),
+    ).rejects.toThrow();
+    expect(native.listCalendarEvents).not.toHaveBeenCalled();
+  });
+
+  it.each([null, true, '5', 5.5, 0, 51])(
+    'rejects the non-integer or out-of-range limit %s before calling native',
+    async limit => {
+      await expect(
+        listCalendarEvents(startISO, endISO, { limit } as never),
+      ).rejects.toThrow();
+      expect(native.listCalendarEvents).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['wrong result collection', { events: {} }],
+    ['extra result field', { events: [], notes: 'private' }],
+    ['missing event field', { events: [{ ...event, allDay: undefined }] }],
+    ['unexpected event field', { events: [{ ...event, notes: 'private' }] }],
+    ['non-string title', { events: [{ ...event, title: 42 }] }],
+    ['non-boolean allDay', { events: [{ ...event, allDay: 1 }] }],
+    ['invalid timestamp', { events: [{ ...event, startISO: '2026-10-01' }] }],
+    [
+      'reversed event dates',
+      {
+        events: [{ ...event, startISO: event.endISO, endISO: event.startISO }],
+      },
+    ],
+    [
+      'event outside the period',
+      {
+        events: [
+          { ...event, startISO: endISO, endISO: '2026-10-03T00:00:00Z' },
+        ],
+      },
+    ],
+    ['overlong title', { events: [{ ...event, title: 'é'.repeat(1_025) }] }],
+    ['overlong identifier', { events: [{ ...event, id: 'x'.repeat(513) }] }],
+    ['too many events', { events: Array.from({ length: 6 }, () => event) }],
+  ])('rejects %s in a native result', async (_label, response) => {
+    native.listCalendarEvents.mockResolvedValue(JSON.stringify(response));
+    await expect(
+      listCalendarEvents(startISO, endISO, { limit: 5 }),
+    ).rejects.toThrow('Réponse native invalide');
+  });
+
+  it('accepts overlapping and zero-duration events without requiring chronological order', async () => {
+    const overlapping = {
+      ...event,
+      startISO: '2026-09-30T23:00:00Z',
+      endISO: '2026-10-01T01:00:00Z',
+    };
+    const instant = {
+      ...event,
+      startISO: '2026-10-01T12:00:00.000Z',
+      endISO: '2026-10-01T12:00:00.000Z',
+    };
+    const events = [instant, overlapping];
+    native.listCalendarEvents.mockResolvedValue(JSON.stringify({ events }));
+    await expect(
+      listCalendarEvents(startISO, endISO, { limit: 5 }),
+    ).resolves.toEqual({ events });
+  });
+
+  it('does not request permission or retry a denied read', async () => {
+    native.listCalendarEvents.mockRejectedValue(
+      Object.assign(new Error('private native detail'), {
+        code: 'E_PERMISSION',
+      }),
+    );
+    await expect(
+      listCalendarEvents(startISO, endISO, { limit: 5 }),
+    ).rejects.toMatchObject({ code: 'E_PERMISSION' });
+    expect(native.requestDeviceCapability).not.toHaveBeenCalled();
+    expect(native.listCalendarEvents).toHaveBeenCalledTimes(1);
+  });
+});

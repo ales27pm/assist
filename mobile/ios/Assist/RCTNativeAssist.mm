@@ -79,6 +79,10 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   BOOL _invalidated;
   BOOL _cleanupStarted;
   NSUInteger _cancellationsInFlight;
+  id _agentLifecycleObserver;
+  id _agentBackgroundObserver;
+  NSString *_calendarAgentOperation;
+  NSString *_toolAgentOperation;
 }
 
 + (NSString *)moduleName { return @"NativeAssist"; }
@@ -708,6 +712,134 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   });
 }
 
+// This capability is absent from native27. JavaScript must negotiate this
+// versioned boundary instead of inferring support from a build-number string.
+- (void)getAgentCapabilities:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    resolve(@"{\"schemaVersion\":1,\"protocolVersion\":1,\"calendarReadOnly\":true}");
+  });
+}
+
+- (void)getDeviceToolCapabilities:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    [self->_engine deviceToolCapabilities:AssistPromise(resolve, reject)];
+  });
+}
+
+// These control-plane calls intentionally bypass beginOperation: confirmation
+// must reach the broker while that exact generation owns the engine busy latch.
+- (void)confirmToolAction:(NSString *)transactionId confirmationToken:(NSString *)confirmationToken
+                 resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    [self->_engine confirmToolAction:transactionId confirmationToken:confirmationToken
+                          completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)getToolOperations:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject] || ![self prepareDeviceCapabilities:reject]) { return; }
+    [self->_engine toolOperationsWithGateway:self->_deviceCapabilities completion:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)installAgentLifecycleObservers {
+  __weak RCTNativeAssist *weakSelf = self;
+  if (!_agentLifecycleObserver) {
+    _agentLifecycleObserver = [NSNotificationCenter.defaultCenter
+      addObserverForName:UIApplicationWillResignActiveNotification object:nil
+                   queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
+      RCTNativeAssist *strongSelf = weakSelf;
+      if (!strongSelf || (!strongSelf->_calendarAgentOperation && !strongSelf->_toolAgentOperation)) { return; }
+      // Only an interaction actually owned by the broker can survive transient
+      // inactive state (picker/auth). Background never receives this exemption.
+      if (strongSelf->_toolAgentOperation && strongSelf->_engine.allowsTransientToolInactivity) { return; }
+      [strongSelf cancelEngineWithCompletion:^(NSString *value, NSError *error) {}];
+    }];
+  }
+  if (!_agentBackgroundObserver) {
+    _agentBackgroundObserver = [NSNotificationCenter.defaultCenter
+      addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil
+                   queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
+      RCTNativeAssist *strongSelf = weakSelf;
+      if (!strongSelf || (!strongSelf->_calendarAgentOperation && !strongSelf->_toolAgentOperation)) { return; }
+      [strongSelf cancelEngineWithCompletion:^(NSString *value, NSError *error) {}];
+    }];
+  }
+}
+
+- (void)generateWithTools:(NSString *)requestJSON
+                 resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
+      AssistReject(reject, AssistError(@"E_CANCELLED", @"Reviens dans Assist pour utiliser ses outils."));
+      return;
+    }
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    NSString *operation = [self beginOperation:reject];
+    if (!operation) { return; }
+    self->_toolAgentOperation = operation;
+    [self installAgentLifecycleObservers];
+    __weak RCTNativeAssist *weakSelf = self;
+    AssistCompletion completion = [self completionForOperation:operation resolve:resolve reject:reject
+                                                     cleanup:^(BOOL succeeded) {
+      if ([self->_toolAgentOperation isEqualToString:operation]) { self->_toolAgentOperation = nil; }
+    }];
+    [self->_engine generateWithTools:requestJSON gateway:self->_deviceCapabilities onToolActivity:^(NSString *json) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        RCTNativeAssist *strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_invalidated ||
+            ![strongSelf->_operation isEqualToString:operation] ||
+            ![strongSelf->_toolAgentOperation isEqualToString:operation]) { return; }
+        [strongSelf emitOnToolActivity:@{ @"json": json }];
+      });
+    } completion:[self refreshResidentStateOnFailure:completion]];
+  });
+}
+
+// The dedicated user-invoked entrypoint grants one calendar read for today's
+// native civil-day interval. A model proposal cannot invoke this bridge method
+// or manufacture that grant from the ordinary text-generation path.
+- (void)generateCalendarToday:(NSString *)requestJSON
+                     resolve:(RCTPromiseResolveBlock)resolve
+                      reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
+      AssistReject(reject, AssistError(@"E_CANCELLED", @"Reviens dans Assist pour consulter le calendrier."));
+      return;
+    }
+    if (![self prepareDeviceCapabilities:reject]) { return; }
+    NSString *operation = [self beginOperation:reject];
+    if (!operation) { return; }
+    __weak RCTNativeAssist *weakSelf = self;
+    self->_calendarAgentOperation = operation;
+    [self installAgentLifecycleObservers];
+    AssistCompletion completion = [self completionForOperation:operation resolve:resolve reject:reject
+                                                     cleanup:^(BOOL succeeded) {
+      if ([self->_calendarAgentOperation isEqualToString:operation]) { self->_calendarAgentOperation = nil; }
+    }];
+    [self->_engine generateCalendarToday:requestJSON gateway:self->_deviceCapabilities onProgress:^(NSString *json) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        RCTNativeAssist *strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_invalidated ||
+            ![strongSelf->_operation isEqualToString:operation]) { return; }
+        [strongSelf emitOnProgress:@{ @"json": json }];
+      });
+    } onCalendarActivity:^(NSString *json) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        RCTNativeAssist *strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_invalidated ||
+            ![strongSelf->_operation isEqualToString:operation] ||
+            ![strongSelf->_calendarAgentOperation isEqualToString:operation]) { return; }
+        [strongSelf emitOnCalendarActivity:@{ @"json": json }];
+      });
+    } completion:[self refreshResidentStateOnFailure:completion]];
+  });
+}
+
 - (void)cancelEngineWithCompletion:(AssistCompletion)completion {
   _cancellationsInFlight += 1;
   __block BOOL settled = NO;
@@ -770,6 +902,14 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)invalidate {
   dispatch_async(dispatch_get_main_queue(), ^{
     self->_invalidated = YES;
+    if (self->_agentLifecycleObserver) {
+      [NSNotificationCenter.defaultCenter removeObserver:self->_agentLifecycleObserver];
+      self->_agentLifecycleObserver = nil;
+    }
+    if (self->_agentBackgroundObserver) {
+      [NSNotificationCenter.defaultCenter removeObserver:self->_agentBackgroundObserver];
+      self->_agentBackgroundObserver = nil;
+    }
     [self->_deviceCapabilities invalidate];
     [[AssistAdvancedVoiceResources shared] cancelImports];
     [self->_voice invalidate];
@@ -785,6 +925,11 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
     }
     [self cleanupIfInvalidated];
   });
+}
+
+- (void)dealloc {
+  if (_agentLifecycleObserver) { [NSNotificationCenter.defaultCenter removeObserver:_agentLifecycleObserver]; }
+  if (_agentBackgroundObserver) { [NSNotificationCenter.defaultCenter removeObserver:_agentBackgroundObserver]; }
 }
 
 @end

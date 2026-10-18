@@ -15,7 +15,7 @@ test('native update runtimes match the current native build', () => {
   const strings = readFileSync(join(mobileRoot, 'android/app/src/main/res/values/strings.xml'), 'utf8');
   const xcodeProject = readFileSync(join(mobileRoot, 'ios/Assist.xcodeproj/project.pbxproj'), 'utf8');
   const buildNumbers = [...xcodeProject.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map(match => match[1]);
-  expect([...new Set(buildNumbers)]).toEqual(['27']);
+  expect([...new Set(buildNumbers)]).toEqual(['28']);
   expect(typeof config.runtimeVersion).toBe('string');
   expect(config.runtimeVersion).toBe(`1.0.0-native${buildNumbers[0]}`);
   expect(expoPlist.match(/<key>EXUpdatesRuntimeVersion<\/key>\s*<string>([^<]+)<\/string>/)?.[1]).toBe(config.runtimeVersion);
@@ -28,7 +28,8 @@ test('Core AI selects the Tokenizers protocol when FluidAudio is also imported',
   // not FluidAudio's unrelated speech tokenizer class.
   const tokenizerTypes = [...bridge.matchAll(/\bany\s+([\w.]*Tokenizer)\b/g)]
     .map(match => match[1]);
-  expect(tokenizerTypes).toEqual(['Tokenizers.Tokenizer', 'Tokenizers.Tokenizer']);
+  expect(tokenizerTypes.length).toBeGreaterThanOrEqual(2);
+  expect(tokenizerTypes.every(type => type === 'Tokenizers.Tokenizer')).toBe(true);
 });
 
 test('iOS resolves Expo CLI through Expo when the CLI is nested', () => {
@@ -68,6 +69,12 @@ if [ "$1" = '../scripts/check-speech-voices.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" 
 if [ "$1" = '../scripts/check-fluid-voice.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'fluid-voice' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-advanced-voice-files.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'advanced-voice-files' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-fluid-sdk.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'fluid-sdk' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-agent-calendar.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'agent-calendar' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-gemma-tools.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'gemma-tools' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-agent-loop.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'agent-loop' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-device-tools.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'device-tools' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-device-tool-loop.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'device-tool-loop' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-tool-transactions.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'tool-transactions' ]; then exit 1; fi
 [ "$ASSIST_HOOK_TEST_FAIL" != '${command}' ]
 `,
       { mode: 0o755 },
@@ -95,9 +102,9 @@ test('Android preinstall succeeds without invoking any iOS prerequisites', () =>
   expect(() => readFileSync(logPath, 'utf8')).toThrow();
 });
 
-test('iOS preinstall verifies launch, bundle, host, callbacks, input, speech queue, duplex, comparison and advanced voice in order', () => {
+test('iOS preinstall verifies launch, voice and closed device-tool agent contracts in order', () => {
   runHook('ios');
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
 });
 
 test('iOS preinstall propagates a failed prerequisite and stops subsequent checks', () => {
@@ -147,4 +154,11 @@ test('iOS preinstall propagates advanced-voice-files failure', () => {
 test('iOS preinstall propagates fluid-sdk failure', () => {
   expect(() => runHook('ios', 'fluid-sdk')).toThrow();
   expect(readFileSync(logPath, 'utf8')).toBe('python3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
+});
+
+test.each(['agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-loop', 'tool-transactions'])('iOS preinstall blocks on %s failure', failure => {
+  expect(() => runHook('ios', failure)).toThrow();
+  expect(readFileSync(logPath, 'utf8').split('\n').filter(Boolean).length).toBe(
+    12 + ['agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-loop', 'tool-transactions'].indexOf(failure),
+  );
 });

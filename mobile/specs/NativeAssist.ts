@@ -5,6 +5,10 @@ export type ProgressEvent = {
   json: string;
 };
 
+export type CalendarActivityEvent = {
+  json: string;
+};
+
 /** Native owns model paths, lifecycle, cancellation, and local inference. */
 export interface Spec extends TurboModule {
   /** Read-only iOS consent and platform-boundary snapshot; never prompts. */
@@ -61,6 +65,20 @@ export interface Spec extends TurboModule {
   selectModel(): Promise<string>;
   loadModel(): Promise<string>;
   loadBundledModel(): Promise<string>;
+  /** Versioned capability handshake; never reads calendar data or prompts. */
+  getAgentCapabilities(): Promise<string>;
+  /** Explicit touch-only, native-owned, bounded read-only calendar turn. */
+  generateCalendarToday(requestJSON: string): Promise<string>;
+  /** Closed native tool registry; advertises support without reading data. */
+  getDeviceToolCapabilities(): Promise<string>;
+  /** Fresh opted-in turn. Every native access still requires confirmation. */
+  generateWithTools(requestJSON: string): Promise<string>;
+  confirmToolAction(
+    transactionId: string,
+    confirmationToken: string,
+  ): Promise<string>;
+  /** Bounded native transaction journal, including uncertain side effects. */
+  getToolOperations(): Promise<string>;
   generate(requestJSON: string): Promise<string>;
   cancel(): Promise<string>;
   reset(): Promise<string>;
@@ -75,6 +93,9 @@ export interface Spec extends TurboModule {
   getLastModelAssetProbe(): Promise<string>;
   readonly onProgress: CodegenTypes.EventEmitter<ProgressEvent>;
   readonly onVoiceEvent: CodegenTypes.EventEmitter<ProgressEvent>;
+  /** Native-only task metadata JSON; never a model transcript or calendar rows. */
+  readonly onCalendarActivity: CodegenTypes.EventEmitter<CalendarActivityEvent>;
+  readonly onToolActivity: CodegenTypes.EventEmitter<ProgressEvent>;
 }
 
 // Android is a future backend, not a simulated Core AI implementation.

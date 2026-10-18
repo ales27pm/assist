@@ -154,7 +154,9 @@ class DeviceCapabilitySourceContracts(unittest.TestCase):
         return swift_function(self.swift_code, name)
 
     def test_photo_picker_does_not_request_full_library_access(self):
-        select_photo = self.function("selectPhoto")
+        self.contains(r"beginPhotoSelection\(completion, recognizesText: false\)", self.function("selectPhoto"))
+        self.contains(r"beginPhotoSelection\(completion, recognizesText: true\)", self.function("selectPhotoForToolOCR"))
+        select_photo = self.function("beginPhotoSelection")
         self.contains(
             r"(?m)^\s*let\s+picker\s*=\s*PHPickerViewController\s*\(configuration:\s*configuration\)",
             select_photo,
@@ -184,8 +186,38 @@ class DeviceCapabilitySourceContracts(unittest.TestCase):
         self.excludes(r"\.loadObject\s*\(", picker)
         self.excludes(r"object\s+as\?\s+UIImage", picker)
 
+    def test_late_photo_provider_cannot_fill_a_new_interaction(self):
+        picker = self.function("picker")
+        self.contains(r"self\.attachmentGeneration == generation", picker)
+        self.assertLess(picker.index("self.attachmentGeneration == generation"), picker.index("UIImage(data: data)"))
+        self.assertLess(picker.index("data.count <= Self.maximumAttachmentBytes"), picker.index("UIImage(data: data)"))
+        self.assertLess(picker.index("Self.imageDataIsWithinInputBounds(data)"), picker.index("UIImage(data: data)"))
+        cancellation = self.function("cancelToolInteraction")
+        self.contains(r"attachmentGeneration\s*=\s*nil", cancellation)
+
+    def test_camera_ocr_never_requests_permission_and_fences_late_grants(self):
+        capture = self.function("beginCameraCapture")
+        case = capture.split("case .notDetermined:", 1)[1].split("case .denied", 1)[0]
+        self.contains(r"guard !recognizesText else", case)
+        self.assertLess(case.index("guard !recognizesText else"), case.index("AVCaptureDevice.requestAccess"))
+        self.contains(r"self\.pendingCameraCaptureToken == token", case)
+        self.assertLess(case.index("self.pendingCameraCaptureToken == token"), case.index("self.presentCamera"))
+
+    def test_ocr_cancellation_reaches_vision_and_clears_ownership(self):
+        cancellation = self.function("cancelToolInteraction")
+        self.contains(r"attachmentOCRRequestGate\?\.cancel\(\)", cancellation)
+        self.contains(r"attachmentOCRToken\s*=\s*nil", cancellation)
+        recognition = self.function("recognizeTextLocally")
+        self.assertLess(recognition.index("requestGate.install(request)"), recognition.index("handler.perform([request])"))
+        self.contains(r"defer \{ requestGate\.clear\(\) \}", recognition)
+        vision_cancel = self.function("cancel")
+        self.contains(r"request\?\.cancel\(\)", vision_cancel)
+        self.excludes(r"Unmanaged|UnsafeMutableRawPointer", self.swift_code)
+
     def test_pending_camera_capture_is_retired_before_a_late_grant(self):
-        capture = self.function("capturePhoto")
+        self.contains(r"beginCameraCapture\(completion, recognizesText: false\)", self.function("capturePhoto"))
+        self.contains(r"beginCameraCapture\(completion, recognizesText: true\)", self.function("capturePhotoForToolOCR"))
+        capture = self.function("beginCameraCapture")
         assignment = r"(?m)^\s*pendingCameraCaptureCompletion\s*=\s*completion\b"
         self.contains(assignment, capture)
         self.assertLess(
@@ -194,14 +226,33 @@ class DeviceCapabilitySourceContracts(unittest.TestCase):
         )
         self.contains(r"(?m)^\s*guard\s+!self\.invalidated\s+else", capture)
         invalidation = self.function("invalidate")
-        self.contains(r"(?m)^\s*pendingCameraCaptureCompletion\s*=\s*nil\b", invalidation)
-        self.contains(r'(?m)^\s*completion\s*\(\s*nil,\s*Self\.error\s*\(\s*"E_CANCELLED"', invalidation)
+        self.contains(r"(?m)^\s*cancelToolInteraction\(\)", invalidation)
+        cancellation = self.function("cancelToolInteraction")
+        self.contains(r"(?m)^\s*pendingCameraCaptureCompletion\s*=\s*nil\b", cancellation)
+        self.contains(r'(?m)^\s*completion\s*\(\s*nil,\s*Self\.error\s*\(\s*"E_CANCELLED"', cancellation)
         presentation = self.function("presentCamera")
         guard = re.search(r"(?m)^\s*guard\s+!invalidated\s+else", presentation)
         present = re.search(r"(?m)^\s*presenter\.present\b", presentation)
         self.assertIsNotNone(guard, "Missing invalidation guard in presentCamera")
         self.assertIsNotNone(present, "Missing camera presentation")
         self.assertLess(guard.start(), present.start())
+
+    def test_ocr_is_local_bounded_and_not_a_new_image_file(self):
+        store = self.function("storeImage")
+        self.assertLess(store.index("if attachmentOCRRequested"), store.index("try data.write"))
+        self.contains(r"recognizeToolText\(data: data, orientation: attachment.imageOrientation", store)
+        recognition = self.function("recognizeTextLocally")
+        self.contains(r"VNRecognizeTextRequest\(\)", recognition)
+        self.contains(r"request\.recognitionLevel\s*=\s*\.accurate", recognition)
+        self.contains(r"request\.supportedRecognitionLanguages\(\)", recognition)
+        self.contains(r"VNImageRequestHandler\(data: data, orientation: orientation", recognition)
+        self.contains(r"lines\.count >= maximumOCRLines", recognition)
+        self.contains(r"maximumOCRTextBytes - bytes", recognition)
+        self.excludes(r"URLSession|http[s]?://|write\(to:", recognition)
+        callback = self.function("recognizeToolText")
+        self.contains(r"self\.attachmentOCRToken == token", callback)
+        self.contains(r'"ocrReliable": false', callback)
+        self.excludes(r'"uri"|"pixels"', callback)
 
     def test_contacts_and_events_stop_during_enumeration(self):
         contacts = self.function("searchContacts")

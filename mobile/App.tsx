@@ -17,6 +17,28 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import NativeAssist from './specs/NativeAssist';
 import { InterfaceIcon } from './src/InterfaceIcon';
+import { ToolCallCard } from './src/ToolCallCard';
+import { DeviceToolCard } from './src/DeviceToolCard';
+import { DeviceToolDecisionSheet } from './src/DeviceToolDecisionSheet';
+import {
+  DeviceToolActivity,
+  DeviceToolReceipt,
+  acceptDeviceToolActivity,
+  deviceToolPublicAnswer,
+  interruptDeviceToolActivity,
+  parseDeviceToolActivity,
+  parseDeviceToolCapabilities,
+  parseDeviceToolResult,
+  parseToolConfirmation,
+  parseToolOperations,
+} from './src/deviceToolProtocol';
+import {
+  CalendarToolTransaction,
+  finishCalendarTransaction,
+  interruptCalendarTransaction,
+  parseCalendarActivity,
+  reduceCalendarActivity,
+} from './src/toolActivity';
 import { AppearanceProvider, useAppearance } from './src/appearance';
 import type { AssistTheme } from './src/appearance';
 import { AppearancePicker } from './src/AppearancePicker';
@@ -46,11 +68,35 @@ import {
   PrimitiveReport,
   errorMessage,
   outputBudget,
+  parseAgentCapabilities,
+  parseCalendarResult,
   parseProgress,
   parsePrimitiveReport,
   parseResult,
   parseState,
 } from './src/protocol';
+
+const calendarTodayPrompt =
+  'Consulte mon calendrier d’aujourd’hui et résume les événements retournés, sans supposer que la liste est complète.';
+type DisplayMessage = Message & {
+  displayOnly?: true;
+  toolTransaction?: CalendarToolTransaction;
+  deviceTool?: DeviceToolActivity;
+};
+
+/** Keep tool-derived answers visible, never promote them to trusted chat input. */
+function mergeDisplayedConversation(
+  shown: DisplayMessage[],
+  context: Message[],
+): DisplayMessage[] {
+  let index = 0;
+  const next: DisplayMessage[] = [];
+  for (const message of shown) {
+    if (message.displayOnly) next.push(message);
+    else if (index < context.length) next.push(context[index++]);
+  }
+  return [...next, ...context.slice(index)];
+}
 
 function mergeNativeStatus(
   previous: EngineState,
@@ -132,15 +178,44 @@ export function AssistantScreen() {
   const [error, setError] = useState('');
   const [prompt, setPrompt] = useState('');
   const [budget, setBudget] = useState('');
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [report, setReport] = useState<GenerationResult | null>(null);
   const [probeReport, setProbeReport] = useState<PrimitiveReport | null>(null);
   const active = useRef<string | null>(null);
   const operation = useRef(false);
+  const cancellationsInFlight = useRef(0);
   const mounted = useRef(true);
   const counter = useRef(0);
   const statusVersion = useRef(0);
+  const [calendarAvailable, setCalendarAvailable] = useState(false);
+  const [agentPhase, setAgentPhase] = useState<
+    'consulting' | 'cancelling' | null
+  >(null);
+  const calendarEpoch = useRef(0);
+  const calendarRequest = useRef<string | null>(null);
+  const [toolsAvailable, setToolsAvailable] = useState(false);
+  const toolsReady = useRef(false);
+  toolsReady.current = toolsAvailable;
+  const [toolsEnabled, setToolsEnabled] = useState(false);
+  const [toolRunActive, setToolRunActive] = useState(false);
+  const [toolDecision, setToolDecision] = useState<DeviceToolActivity | null>(
+    null,
+  );
+  const [toolDecisionPending, setToolDecisionPending] = useState(false);
+  const [toolOperations, setToolOperations] = useState<DeviceToolReceipt[]>([]);
+  const toolRequest = useRef<{ id: string; epoch: number } | null>(null);
+  const toolDecisionLock = useRef(false);
+  const toolSheetDismissal = useRef<{
+    id: string;
+    resolve: (dismissed: boolean) => void;
+  } | null>(null);
+  const toolPermissionPending = useRef(false);
+  const ownedToolInteraction = useRef(false);
+  const calendarActivityEpoch = useRef(0);
+  const foreground = useRef(
+    AppState.currentState == null || AppState.currentState === 'active',
+  );
   const preferences = useVoicePreferences();
   const { readResponses } = preferences;
   const readResponsesEnabled = useRef(readResponses);
@@ -202,6 +277,80 @@ export function AssistantScreen() {
   const controller = voiceController.current;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+  const refreshToolOperations = useCallback(async () => {
+    if (typeof NativeAssist?.getToolOperations !== 'function') return;
+    try {
+      const operations = parseToolOperations(
+        await NativeAssist.getToolOperations(),
+      );
+      if (!mounted.current) return;
+      setToolOperations(operations);
+      messagesRef.current = messagesRef.current.map(message => {
+        const activity = message.deviceTool;
+        const receipt = operations.find(
+          item => item.operationId === activity?.transaction.id,
+        );
+        if (
+          !activity ||
+          !receipt ||
+          (['success', 'outcome_unknown'].includes(
+            activity.transaction.status,
+          ) &&
+            activity.transaction.receipt)
+        )
+          return message;
+        return {
+          ...message,
+          deviceTool: {
+            ...activity,
+            transaction: {
+              ...activity.transaction,
+              status: receipt.status,
+              receipt,
+              confirmationToken: undefined,
+            },
+          },
+        };
+      });
+      setMessages(messagesRef.current);
+    } catch {
+      if (mounted.current)
+        setError(
+          'Le journal des actions n’a pas pu être vérifié. Ne répète pas une création potentiellement envoyée.',
+        );
+    }
+  }, []);
+  const settleDeviceToolRequest = useCallback(
+    (requestId: string, preservePermission = false) => {
+      messagesRef.current = messagesRef.current.map(message =>
+        message.deviceTool?.requestId === requestId
+          ? {
+              ...message,
+              deviceTool: interruptDeviceToolActivity(
+                message.deviceTool,
+                preservePermission,
+              ),
+            }
+          : message,
+      );
+      if (mounted.current) setMessages(messagesRef.current);
+    },
+    [],
+  );
+  const updateCalendarTransaction = useCallback(
+    (
+      id: string,
+      update: (transaction: CalendarToolTransaction) => CalendarToolTransaction,
+    ) => {
+      messagesRef.current = messagesRef.current.map(message =>
+        message.toolTransaction?.id === id
+          ? { ...message, toolTransaction: update(message.toolTransaction) }
+          : message,
+      );
+      if (mounted.current) setMessages(messagesRef.current);
+    },
+    [],
+  );
   const requestPrompt = useRef('');
   const pendingVoiceTurn = useRef<{ id: string; messages: Message[] } | null>(
     null,
@@ -217,14 +366,35 @@ export function AssistantScreen() {
   const cancelVoice = voice.cancel;
   const speakResponse = voice.speak;
   const cancelGeneration = useCallback(async () => {
+    const requestId = active.current;
+    const calendarId = calendarRequest.current;
+    const deviceId = toolRequest.current?.id;
+    toolSheetDismissal.current?.resolve(false);
+    toolSheetDismissal.current = null;
+    ownedToolInteraction.current = false;
+    if (mounted.current) setToolDecision(null);
+    cancellationsInFlight.current += 1;
+    if (mounted.current) setBusy(true);
+    calendarEpoch.current += 1;
+    if (mounted.current && calendarId) {
+      updateCalendarTransaction(calendarId, transaction => ({
+        ...transaction,
+        cancelRequested: true,
+      }));
+      setAgentPhase('cancelling');
+      setProgress(null);
+      setReport(null);
+    }
     speechIntent.current += 1;
     spokenRequest.current = null;
     responseSpeech.current?.cancel();
     responseSpeech.current = null;
-    // Silence audio before waiting for cooperative Gemma cancellation.
-    const audioStopped = await cancelVoice();
-    const requestId = active.current;
+    let audioStopped = false;
+    let cancellationAcknowledged = false;
     try {
+      // Capture the operation identity before this suspension; a completed
+      // generation must not admit another task while its cancel ACK is pending.
+      audioStopped = await cancelVoice();
       const json = await NativeAssist?.cancel();
       if (
         json &&
@@ -232,20 +402,53 @@ export function AssistantScreen() {
         (active.current === requestId || active.current === null)
       ) {
         const state = parseState(json);
+        cancellationAcknowledged = true;
         statusVersion.current += 1;
         setEngine(previous => mergeNativeStatus(previous, state));
       }
+      if (mounted.current && calendarId)
+        updateCalendarTransaction(calendarId, transaction =>
+          interruptCalendarTransaction(transaction, 'interrupted'),
+        );
+      if (deviceId) {
+        await refreshToolOperations();
+        settleDeviceToolRequest(deviceId);
+      }
     } catch (e) {
       if (mounted.current) {
+        if (calendarId)
+          updateCalendarTransaction(calendarId, transaction =>
+            interruptCalendarTransaction(transaction, 'unconfirmed'),
+          );
         setError(errorMessage(e));
       }
+    } finally {
+      cancellationsInFlight.current -= 1;
+      if (mounted.current) {
+        setBusy(
+          operation.current ||
+            cancellationsInFlight.current > 0 ||
+            toolPermissionPending.current,
+        );
+        if (!calendarRequest.current && cancellationsInFlight.current === 0)
+          setAgentPhase(null);
+      }
     }
-    return audioStopped;
-  }, [cancelVoice]);
+    return audioStopped && cancellationAcknowledged;
+  }, [
+    cancelVoice,
+    updateCalendarTransaction,
+    refreshToolOperations,
+    settleDeviceToolRequest,
+  ]);
 
   // Native barge-in has already silenced playback and kept the same ASR task.
   // Retire JS scheduling synchronously, then cancel Gemma without cancelVoice.
   const cancelResponse = useCallback(async () => {
+    if (toolRequest.current?.id === active.current) {
+      await cancelGeneration();
+      return;
+    }
     speechIntent.current += 1;
     spokenRequest.current = null;
     responseSpeech.current?.cancel();
@@ -258,7 +461,10 @@ export function AssistantScreen() {
     // Preserve the interrupted user's intent, without saving an unspoken or
     // incomplete assistant answer as a completed response.
     if (pendingVoiceTurn.current?.id === requestId) {
-      messagesRef.current = pendingVoiceTurn.current.messages;
+      messagesRef.current = mergeDisplayedConversation(
+        messagesRef.current,
+        pendingVoiceTurn.current.messages,
+      );
       if (mounted.current) setMessages(messagesRef.current);
       pendingVoiceTurn.current = null;
     }
@@ -272,7 +478,61 @@ export function AssistantScreen() {
       statusVersion.current += 1;
       setEngine(previous => mergeNativeStatus(previous, state));
     }
+  }, [cancelGeneration]);
+
+  useEffect(() => {
+    let current = true;
+    if (
+      Platform.OS === 'ios' &&
+      typeof NativeAssist?.getAgentCapabilities === 'function' &&
+      typeof NativeAssist?.generateCalendarToday === 'function' &&
+      typeof NativeAssist?.onCalendarActivity === 'function'
+    ) {
+      Promise.resolve()
+        .then(() => NativeAssist!.getAgentCapabilities())
+        .then(json => {
+          parseAgentCapabilities(json);
+          if (current) setCalendarAvailable(true);
+        })
+        .catch(() => {
+          if (current) setCalendarAvailable(false);
+        });
+    }
+    return () => {
+      current = false;
+    };
   }, []);
+
+  useEffect(() => {
+    let current = true;
+    if (
+      Platform.OS === 'ios' &&
+      typeof NativeAssist?.getDeviceToolCapabilities === 'function' &&
+      typeof NativeAssist?.generateWithTools === 'function' &&
+      typeof NativeAssist?.confirmToolAction === 'function' &&
+      typeof NativeAssist?.onToolActivity === 'function' &&
+      typeof NativeAssist?.getToolOperations === 'function'
+    ) {
+      Promise.resolve()
+        .then(() => NativeAssist!.getDeviceToolCapabilities())
+        .then(json => {
+          parseDeviceToolCapabilities(json);
+          if (current) {
+            setToolsAvailable(true);
+            refreshToolOperations();
+          }
+        })
+        .catch(() => {
+          if (current) {
+            setToolsAvailable(false);
+            setToolsEnabled(false);
+          }
+        });
+    }
+    return () => {
+      current = false;
+    };
+  }, [refreshToolOperations]);
 
   useEffect(() => {
     if (tab !== 'chat') {
@@ -306,6 +566,10 @@ export function AssistantScreen() {
       if (!mounted.current) {
         return;
       }
+      // No planning, tool commands, or private tool results may enter UI/TTS.
+      if (calendarRequest.current && calendarRequest.current === active.current)
+        return;
+      if (toolRequest.current?.id === active.current) return;
       try {
         const update = parseProgress(event.json);
         if (update.requestId === active.current) {
@@ -322,26 +586,122 @@ export function AssistantScreen() {
         setError(errorMessage(e));
       }
     });
+    const calendarActivity = NativeAssist?.onCalendarActivity?.(event => {
+      if (
+        !mounted.current ||
+        !foreground.current ||
+        !calendarRequest.current ||
+        calendarRequest.current !== active.current ||
+        calendarActivityEpoch.current !== calendarEpoch.current
+      )
+        return;
+      try {
+        const update = parseCalendarActivity(event.json);
+        if (update.requestId !== calendarRequest.current) return;
+        updateCalendarTransaction(update.requestId, transaction =>
+          reduceCalendarActivity(transaction, update),
+        );
+      } catch {
+        // Untrusted/malformed metadata must neither invent a state nor leak
+        // native payloads. The final validated receipt can still settle a read.
+      }
+    });
+    const toolActivity = NativeAssist?.onToolActivity?.(event => {
+      const request = toolRequest.current;
+      if (
+        !mounted.current ||
+        !request ||
+        request.id !== active.current ||
+        request.epoch !== calendarEpoch.current ||
+        (!foreground.current && !ownedToolInteraction.current)
+      )
+        return;
+      try {
+        const activity = parseDeviceToolActivity(event.json);
+        if (activity.requestId !== request.id) return;
+        const previous = messagesRef.current.find(
+          message =>
+            message.deviceTool?.transaction.id === activity.transaction.id,
+        )?.deviceTool;
+        if (!acceptDeviceToolActivity(previous, activity)) return;
+        if (previous)
+          messagesRef.current = messagesRef.current.map(message =>
+            message.deviceTool?.transaction.id === activity.transaction.id
+              ? { ...message, deviceTool: activity }
+              : message,
+          );
+        else
+          messagesRef.current = [
+            ...messagesRef.current,
+            {
+              role: 'assistant',
+              content: '',
+              displayOnly: true,
+              deviceTool: activity,
+            },
+          ];
+        setMessages(messagesRef.current);
+        ownedToolInteraction.current =
+          activity.transaction.effect === 'interactive' &&
+          activity.transaction.status === 'executing';
+        if (
+          ['awaiting_confirmation', 'awaiting_permission'].includes(
+            activity.transaction.status,
+          )
+        )
+          setToolDecision(activity);
+        else
+          setToolDecision(previousDecision =>
+            previousDecision?.transaction.id === activity.transaction.id
+              ? null
+              : previousDecision,
+          );
+      } catch {
+        // Metadata is not authority. Never expose malformed payloads or create
+        // a confirmation UI from an incomplete/unvalidated model command.
+      }
+    });
     const lifecycle = AppState.addEventListener('change', state => {
-      if (state !== 'active' && active.current) {
+      foreground.current = state === 'active';
+      const interrupts =
+        state === 'background' ||
+        (state !== 'active' && !ownedToolInteraction.current);
+      if (interrupts) calendarEpoch.current += 1;
+      if (interrupts && active.current) {
         cancelGeneration();
       }
+      if (state === 'active' && toolsReady.current) refreshToolOperations();
     });
     return () => {
       mounted.current = false;
+      toolSheetDismissal.current?.resolve(false);
+      toolSheetDismissal.current = null;
+      calendarEpoch.current += 1;
       controller.pause();
       responseSpeech.current?.cancel();
       responseSpeech.current = null;
       subscription?.remove();
+      calendarActivity?.remove();
+      toolActivity?.remove();
       lifecycle.remove();
       if (active.current) {
         NativeAssist?.cancel().catch(() => undefined);
       }
     };
-  }, [cancelGeneration, controller]);
+  }, [
+    cancelGeneration,
+    controller,
+    updateCalendarTransaction,
+    refreshToolOperations,
+  ]);
 
   async function perform(action: () => Promise<void>, fromVoice = false) {
-    if (operation.current || !NativeAssist) {
+    if (
+      operation.current ||
+      cancellationsInFlight.current > 0 ||
+      toolPermissionPending.current ||
+      !NativeAssist
+    ) {
       return;
     }
     operation.current = true;
@@ -377,7 +737,9 @@ export function AssistantScreen() {
       }
       operation.current = false;
       if (mounted.current) {
-        setBusy(false);
+        setBusy(
+          cancellationsInFlight.current > 0 || toolPermissionPending.current,
+        );
       }
     }
   }
@@ -386,20 +748,37 @@ export function AssistantScreen() {
     text = prompt,
     fromVoice = false,
     isCurrent = () => true,
+    calendarToday = false,
   ): Promise<(GenerationResult & { spoken: boolean }) | undefined> {
+    const withDeviceTools = !calendarToday && toolsAvailable && toolsEnabled;
+    const nativeAgent = calendarToday || withDeviceTools;
     if (
       !text.trim() ||
       engine.phase !== 'ready' ||
       (!fromVoice && voice.captureBusy) ||
-      !isCurrent()
+      !isCurrent() ||
+      (withDeviceTools &&
+        (!foreground.current ||
+          typeof NativeAssist?.generateWithTools !== 'function')) ||
+      (calendarToday &&
+        (fromVoice ||
+          !calendarAvailable ||
+          !foreground.current ||
+          typeof NativeAssist?.generateCalendarToday !== 'function'))
     ) {
       return;
     }
     const speechVersion = speechIntent.current;
-    const readThisResponse = fromVoice && readResponsesEnabled.current;
+    const agentVersion = calendarEpoch.current;
+    const calendarCurrent = () =>
+      mounted.current &&
+      foreground.current &&
+      agentVersion === calendarEpoch.current;
+    const readThisResponse =
+      !calendarToday && fromVoice && readResponsesEnabled.current;
     let completed: (GenerationResult & { spoken: boolean }) | undefined;
     await perform(async () => {
-      if (!isCurrent()) return;
+      if (!isCurrent() || (nativeAgent && !calendarCurrent())) return;
       const maxTokens = outputBudget(budget);
       requestPrompt.current = text.trim();
       setShowExample(false);
@@ -411,7 +790,11 @@ export function AssistantScreen() {
         speechVersion === speechIntent.current
           ? requestId
           : null;
-      const history = messagesRef.current;
+      const history: Message[] = nativeAgent
+        ? []
+        : messagesRef.current
+            .filter(message => !message.displayOnly)
+            .map(({ role, content }) => ({ role, content }));
       const last = history.at(-1);
       // Gemma's chat template requires alternating roles. An interrupted user
       // turn followed by a correction is one user message in the model context.
@@ -422,12 +805,41 @@ export function AssistantScreen() {
               { role: 'user', content: `${last.content}\n\n${text.trim()}` },
             ]
           : [...history, { role: 'user', content: text.trim() }];
-      if (fromVoice)
+      if (fromVoice && !withDeviceTools)
         pendingVoiceTurn.current = { id: requestId, messages: conversation };
       active.current = requestId;
+      if (withDeviceTools) {
+        toolRequest.current = { id: requestId, epoch: agentVersion };
+        setToolRunActive(true);
+        messagesRef.current = [
+          ...messagesRef.current,
+          { role: 'user', content: text.trim(), displayOnly: true },
+        ];
+        setMessages(messagesRef.current);
+      }
+      if (calendarToday) {
+        calendarRequest.current = requestId;
+        calendarActivityEpoch.current = agentVersion;
+        messagesRef.current = [
+          ...messagesRef.current,
+          {
+            role: 'user',
+            content: 'Consulte mon calendrier aujourd’hui.',
+            displayOnly: true,
+          },
+          {
+            role: 'assistant',
+            content: '',
+            displayOnly: true,
+            toolTransaction: { id: requestId, status: 'proposed' },
+          },
+        ];
+        setMessages(messagesRef.current);
+        setAgentPhase('consulting');
+      }
       let speechFailed = false;
       const stream: ResponseSpeechStream | null =
-        spokenRequest.current && voice.streamingSupported
+        !nativeAgent && spokenRequest.current && voice.streamingSupported
           ? new ResponseSpeechStream({
               begin: () => voice.beginSpeech(requestId),
               enqueue: chunk => voice.enqueueSpeech(chunk, requestId),
@@ -449,18 +861,48 @@ export function AssistantScreen() {
       setProgress(null);
       setReport(null);
       try {
-        const json = await NativeAssist!.generate(
-          JSON.stringify({
-            requestId,
-            messages: conversation,
-            maxTokens,
-            temperature: 0,
-          }),
-        );
-        const result = parseResult(json);
-        if (result.requestId !== requestId) {
+        const payload = JSON.stringify({
+          ...(nativeAgent ? { schemaVersion: 1 } : {}),
+          requestId,
+          messages: conversation,
+          maxTokens: withDeviceTools
+            ? Math.min(maxTokens ?? 1024, 1024)
+            : maxTokens,
+          temperature: 0,
+        });
+        const json = withDeviceTools
+          ? await NativeAssist!.generateWithTools(payload)
+          : calendarToday
+          ? await NativeAssist!.generateCalendarToday(payload)
+          : await NativeAssist!.generate(payload);
+        if (nativeAgent && !calendarCurrent()) return;
+        const parsedResult = withDeviceTools
+          ? parseDeviceToolResult(json)
+          : calendarToday
+          ? parseCalendarResult(json)
+          : parseResult(json);
+        if (parsedResult.requestId !== requestId) {
           throw new Error('Identité de génération incohérente.');
         }
+        const result = withDeviceTools
+          ? {
+              ...parsedResult,
+              text: deviceToolPublicAnswer(
+                parsedResult.text,
+                messagesRef.current.flatMap(message =>
+                  message.deviceTool?.requestId === requestId
+                    ? [message.deviceTool]
+                    : [],
+                ),
+              ),
+            }
+          : parsedResult;
+        if (calendarToday)
+          updateCalendarTransaction(requestId, transaction =>
+            result.finishReason === 'eos'
+              ? finishCalendarTransaction(transaction, result.agentTrace)
+              : interruptCalendarTransaction(transaction, 'unconfirmed'),
+          );
         if (mounted.current && isCurrent()) {
           setProgress(result);
           setReport(result);
@@ -470,12 +912,21 @@ export function AssistantScreen() {
               ...conversation,
               { role: 'assistant', content: result.text },
             ];
-            messagesRef.current = nextMessages;
+            messagesRef.current = nativeAgent
+              ? [
+                  ...messagesRef.current,
+                  {
+                    role: 'assistant' as const,
+                    content: result.text,
+                    displayOnly: true as const,
+                  },
+                ]
+              : mergeDisplayedConversation(messagesRef.current, nextMessages);
             if (pendingVoiceTurn.current?.id === requestId)
               pendingVoiceTurn.current = null;
-            setMessages(nextMessages);
+            setMessages(messagesRef.current);
             if (fromVoice) controller.progress(result.text);
-            if (!fromVoice) setPrompt('');
+            if (!fromVoice && !calendarToday) setPrompt('');
             setProgress(null);
             if (
               spokenRequest.current === requestId &&
@@ -502,7 +953,51 @@ export function AssistantScreen() {
             };
           }
         }
+      } catch (cause) {
+        if (withDeviceTools) {
+          if (calendarCurrent())
+            throw new Error(
+              'La tâche outils n’a pas été finalisée. Vérifie les reçus et toute action incertaine avant une nouvelle création. Aucun nouvel essai automatique.',
+            );
+          return;
+        }
+        if (!calendarToday) throw cause;
+        if (calendarCurrent()) {
+          const permission =
+            !!cause &&
+            typeof cause === 'object' &&
+            'code' in cause &&
+            cause.code === 'E_PERMISSION';
+          updateCalendarTransaction(requestId, transaction =>
+            interruptCalendarTransaction(
+              transaction,
+              permission ? 'permission' : 'unconfirmed',
+            ),
+          );
+          throw new Error(
+            'La consultation du calendrier n’a pas abouti. Vérifie son autorisation dans les Outils de l’appareil, puis réessaie explicitement. Aucune nouvelle tentative automatique.',
+          );
+        }
       } finally {
+        if (toolRequest.current?.id === requestId) {
+          await refreshToolOperations();
+          settleDeviceToolRequest(requestId, true);
+          toolSheetDismissal.current?.resolve(false);
+          toolSheetDismissal.current = null;
+          toolRequest.current = null;
+          ownedToolInteraction.current = false;
+          if (mounted.current) {
+            setToolRunActive(false);
+            setToolDecision(null);
+          }
+        }
+        if (calendarRequest.current === requestId) {
+          calendarRequest.current = null;
+          if (mounted.current)
+            setAgentPhase(
+              cancellationsInFlight.current > 0 ? 'cancelling' : null,
+            );
+        }
         if (pendingVoiceTurn.current?.id === requestId)
           pendingVoiceTurn.current = null;
         if (responseSpeech.current === stream) {
@@ -582,7 +1077,9 @@ export function AssistantScreen() {
       if (
         controller.isActive() &&
         (state === 'background' ||
-          (state !== 'active' && controller.snapshot().phase !== 'starting'))
+          (state !== 'active' &&
+            !ownedToolInteraction.current &&
+            controller.snapshot().phase !== 'starting'))
       ) {
         controller.pause();
       }
@@ -603,6 +1100,157 @@ export function AssistantScreen() {
     await controller.pause();
     if (mounted.current && controller.snapshot().phase === 'paused')
       openSettings();
+  }
+
+  function restoreDecisionFocus() {
+    scheduleAccessibilityFocus(() =>
+      speechMode ? voiceHeading.current : chatHeading.current,
+    );
+  }
+
+  function toolSheetDidDismiss(transactionId: string) {
+    const pending = toolSheetDismissal.current;
+    if (pending?.id === transactionId) {
+      toolSheetDismissal.current = null;
+      pending.resolve(true);
+    }
+    if (!toolDecision) restoreDecisionFocus();
+  }
+
+  async function confirmDeviceTool() {
+    const decision = toolDecision;
+    if (
+      !decision ||
+      toolDecisionLock.current ||
+      decision.transaction.status !== 'awaiting_confirmation' ||
+      !decision.transaction.confirmationToken ||
+      toolRequest.current?.id !== decision.requestId ||
+      !foreground.current
+    )
+      return;
+    const current = messagesRef.current.find(
+      message => message.deviceTool?.transaction.id === decision.transaction.id,
+    )?.deviceTool;
+    if (
+      !current ||
+      current.transaction.revision !== decision.transaction.revision
+    )
+      return;
+    toolDecisionLock.current = true;
+    setToolDecisionPending(true);
+    ownedToolInteraction.current =
+      decision.transaction.effect === 'interactive';
+    try {
+      if (decision.transaction.effect === 'interactive') {
+        // A UIKit picker must not be presented by the React consent modal and
+        // then dismissed along with it. Wait for the real iOS dismissal ACK,
+        // not a timeout or a React render, before consuming the native token.
+        const dismissed = await new Promise<boolean>(resolve => {
+          toolSheetDismissal.current = { id: decision.transaction.id, resolve };
+          setToolDecision(null);
+        });
+        if (
+          !dismissed ||
+          !mounted.current ||
+          !foreground.current ||
+          toolRequest.current?.id !== decision.requestId ||
+          toolRequest.current.epoch !== calendarEpoch.current
+        )
+          return;
+      }
+      const accepted = parseToolConfirmation(
+        await NativeAssist!.confirmToolAction(
+          decision.transaction.id,
+          decision.transaction.confirmationToken,
+        ),
+      );
+      if (!accepted) throw new Error('Confirmation refusée.');
+      if (mounted.current) {
+        setToolDecision(null);
+        restoreDecisionFocus();
+      }
+    } catch {
+      ownedToolInteraction.current = false;
+      await cancelGeneration();
+      if (mounted.current)
+        setError(
+          'Cette confirmation n’est plus valide. Aucune nouvelle soumission automatique; vérifie les reçus avant de recommencer.',
+        );
+    } finally {
+      toolDecisionLock.current = false;
+      if (mounted.current) setToolDecisionPending(false);
+    }
+  }
+
+  async function requestToolPermission() {
+    const decision = toolDecision;
+    if (
+      !decision ||
+      toolDecisionLock.current ||
+      decision.transaction.status !== 'awaiting_permission' ||
+      !decision.transaction.capability ||
+      !foreground.current ||
+      (active.current && active.current !== decision.requestId)
+    )
+      return;
+    toolDecisionLock.current = true;
+    toolPermissionPending.current = true;
+    setToolDecisionPending(true);
+    setBusy(true);
+    try {
+      if (!(await cancelGeneration())) throw new Error('Arrêt non confirmé.');
+      if (!mounted.current || !foreground.current) return;
+      const permission: unknown = JSON.parse(
+        await NativeAssist!.requestDeviceCapability(
+          decision.transaction.capability,
+        ),
+      );
+      if (
+        !permission ||
+        typeof permission !== 'object' ||
+        !('capability' in permission) ||
+        permission.capability !== decision.transaction.capability ||
+        !('status' in permission) ||
+        ![
+          'authorized',
+          'authorizedAlways',
+          'authorizedWhenInUse',
+          'limited',
+          'provisional',
+          'ephemeral',
+          'writeOnly',
+          'notDetermined',
+          'denied',
+          'restricted',
+          'unavailable',
+        ].includes(String(permission.status))
+      )
+        throw new Error('Permission invalide.');
+      if (mounted.current)
+        setError(
+          'La demande d’accès iOS est terminée. Renvoie ta demande si tu veux effectuer l’action; rien n’a été relancé automatiquement.',
+        );
+    } catch {
+      if (mounted.current)
+        setError(
+          'L’accès iOS n’a pas pu être vérifié. Aucune action n’a été relancée.',
+        );
+    } finally {
+      toolPermissionPending.current = false;
+      toolDecisionLock.current = false;
+      if (mounted.current) {
+        setToolDecision(null);
+        setToolDecisionPending(false);
+        setBusy(operation.current || cancellationsInFlight.current > 0);
+        restoreDecisionFocus();
+      }
+    }
+  }
+
+  async function dismissToolDecision() {
+    if (toolDecisionLock.current) return;
+    await cancelGeneration();
+    if (mounted.current) restoreDecisionFocus();
   }
 
   function changeSpokenReplies(value: boolean) {
@@ -636,7 +1284,13 @@ export function AssistantScreen() {
   const phaseLabel = !NativeAssist
     ? 'Moteur indisponible'
     : busy
-    ? active.current
+    ? toolRunActive
+      ? 'Tâche outils en cours…'
+      : agentPhase
+      ? agentPhase === 'consulting'
+        ? 'Consultation du calendrier…'
+        : 'Annulation de la consultation…'
+      : active.current
       ? 'Réponse en cours'
       : 'Opération en cours'
     : ready
@@ -685,6 +1339,8 @@ export function AssistantScreen() {
   const generating = busy && active.current !== null;
   const cannotSend =
     busy || voice.captureBusy || !ready || !prompt.trim() || !!budgetError;
+  const cannotReadCalendar =
+    !calendarAvailable || busy || voice.captureBusy || !ready || !!budgetError;
   const cannotStartVoice =
     !voice.supported ||
     busy ||
@@ -692,7 +1348,10 @@ export function AssistantScreen() {
     !!budgetError ||
     !preferences.ready ||
     !voice.status?.recognitionAvailable;
-  const pendingUserText = progress || generating ? requestPrompt.current : '';
+  const pendingUserText =
+    !agentPhase && !toolRunActive && (progress || generating)
+      ? requestPrompt.current
+      : '';
   const screenTitle =
     speechMode && tab === 'chat'
       ? 'Mode vocal'
@@ -852,6 +1511,12 @@ export function AssistantScreen() {
             {error}
           </Text>
         )}
+        {toolOperations.some(item => item.status === 'outcome_unknown') && (
+          <Text role="alert" style={styles.error}>
+            Une action antérieure reste à vérifier dans l’app concernée. Ne la
+            recrée pas automatiquement.
+          </Text>
+        )}
         <View role="region" aria-label={screenTitle} style={styles.workspace}>
           {tab === 'chat' && speechMode && (
             <VoiceConversationScreen
@@ -912,40 +1577,67 @@ export function AssistantScreen() {
                       onConfigure={() => openModel('chat')}
                     />
                   ))}
-                {messages.map((message, index) => (
-                  <View
-                    key={index}
-                    style={[
-                      styles.messageRow,
-                      message.role === 'user' && styles.userRow,
-                    ]}
-                  >
-                    {message.role === 'assistant' && (
-                      <AssistantMark size={28} />
-                    )}
+                {messages.map((message, index) =>
+                  message.deviceTool ? (
+                    <DeviceToolCard
+                      key={message.deviceTool.transaction.id}
+                      transaction={message.deviceTool.transaction}
+                      onReview={
+                        message.deviceTool.requestId ===
+                          toolRequest.current?.id ||
+                        (!busy &&
+                          message.deviceTool.transaction.status ===
+                            'awaiting_permission')
+                          ? () => setToolDecision(message.deviceTool!)
+                          : undefined
+                      }
+                    />
+                  ) : message.toolTransaction ? (
+                    <ToolCallCard
+                      key={message.toolTransaction.id}
+                      transaction={message.toolTransaction}
+                      onCancel={
+                        message.toolTransaction.id === calendarRequest.current
+                          ? cancelGeneration
+                          : undefined
+                      }
+                      onPermission={!busy ? () => openSettings() : undefined}
+                    />
+                  ) : (
                     <View
+                      key={index}
                       style={[
-                        styles.bubble,
-                        message.role === 'user'
-                          ? styles.userBubble
-                          : styles.assistantBubble,
+                        styles.messageRow,
+                        message.role === 'user' && styles.userRow,
                       ]}
                     >
                       {message.role === 'assistant' && (
-                        <Text style={styles.messageAuthor}>ASSIST</Text>
+                        <AssistantMark size={28} />
                       )}
-                      <Text
-                        selectable
+                      <View
                         style={[
-                          styles.body,
-                          message.role === 'user' && styles.userText,
+                          styles.bubble,
+                          message.role === 'user'
+                            ? styles.userBubble
+                            : styles.assistantBubble,
                         ]}
                       >
-                        {message.content}
-                      </Text>
+                        {message.role === 'assistant' && (
+                          <Text style={styles.messageAuthor}>ASSIST</Text>
+                        )}
+                        <Text
+                          selectable
+                          style={[
+                            styles.body,
+                            message.role === 'user' && styles.userText,
+                          ]}
+                        >
+                          {message.content}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
-                ))}
+                  ),
+                )}
                 {!!pendingUserText && (
                   <View style={[styles.messageRow, styles.userRow]}>
                     <View style={[styles.bubble, styles.userBubble]}>
@@ -984,17 +1676,20 @@ export function AssistantScreen() {
                     </View>
                   </View>
                 )}
-                {generating && !progress && (
+                {generating && !progress && !agentPhase && (
                   <View style={styles.messageRow}>
                     <AssistantMark size={28} />
                     <Text accessibilityLiveRegion="polite" style={styles.muted}>
-                      Préparation de la réponse…
+                      {toolRunActive
+                        ? 'Préparation de la tâche outils…'
+                        : 'Préparation de la réponse…'}
                     </Text>
                   </View>
                 )}
                 {(report || progress) && (
                   <Disclosure title="Détails de la réponse">
                     <Text style={styles.metrics}>
+                      {report?.agentTrace ? 'Dernière passe du modèle · ' : ''}
                       {(report || progress)!.promptTokens} jetons d’entrée ·{' '}
                       {(report || progress)!.generatedTokens} en sortie ·{' '}
                       {((report || progress)!.elapsedMs / 1000).toFixed(2)} s
@@ -1003,29 +1698,81 @@ export function AssistantScreen() {
                 )}
               </ScrollView>
               <View style={styles.composerArea}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Mode vocal"
-                  accessibilityHint="Ouvre une conversation locale avec écoute et envoi automatiques."
-                  accessibilityState={{ disabled: cannotStartVoice }}
-                  disabled={cannotStartVoice}
-                  onPress={() => {
-                    Keyboard.dismiss();
-                    setSpeechMode(true);
-                  }}
-                  style={({ pressed }) => [
-                    styles.voiceEntry,
-                    cannotStartVoice && styles.disabled,
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <InterfaceIcon
-                    name="voice"
-                    size={20}
-                    color={theme.colors.muted}
-                  />
-                  <Text style={styles.voiceEntryLabel}>Mode vocal</Text>
-                </Pressable>
+                <View style={styles.composerTools}>
+                  <Pressable
+                    accessibilityRole="switch"
+                    accessibilityLabel="Outils iOS dans la conversation"
+                    accessibilityHint="Chaque accès et chaque modification demandera un accord tactile. Aucun accès privé sur une transcription partielle."
+                    accessibilityState={{
+                      checked: toolsEnabled,
+                      disabled: !toolsAvailable || busy || voice.captureBusy,
+                    }}
+                    disabled={!toolsAvailable || busy || voice.captureBusy}
+                    onPress={() => setToolsEnabled(value => !value)}
+                    style={({ pressed }) => [
+                      styles.toolEntry,
+                      (!toolsAvailable || busy) && styles.disabled,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={styles.voiceEntryLabel}>
+                      {toolsEnabled
+                        ? 'Outils iOS activés'
+                        : 'Outils iOS désactivés'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Consulter mon calendrier aujourd’hui"
+                    accessibilityHint={
+                      calendarAvailable
+                        ? 'Lecture locale, aujourd’hui seulement, cinq événements maximum. Ne demande pas d’autorisation automatiquement.'
+                        : 'Cette consultation nécessite le moteur local et un runtime natif compatible.'
+                    }
+                    accessibilityState={{ disabled: cannotReadCalendar }}
+                    disabled={cannotReadCalendar}
+                    onPress={() =>
+                      send(calendarTodayPrompt, false, () => true, true)
+                    }
+                    style={({ pressed }) => [
+                      styles.toolEntry,
+                      cannotReadCalendar && styles.disabled,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <InterfaceIcon
+                      name="calendar"
+                      size={20}
+                      color={theme.colors.muted}
+                    />
+                    <Text style={styles.voiceEntryLabel}>
+                      Calendrier aujourd’hui
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Mode vocal"
+                    accessibilityHint="Ouvre une conversation locale avec écoute et envoi automatiques."
+                    accessibilityState={{ disabled: cannotStartVoice }}
+                    disabled={cannotStartVoice}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      setSpeechMode(true);
+                    }}
+                    style={({ pressed }) => [
+                      styles.voiceEntry,
+                      cannotStartVoice && styles.disabled,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <InterfaceIcon
+                      name="voice"
+                      size={20}
+                      color={theme.colors.muted}
+                    />
+                    <Text style={styles.voiceEntryLabel}>Mode vocal</Text>
+                  </Pressable>
+                </View>
                 <View style={styles.composerRow}>
                   <View style={styles.composer}>
                     <TextInput
@@ -1291,6 +2038,14 @@ export function AssistantScreen() {
           )}
         </View>
       </KeyboardAvoidingView>
+      <DeviceToolDecisionSheet
+        transaction={toolDecision?.transaction ?? null}
+        pending={toolDecisionPending}
+        onConfirm={confirmDeviceTool}
+        onCancel={dismissToolDecision}
+        onPermission={requestToolPermission}
+        onDismiss={toolSheetDidDismiss}
+      />
       <AppearancePicker
         open={showAppearance}
         onClose={() => {
@@ -1437,6 +2192,22 @@ const createStyles = (theme: AssistTheme) =>
     },
 
     composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+    composerTools: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: uiGrammar.harmony.space.small,
+    },
+    toolEntry: {
+      minHeight: uiGrammar.touchTarget,
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 1,
+      gap: uiGrammar.harmony.space.small,
+      paddingHorizontal: uiGrammar.harmony.space.small,
+      borderRadius: uiGrammar.radius.control,
+    },
     voiceEntry: {
       minHeight: uiGrammar.touchTarget,
       alignSelf: 'flex-end',

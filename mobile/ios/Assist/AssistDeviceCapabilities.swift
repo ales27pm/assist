@@ -3,12 +3,73 @@ import Contacts
 import CoreLocation
 import EventKit
 import Foundation
+import ImageIO
 import LocalAuthentication
 import Photos
 import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
 import UserNotifications
+import Vision
+
+/// A native-owned EventKit destination captured before a tool preview. The
+/// identifier is used for the eventual explicit save; the title is transient
+/// preview data and must never be persisted in a transaction journal.
+struct AssistDeviceCalendarDestination: Sendable {
+    let identifier: String
+    let title: String
+}
+
+/// OCR is deliberately a compact, non-authoritative observation. It is created
+/// only for the one image selected in the current tool interaction and never
+/// carries the image, a file URL, or a Vision framework error across the bridge.
+private struct AssistDeviceOCRSummary: Sendable {
+    let status: String
+    let text: String?
+    let lines: Int
+    let truncated: Bool
+}
+
+/// Owns the one Vision request that is currently executing for a tool image.
+/// `VNRequest.cancel()` is the framework's supported cancellation entry point.
+/// This deliberately narrow `@unchecked Sendable` boundary is safe because the
+/// request is never returned or shared with other code, every access here is
+/// serialized by `lock`, and the worker keeps its own strong reference until
+/// `perform` returns. It exists solely so cancellation can reach Vision while
+/// the worker is blocked in its synchronous framework call.
+private final class AssistVisionRequestGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: VNRecognizeTextRequest?
+    private var cancelled = false
+
+    /// Registers before `perform`. A cancellation that wins this race prevents
+    /// the request from beginning at all.
+    func install(_ request: VNRecognizeTextRequest) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !cancelled, self.request == nil else { return false }
+        self.request = request
+        return true
+    }
+
+    /// Releases the extra ownership after the worker has returned from Vision.
+    func clear() {
+        lock.lock()
+        request = nil
+        lock.unlock()
+    }
+
+    /// This is idempotent and may run before registration. It first removes
+    /// the gate's ownership, then invokes Vision's documented cancellation API.
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let request = self.request
+        self.request = nil
+        lock.unlock()
+        request?.cancel()
+    }
+}
 
 /// A user-invoked iOS capability gateway. It deliberately does not persist or
 /// transmit personal data: callers receive only the result requested for the
@@ -35,6 +96,18 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
     private var attachmentCompletion: Completion?
     private var attachmentAuthorizationPending = false
     private var pendingCameraCaptureCompletion: Completion?
+    private var pendingCameraCaptureOCR = false
+    private var pendingCameraCaptureToken: UUID?
+    private var attachmentOCRRequested = false
+    private var attachmentOCRTask: Task<Void, Never>?
+    private var attachmentOCRToken: UUID?
+    private var attachmentOCRRequestGate: AssistVisionRequestGate?
+    /// Every system picker/camera presentation receives a fresh identity. A
+    /// delayed provider completion can therefore never consume a newer tool's
+    /// completion or OCR mode after cancellation/re-presentation.
+    private var attachmentGeneration: UUID?
+    private var activeBiometricContext: LAContext?
+    private var activeBiometricToken: UUID?
     private weak var attachmentPicker: UIViewController?
     private var generatedAttachmentURLs = Set<URL>()
 
@@ -43,6 +116,12 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
     private static let temporaryAttachmentDirectory = "AssistAttachments"
     private static let maximumAttachmentDimension: CGFloat = 2_048
     private static let maximumAttachmentBytes = 10 * 1024 * 1024
+    /// Metadata is inspected before `UIImage(data:)` so a small compressed
+    /// image cannot trigger an unbounded bitmap decode in the app process.
+    private static let maximumInputImageDimension = 4_096
+    private static let maximumInputImagePixels = 16 * 1_024 * 1_024
+    private nonisolated static let maximumOCRTextBytes = 8 * 1024
+    private nonisolated static let maximumOCRLines = 40
 
     // MARK: Permission discovery and requests
 
@@ -149,6 +228,96 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
     }
 
     // MARK: Calendar and reminders
+
+    /// Dedicated read-only seam for one native-owned user-turn scope. It never
+    /// requests permission or promotes a model-provided period into authority.
+    func readCalendarForAgent(
+        scope: AssistAgentCalendarScope, admission: AssistAgentAdmission
+    ) async throws -> AssistAgentCalendarObservation {
+        try admission.check()
+        try Task.checkCancellation()
+        guard !invalidated else { throw Self.error("E_INVALIDATED", "Le module a été fermé.") }
+        guard UIApplication.shared.applicationState == .active else {
+            throw Self.error("E_CANCELLED", "La lecture du calendrier nécessite l’app au premier plan.")
+        }
+        _ = try scope.validatedInterval()
+        guard Self.calendarAuthorized else { throw Self.permissionError("calendar") }
+        let json: String = try await withCheckedThrowingContinuation { continuation in
+            listCalendarEvents("", startISO: scope.startISO, endISO: scope.endISO, limit: "5") { value, error in
+                if let error { continuation.resume(throwing: error) }
+                else if let value { continuation.resume(returning: value) }
+                else { continuation.resume(throwing: AssistAgentCalendarFailure.invalidResult) }
+            }
+        }
+        try Task.checkCancellation()
+        try admission.check()
+        guard !invalidated else { throw Self.error("E_INVALIDATED", "Le module a été fermé.") }
+        guard UIApplication.shared.applicationState == .active else {
+            throw Self.error("E_CANCELLED", "La lecture du calendrier a été interrompue.")
+        }
+        guard Self.calendarAuthorized else { throw Self.permissionError("calendar") }
+        return try AssistAgentCalendarObservation.validated(json: json, scope: scope)
+    }
+
+    /// Reads the current OS permission state without creating a prompt. The
+    /// transaction coordinator calls this before it creates a confirmation
+    /// token, so a model call can never turn into an implicit consent request.
+    func toolPermissionStatus(for capability: String) async -> String {
+        switch capability {
+        case "contacts":
+            return Self.contactsState(CNContactStore.authorizationStatus(for: .contacts))
+        case "calendar":
+            return Self.eventState(EKEventStore.authorizationStatus(for: .event))
+        case "reminders":
+            return Self.eventState(EKEventStore.authorizationStatus(for: .reminder))
+        case "location":
+            return Self.locationState(CLLocationManager().authorizationStatus)
+        case "camera":
+            return Self.cameraState(AVCaptureDevice.authorizationStatus(for: .video))
+        case "notifications":
+            let settings = await notificationCenter.notificationSettings()
+            return Self.notificationState(settings.authorizationStatus)
+        case "biometrics":
+            return (Self.biometricStatus()["available"] as? Bool) == true ? "available" : "unavailable"
+        case "none":
+            return "notRequired"
+        default:
+            return "unsupported"
+        }
+    }
+
+    /// Resolves a modifiable EventKit destination once, before confirmation.
+    /// Later execution must use this exact identifier rather than asking
+    /// EventKit for a potentially changed default calendar or reminder list.
+    func captureCalendarDestination(
+        calendarIdentifier: String?, forReminders: Bool
+    ) throws -> AssistDeviceCalendarDestination {
+        let authorized = forReminders ? Self.remindersAuthorized : Self.calendarAuthorized
+        guard authorized else {
+            throw Self.permissionError(forReminders ? "reminders" : "calendar")
+        }
+        let requested = calendarIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let calendar: EKCalendar?
+        if let requested, !requested.isEmpty {
+            calendar = events.calendar(withIdentifier: requested)
+        } else if forReminders {
+            calendar = events.defaultCalendarForNewReminders()
+        } else {
+            calendar = events.defaultCalendarForNewEvents
+        }
+        guard let calendar, calendar.allowsContentModifications else {
+            throw Self.error(
+                "E_CALENDAR",
+                forReminders
+                    ? "Aucune liste de rappels modifiable n’est disponible."
+                    : "Aucun calendrier modifiable n’est disponible."
+            )
+        }
+        return AssistDeviceCalendarDestination(
+            identifier: calendar.calendarIdentifier,
+            title: calendar.title
+        )
+    }
 
     @objc(listCalendarEvents:startISO:endISO:limit:completion:)
     func listCalendarEvents(_ calendarIdentifier: String, startISO: String, endISO: String,
@@ -389,6 +558,16 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
     /// temporary app-private file.
     @objc(selectPhoto:)
     func selectPhoto(_ completion: @escaping Completion) {
+        beginPhotoSelection(completion, recognizesText: false)
+    }
+
+    /// Tool-only variant: Vision reads text locally from the one image chosen
+    /// in this system picker. It never requests broad library access.
+    func selectPhotoForToolOCR(_ completion: @escaping Completion) {
+        beginPhotoSelection(completion, recognizesText: true)
+    }
+
+    private func beginPhotoSelection(_ completion: @escaping Completion, recognizesText: Bool) {
         guard !invalidated else {
             completion(nil, Self.error("E_INVALIDATED", "Le module a été fermé."))
             return
@@ -407,7 +586,9 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
         configuration.preferredAssetRepresentationMode = .current
         let picker = PHPickerViewController(configuration: configuration)
         picker.delegate = self
+        attachmentOCRRequested = recognizesText
         attachmentCompletion = completion
+        attachmentGeneration = UUID()
         attachmentPicker = picker
         presenter.present(picker, animated: true)
     }
@@ -416,6 +597,16 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
     /// image. Video recording is intentionally not exposed.
     @objc(capturePhoto:)
     func capturePhoto(_ completion: @escaping Completion) {
+        beginCameraCapture(completion, recognizesText: false)
+    }
+
+    /// Tool-only camera variant. The broker preflights authorization, so this
+    /// path never turns OCR into an implicit permission request.
+    func capturePhotoForToolOCR(_ completion: @escaping Completion) {
+        beginCameraCapture(completion, recognizesText: true)
+    }
+
+    private func beginCameraCapture(_ completion: @escaping Completion, recognizesText: Bool) {
         guard !invalidated else {
             completion(nil, Self.error("E_INVALIDATED", "Le module a été fermé."))
             return
@@ -426,21 +617,35 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
         }
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
-            presentCamera(completion)
+            presentCamera(completion, recognizesText: recognizesText)
         case .notDetermined:
+            // The broker preflights tool permission before it mints a
+            // confirmation token. If this changes before execution, fail
+            // closed rather than presenting an unexpected system prompt.
+            guard !recognizesText else {
+                completion(nil, Self.permissionError("camera"))
+                return
+            }
+            let token = UUID()
             attachmentAuthorizationPending = true
             pendingCameraCaptureCompletion = completion
+            pendingCameraCaptureOCR = recognizesText
+            pendingCameraCaptureToken = token
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    guard self.pendingCameraCaptureToken == token else { return }
                     self.attachmentAuthorizationPending = false
                     guard let pendingCompletion = self.pendingCameraCaptureCompletion else { return }
                     self.pendingCameraCaptureCompletion = nil
+                    let pendingOCR = self.pendingCameraCaptureOCR
+                    self.pendingCameraCaptureOCR = false
+                    self.pendingCameraCaptureToken = nil
                     guard !self.invalidated else {
                         pendingCompletion(nil, Self.error("E_CANCELLED", "La capture d’image a été fermée."))
                         return
                     }
-                    if granted { self.presentCamera(pendingCompletion) }
+                    if granted { self.presentCamera(pendingCompletion, recognizesText: pendingOCR) }
                     else { pendingCompletion(nil, Self.permissionError("camera")) }
                 }
             }
@@ -452,7 +657,8 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-        guard let attachmentPicker, picker === attachmentPicker else { return }
+        guard let attachmentPicker, picker === attachmentPicker,
+              let generation = attachmentGeneration, attachmentCompletion != nil else { return }
         picker.dismiss(animated: true)
         guard let result = results.first else {
             finishAttachment(nil, Self.error("E_CANCELLED", "Sélection d’image annulée."))
@@ -469,10 +675,23 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
         result.itemProvider.loadDataRepresentation(forTypeIdentifier: imageType.identifier) { [weak self] data, error in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                guard !self.invalidated else { return }
+                guard !self.invalidated, self.attachmentGeneration == generation,
+                      self.attachmentCompletion != nil else { return }
                 if let error {
                     self.finishAttachment(nil, Self.error("E_ATTACHMENT", "Impossible de lire cette image.", underlying: error))
-                } else if let data, let image = UIImage(data: data) {
+                } else if let data {
+                    guard data.count <= Self.maximumAttachmentBytes else {
+                        self.finishAttachment(nil, Self.error("E_ATTACHMENT_SIZE", "L’image sélectionnée dépasse 10 Mo."))
+                        return
+                    }
+                    guard Self.imageDataIsWithinInputBounds(data) else {
+                        self.finishAttachment(nil, Self.error("E_ATTACHMENT_SIZE", "Les dimensions de l’image sélectionnée sont trop grandes."))
+                        return
+                    }
+                    guard let image = UIImage(data: data) else {
+                        self.finishAttachment(nil, Self.error("E_ATTACHMENT", "Cette sélection ne contient pas une image lisible."))
+                        return
+                    }
                     self.storeImage(image, source: "photoLibrary")
                 } else {
                     self.finishAttachment(nil, Self.error("E_ATTACHMENT", "Cette sélection ne contient pas une image lisible."))
@@ -482,14 +701,16 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        guard let attachmentPicker, picker === attachmentPicker else { return }
+        guard let attachmentPicker, picker === attachmentPicker,
+              attachmentGeneration != nil, attachmentCompletion != nil else { return }
         picker.dismiss(animated: true)
         finishAttachment(nil, Self.error("E_CANCELLED", "Capture d’image annulée."))
     }
 
     func imagePickerController(_ picker: UIImagePickerController,
                                didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-        guard let attachmentPicker, picker === attachmentPicker else { return }
+        guard let attachmentPicker, picker === attachmentPicker,
+              attachmentGeneration != nil, attachmentCompletion != nil else { return }
         picker.dismiss(animated: true)
         guard let image = info[.originalImage] as? UIImage else {
             finishAttachment(nil, Self.error("E_ATTACHMENT", "La caméra n’a pas retourné d’image."))
@@ -546,6 +767,7 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
             return
         }
         let context = LAContext()
+        let token = UUID()
         context.localizedCancelTitle = "Annuler"
         context.localizedFallbackTitle = ""
         var statusError: NSError?
@@ -553,8 +775,13 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
             completion(nil, Self.error("E_BIOMETRIC_UNAVAILABLE", "L’authentification biométrique n’est pas disponible.", underlying: statusError))
             return
         }
+        activeBiometricContext = context
+        activeBiometricToken = token
         context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, error in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
+                guard let self, self.activeBiometricToken == token else { return }
+                self.activeBiometricContext = nil
+                self.activeBiometricToken = nil
                 if success {
                     completion(Self.encode(["authenticated": true]), nil)
                 } else {
@@ -575,6 +802,33 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
         completion(Self.encode(["feature": feature, "boundary": boundary]), nil)
     }
 
+    /// Stops only an interaction owned by the tool broker. A late picker,
+    /// Vision, or Face ID callback finds its token/completion cleared and is
+    /// ignored; it cannot resume a cancelled tool request a second time.
+    func cancelToolInteraction() {
+        attachmentOCRRequestGate?.cancel()
+        attachmentOCRRequestGate = nil
+        attachmentOCRToken = nil
+        attachmentOCRTask?.cancel()
+        attachmentOCRTask = nil
+        attachmentOCRRequested = false
+        attachmentGeneration = nil
+        attachmentPicker?.dismiss(animated: false)
+        attachmentPicker = nil
+        attachmentAuthorizationPending = false
+        pendingCameraCaptureOCR = false
+        pendingCameraCaptureToken = nil
+        if let completion = pendingCameraCaptureCompletion {
+            pendingCameraCaptureCompletion = nil
+            completion(nil, Self.error("E_CANCELLED", "La capture d’image a été annulée."))
+        } else if attachmentCompletion != nil {
+            finishAttachment(nil, Self.error("E_CANCELLED", "La sélection d’image a été annulée."))
+        }
+        activeBiometricToken = nil
+        activeBiometricContext?.invalidate()
+        activeBiometricContext = nil
+    }
+
     @objc func invalidate() {
         invalidated = true
         locationTimeout?.cancel()
@@ -588,17 +842,7 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
             locationPermissionCompletion = nil
             completion(nil, Self.error("E_CANCELLED", "La demande d’autorisation a été fermée."))
         }
-        attachmentPicker?.dismiss(animated: false)
-        attachmentAuthorizationPending = false
-        if let completion = pendingCameraCaptureCompletion {
-            pendingCameraCaptureCompletion = nil
-            completion(nil, Self.error("E_CANCELLED", "La capture d’image a été fermée."))
-        }
-        if let completion = attachmentCompletion {
-            attachmentCompletion = nil
-            completion(nil, Self.error("E_CANCELLED", "La sélection d’image a été fermée."))
-        }
-        attachmentPicker = nil
+        cancelToolInteraction()
         for url in generatedAttachmentURLs {
             try? FileManager.default.removeItem(at: url)
         }
@@ -738,7 +982,7 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
         completion?(result, error)
     }
 
-    private func presentCamera(_ completion: @escaping Completion) {
+    private func presentCamera(_ completion: @escaping Completion, recognizesText: Bool) {
         guard !invalidated else {
             completion(nil, Self.error("E_CANCELLED", "La capture d’image a été fermée."))
             return
@@ -756,19 +1000,26 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
         picker.mediaTypes = [UTType.image.identifier]
         picker.cameraCaptureMode = .photo
         picker.delegate = self
+        attachmentOCRRequested = recognizesText
         attachmentCompletion = completion
+        attachmentGeneration = UUID()
         attachmentPicker = picker
         presenter.present(picker, animated: true)
     }
 
     private func storeImage(_ image: UIImage, source: String) {
-        guard let attachment = Self.downscaledImage(image),
+        guard Self.imageIsWithinInputBounds(image),
+              let attachment = Self.downscaledImage(image),
               let data = attachment.jpegData(compressionQuality: 0.85) else {
             finishAttachment(nil, Self.error("E_ATTACHMENT", "Impossible de préparer cette image."))
             return
         }
         guard data.count <= Self.maximumAttachmentBytes else {
             finishAttachment(nil, Self.error("E_ATTACHMENT_SIZE", "L’image sélectionnée dépasse 10 Mo après compression."))
+            return
+        }
+        if attachmentOCRRequested {
+            recognizeToolText(data: data, orientation: attachment.imageOrientation, source: source)
             return
         }
         do {
@@ -789,7 +1040,157 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
         }
     }
 
+    /// Vision is run from bounded JPEG data, not from a UIImage or a file URL,
+    /// so UIKit never crosses the task boundary and the selected image is not
+    /// retained after this one recognition completes.
+    private func recognizeToolText(data: Data, orientation: UIImage.Orientation, source: String) {
+        let token = UUID()
+        let requestGate = AssistVisionRequestGate()
+        attachmentOCRToken = token
+        attachmentOCRRequestGate = requestGate
+        let orientationRaw = Self.cgImageOrientation(for: orientation).rawValue
+        attachmentOCRTask = Task { @concurrent [weak self, data, source, token, orientationRaw, requestGate] in
+            let summary = Self.recognizeTextLocally(
+                data: data, orientationRaw: orientationRaw, requestGate: requestGate
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run { [weak self] in
+                guard let self, !self.invalidated, self.attachmentOCRToken == token,
+                      self.attachmentCompletion != nil else { return }
+                self.attachmentOCRTask = nil
+                self.attachmentOCRToken = nil
+                self.attachmentOCRRequestGate = nil
+                var response: [String: Any] = [
+                    "source": source,
+                    "byteCount": data.count,
+                    "visionAvailable": true,
+                    "ocrStatus": summary.status,
+                    "ocrLines": summary.lines,
+                    "ocrTruncated": summary.truncated,
+                    // OCR is untrusted extracted text, never an authority or
+                    // an instruction. The broker labels it the same way.
+                    "ocrReliable": false,
+                ]
+                if let text = summary.text { response["ocrText"] = text }
+                self.finishAttachment(Self.encode(response), nil)
+            }
+        }
+    }
+
+    nonisolated private static func recognizeTextLocally(
+        data: Data, orientationRaw: UInt32, requestGate: AssistVisionRequestGate
+    ) -> AssistDeviceOCRSummary {
+        do {
+            guard let orientation = CGImagePropertyOrientation(rawValue: orientationRaw) else {
+                return AssistDeviceOCRSummary(status: "failed", text: nil, lines: 0, truncated: false)
+            }
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            let preferredLanguages = ["fr-CA", "fr-FR", "en-CA"]
+            if let supported = try? request.supportedRecognitionLanguages() {
+                let selected = preferredLanguages.filter(supported.contains)
+                if selected.isEmpty {
+                    request.automaticallyDetectsLanguage = true
+                } else {
+                    request.recognitionLanguages = selected
+                }
+            } else {
+                request.automaticallyDetectsLanguage = true
+            }
+
+            let handler = VNImageRequestHandler(data: data, orientation: orientation, options: [:])
+            guard requestGate.install(request) else {
+                return AssistDeviceOCRSummary(status: "failed", text: nil, lines: 0, truncated: false)
+            }
+            defer { requestGate.clear() }
+            guard !Task.isCancelled else {
+                request.cancel()
+                return AssistDeviceOCRSummary(status: "failed", text: nil, lines: 0, truncated: false)
+            }
+            try handler.perform([request])
+            var lines: [String] = []
+            var bytes = 0
+            var truncated = false
+            for observation in request.results ?? [] {
+                guard !Task.isCancelled else {
+                    return AssistDeviceOCRSummary(status: "failed", text: nil, lines: 0, truncated: false)
+                }
+                guard let candidate = observation.topCandidates(1).first?.string else { continue }
+                let line = candidate.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                guard !line.isEmpty else { continue }
+                if lines.count >= maximumOCRLines {
+                    truncated = true
+                    break
+                }
+                let separatorBytes = lines.isEmpty ? 0 : 1
+                let available = maximumOCRTextBytes - bytes - separatorBytes
+                guard available > 0 else {
+                    truncated = true
+                    break
+                }
+                if line.utf8.count > available {
+                    let prefix = prefixUTF8(line, maximumBytes: available)
+                    guard !prefix.isEmpty else {
+                        return AssistDeviceOCRSummary(status: "failed", text: nil, lines: 0, truncated: false)
+                    }
+                    lines.append(prefix)
+                    truncated = true
+                    break
+                }
+                lines.append(line)
+                bytes += separatorBytes + line.utf8.count
+            }
+            guard !lines.isEmpty else {
+                return AssistDeviceOCRSummary(status: "no_text", text: nil, lines: 0, truncated: false)
+            }
+            let text = lines.joined(separator: "\n")
+            // Tool delimiters and control characters must not turn OCR output
+            // into a protocol instruction; surface a bounded safe failure.
+            guard (try? AssistToolContent.validate(text)) != nil else {
+                return AssistDeviceOCRSummary(status: "failed", text: nil, lines: 0, truncated: false)
+            }
+            return AssistDeviceOCRSummary(status: "text", text: text, lines: lines.count, truncated: truncated)
+        } catch {
+            return AssistDeviceOCRSummary(status: "failed", text: nil, lines: 0, truncated: false)
+        }
+    }
+
+    nonisolated private static func prefixUTF8(_ text: String, maximumBytes: Int) -> String {
+        var result = ""
+        var bytes = 0
+        for character in text {
+            let value = String(character)
+            let next = value.utf8.count
+            guard bytes + next <= maximumBytes else { break }
+            result.append(character)
+            bytes += next
+        }
+        return result
+    }
+
+    private static func cgImageOrientation(for orientation: UIImage.Orientation) -> CGImagePropertyOrientation {
+        switch orientation {
+        case .up: .up
+        case .upMirrored: .upMirrored
+        case .down: .down
+        case .downMirrored: .downMirrored
+        case .left: .left
+        case .leftMirrored: .leftMirrored
+        case .right: .right
+        case .rightMirrored: .rightMirrored
+        @unknown default: .up
+        }
+    }
+
     private func finishAttachment(_ result: String?, _ error: NSError?) {
+        attachmentOCRRequestGate?.cancel()
+        attachmentOCRRequestGate = nil
+        attachmentOCRTask?.cancel()
+        attachmentOCRTask = nil
+        attachmentOCRToken = nil
+        attachmentOCRRequested = false
+        attachmentGeneration = nil
         let completion = attachmentCompletion
         attachmentCompletion = nil
         attachmentPicker = nil
@@ -1046,6 +1447,33 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
     private static func optionalString(_ value: Any?, maxLength: Int) -> String? {
         guard let raw = value as? String else { return nil }
         return raw.utf8.count <= maxLength ? raw : nil
+    }
+
+    private static func imageDataIsWithinInputBounds(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
+            return false
+        }
+        return imageDimensionsAreWithinBounds(width.intValue, height.intValue)
+    }
+
+    private static func imageIsWithinInputBounds(_ image: UIImage) -> Bool {
+        if let cgImage = image.cgImage {
+            return imageDimensionsAreWithinBounds(cgImage.width, cgImage.height)
+        }
+        let width = (image.size.width * image.scale).rounded()
+        let height = (image.size.height * image.scale).rounded()
+        guard width.isFinite, height.isFinite,
+              width <= CGFloat(Int.max), height <= CGFloat(Int.max) else { return false }
+        return imageDimensionsAreWithinBounds(Int(width), Int(height))
+    }
+
+    private static func imageDimensionsAreWithinBounds(_ width: Int, _ height: Int) -> Bool {
+        guard width > 0, height > 0,
+              width <= maximumInputImageDimension, height <= maximumInputImageDimension else { return false }
+        return width <= maximumInputImagePixels / height
     }
 
     private static func downscaledImage(_ image: UIImage) -> UIImage? {

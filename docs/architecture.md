@@ -4,7 +4,7 @@
 
 | Couche | Responsabilité | Ce qu’elle ne prouve pas |
 | --- | --- | --- |
-| React Native 0.87.1 / TypeScript | Écran de qualification, requêtes et affichage des résultats | Réussite de l’inférence native |
+| React Native 0.88.0 / TypeScript | Écran de qualification, requêtes et affichage des résultats | Réussite de l’inférence native |
 | TurboModule iOS généré par Codegen | Contrat typé entre JavaScript et le moteur Swift | Compatibilité d’un export arbitraire |
 | Swift / Core AI | Chargement local, génération, annulation, déchargement et mesures | Exécution intégrale sur l’ANE |
 | Ressources Gemma importées | Graphe `.aimodel`, tokenizer, métadonnées, embeddings PLE | Provenance des poids par leur seul nom |
@@ -43,6 +43,15 @@ Les outils futurs devront utiliser les capacités autorisées par iOS et demande
 confirmation avant les actions externes importantes. La recherche Internet peut
 partir de l’iPhone ; elle ne fonctionne pas sans réseau. L’accès à Internet
 n’autorise pas à envoyer les conversations à un fournisseur d’inférence.
+
+La tranche [calendrier agentique en lecture seule](gemma-calendar-agent.md)
+reste disponible. L’extension [13 outils conversationnels et OCR local](device-tool-agent.md)
+réutilise le même moteur et les capacités PR2 : option explicite, aperçu natif
+et accord tactile pour chaque accès, journal pour les écritures et résultat
+incertain sans retry. L’OCR Apple transmet seulement du texte extrait, sans
+vision générale de Gemma. Une transcription partielle ne déclenche rien.
+MCP, web et l’exécution de code restent hors périmètre. Les modifications de
+bridge exigent une nouvelle build native, non une OTA native27.
 
 ## Limite de la preuve matérielle
 

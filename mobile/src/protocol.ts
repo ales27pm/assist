@@ -26,6 +26,23 @@ export type Progress = {
   promptTokens: number;
   elapsedMs: number;
 };
+export type AgentCapabilities = {
+  schemaVersion: 1;
+  calendarReadOnly: true;
+  protocolVersion: 1;
+};
+export type CalendarAgentTrace = {
+  schemaVersion: 1;
+  tool: 'calendar.list';
+  callId: string;
+  scope: {
+    startISO: string;
+    endISO: string;
+    timeZoneIdentifier: string;
+  };
+  returnedCount: number;
+  possiblyTruncated: boolean;
+};
 export type GenerationResult = Progress & {
   finishReason: string;
   aneExecution: 'unverified';
@@ -33,6 +50,7 @@ export type GenerationResult = Progress & {
   peakPhysicalFootprintBytes?: number | null;
   requestedMaxTokens?: number | null;
   effectiveMaxTokens?: number;
+  agentTrace?: CalendarAgentTrace | null;
   numericalDiagnostics?: {
     schemaVersion: 1;
     promptTokenEncoding: 'uint32-little-endian';
@@ -60,6 +78,127 @@ function object(json: string): Record<string, unknown> {
 }
 function finite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+function closedObject(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === keys.length &&
+    keys.every(key => Object.prototype.hasOwnProperty.call(value, key))
+  );
+}
+
+export function parseAgentCapabilities(json: string): AgentCapabilities {
+  const value = object(json);
+  if (
+    !closedObject(value, [
+      'schemaVersion',
+      'calendarReadOnly',
+      'protocolVersion',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.calendarReadOnly !== true ||
+    value.protocolVersion !== 1
+  )
+    throw new Error(
+      'La consultation du calendrier n’est pas disponible dans cette version.',
+    );
+  return value as AgentCapabilities;
+}
+
+export function boundedIdentifier(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    !!value.trim() &&
+    value.length <= 128 &&
+    !Array.from(value).some(character => {
+      const code = character.charCodeAt(0);
+      return (
+        code < 32 || code === 127 || character === '<' || character === '>'
+      );
+    })
+  );
+}
+
+function validISO(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const parts =
+    /^(?!0000)(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{3})?Z$/.exec(
+      value,
+    );
+  if (!parts) return false;
+  const [, year, month, day, hour, minute, second] = parts;
+  const y = Number(year),
+    m = Number(month),
+    d = Number(day);
+  const days = [
+    31,
+    y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return (
+    m >= 1 &&
+    m <= 12 &&
+    d >= 1 &&
+    d <= days[m - 1] &&
+    Number(hour) <= 23 &&
+    Number(minute) <= 59 &&
+    Number(second) <= 59 &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
+export function validCalendarScope(
+  scope: unknown,
+): scope is CalendarAgentTrace['scope'] {
+  return (
+    closedObject(scope, ['startISO', 'endISO', 'timeZoneIdentifier']) &&
+    validISO(scope.startISO) &&
+    validISO(scope.endISO) &&
+    Date.parse(scope.endISO) - Date.parse(scope.startISO) >= 23 * 3_600_000 &&
+    Date.parse(scope.endISO) - Date.parse(scope.startISO) <= 25 * 3_600_000 &&
+    boundedIdentifier(scope.timeZoneIdentifier)
+  );
+}
+
+export function validAgentTrace(value: unknown): value is CalendarAgentTrace {
+  if (
+    !closedObject(value, [
+      'schemaVersion',
+      'tool',
+      'callId',
+      'scope',
+      'returnedCount',
+      'possiblyTruncated',
+    ])
+  )
+    return false;
+  const scope = value.scope;
+  return (
+    value.schemaVersion === 1 &&
+    value.tool === 'calendar.list' &&
+    boundedIdentifier(value.callId) &&
+    validCalendarScope(scope) &&
+    typeof value.returnedCount === 'number' &&
+    Number.isSafeInteger(value.returnedCount) &&
+    value.returnedCount >= 0 &&
+    value.returnedCount <= 5 &&
+    typeof value.possiblyTruncated === 'boolean' &&
+    value.possiblyTruncated === (value.returnedCount === 5)
+  );
 }
 export function parseState(json: string): EngineState {
   const value = object(json);
@@ -111,11 +250,30 @@ export function parseResult(json: string): GenerationResult {
   progress(value);
   if (
     typeof value.finishReason !== 'string' ||
-    value.aneExecution !== 'unverified'
+    value.aneExecution !== 'unverified' ||
+    (value.agentTrace != null && !validAgentTrace(value.agentTrace))
   ) {
     throw new Error('Rapport natif invalide.');
   }
   return value as GenerationResult;
+}
+
+/** This tool grammar reserves its control delimiters; ordinary chat stays unchanged. */
+export function parseCalendarResult(json: string): GenerationResult {
+  const result = parseResult(json);
+  if (/<\||\|>|<tool_|<channel|<turn/.test(result.text)) {
+    throw new Error('Réponse de consultation invalide.');
+  }
+  for (const character of result.text) {
+    const code = character.charCodeAt(0);
+    if (
+      (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) &&
+      !/\s/.test(character)
+    ) {
+      throw new Error('Réponse de consultation invalide.');
+    }
+  }
+  return result;
 }
 
 export type PrimitiveReport = {

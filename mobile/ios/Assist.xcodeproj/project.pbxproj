@@ -7,6 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A57200000000000000000001 /* AssistToolContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57200000000000000000011 /* AssistToolContracts.swift */; };
+		A57200000000000000000002 /* AssistDeviceToolAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57200000000000000000012 /* AssistDeviceToolAdapter.swift */; };
+		A57200000000000000000003 /* AssistToolTransactions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57200000000000000000013 /* AssistToolTransactions.swift */; };
+		A57200000000000000000004 /* AssistDeviceToolRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57200000000000000000014 /* AssistDeviceToolRun.swift */; };
+		A57100000000000000000001 /* AssistAgentCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57100000000000000000011 /* AssistAgentCalendar.swift */; };
+		A57100000000000000000002 /* AssistGemmaToolAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57100000000000000000012 /* AssistGemmaToolAdapter.swift */; };
+		A57100000000000000000003 /* AssistAgentRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57100000000000000000013 /* AssistAgentRun.swift */; };
 		A55D00000000000000000001 /* ModelDirectoryBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55D00000000000000000011 /* ModelDirectoryBookmark.swift */; };
 		A55C00000000000000000001 /* AssistVoiceDuplexState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55C00000000000000000011 /* AssistVoiceDuplexState.swift */; };
 		A55B00000000000000000001 /* AssistVoicePCMTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55B00000000000000000011 /* AssistVoicePCMTransfer.swift */; };
@@ -45,6 +52,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A57200000000000000000011 /* AssistToolContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistToolContracts.swift; sourceTree = "<group>"; };
+		A57200000000000000000012 /* AssistDeviceToolAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistDeviceToolAdapter.swift; sourceTree = "<group>"; };
+		A57200000000000000000013 /* AssistToolTransactions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistToolTransactions.swift; sourceTree = "<group>"; };
+		A57200000000000000000014 /* AssistDeviceToolRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistDeviceToolRun.swift; sourceTree = "<group>"; };
+		A57100000000000000000011 /* AssistAgentCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistAgentCalendar.swift; sourceTree = "<group>"; };
+		A57100000000000000000012 /* AssistGemmaToolAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistGemmaToolAdapter.swift; sourceTree = "<group>"; };
+		A57100000000000000000013 /* AssistAgentRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistAgentRun.swift; sourceTree = "<group>"; };
 		A55D00000000000000000011 /* ModelDirectoryBookmark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/ModelDirectoryBookmark.swift; sourceTree = "<group>"; };
 		A55C00000000000000000011 /* AssistVoiceDuplexState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Voice/AssistVoiceDuplexState.swift; sourceTree = "<group>"; };
 		A55B00000000000000000011 /* AssistVoicePCMTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Voice/AssistVoicePCMTransfer.swift; sourceTree = "<group>"; };
@@ -118,6 +132,13 @@
 				A55A00000000000000000011 /* AssistVoiceSpeechQueue.swift */,
 				A55000000000000000000013 /* AssistCoreAI.swift */,
 				A55000000000000000000014 /* InferencePolicy.swift */,
+				A57100000000000000000011 /* AssistAgentCalendar.swift */,
+				A57100000000000000000012 /* AssistGemmaToolAdapter.swift */,
+				A57100000000000000000013 /* AssistAgentRun.swift */,
+				A57200000000000000000011 /* AssistToolContracts.swift */,
+				A57200000000000000000012 /* AssistDeviceToolAdapter.swift */,
+				A57200000000000000000013 /* AssistToolTransactions.swift */,
+				A57200000000000000000014 /* AssistDeviceToolRun.swift */,
 				A55100000000000000000011 /* AssistNumericalProbe.swift */,
 				A55100000000000000000012 /* NumericalProbe */,
 				A55200000000000000000012 /* NumericalProbeFP32 */,
@@ -388,6 +409,13 @@
 				A55500000000000000000001 /* AssistModelAssetProbe.swift in Sources */,
 				A55600000000000000000001 /* AssistSpecializationRepair.swift in Sources */,
 				A55000000000000000000004 /* InferencePolicy.swift in Sources */,
+				A57100000000000000000001 /* AssistAgentCalendar.swift in Sources */,
+				A57100000000000000000002 /* AssistGemmaToolAdapter.swift in Sources */,
+				A57100000000000000000003 /* AssistAgentRun.swift in Sources */,
+				A57200000000000000000001 /* AssistToolContracts.swift in Sources */,
+				A57200000000000000000002 /* AssistDeviceToolAdapter.swift in Sources */,
+				A57200000000000000000003 /* AssistToolTransactions.swift in Sources */,
+				A57200000000000000000004 /* AssistDeviceToolRun.swift in Sources */,
 				A55100000000000000000001 /* AssistNumericalProbe.swift in Sources */,
 				A55300000000000000000001 /* AssistRuntimeMonitor.swift in Sources */,
 				A57000000000000000000001 /* AssistDeviceCapabilities.swift in Sources */,
@@ -405,7 +433,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 28;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
@@ -437,7 +465,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 27;
+				CURRENT_PROJECT_VERSION = 28;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
 				LD_RUNPATH_SEARCH_PATHS = (
