@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Compile alongside AssistRuntimeMonitor.swift with Swift 6. No model/runtime SDK is needed.
 @main
@@ -16,6 +21,14 @@ struct RuntimeMonitorChecks {
     }
 
     static func main() async throws {
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--abrupt-monitor-child" {
+            let monitor = AssistRuntimeMonitor(directory: URL(fileURLWithPath: CommandLine.arguments[2]), sampleInterval: .milliseconds(50))
+            await monitor.start()
+            await monitor.recordVoiceStage("listening")
+            // The parent kills only this exact subprocess. Do not run shutdown:
+            // recovery must use a periodic checkpoint, not graceful teardown.
+            while true { try await Task.sleep(for: .seconds(30)) }
+        }
         check(AssistRuntimeMetrics.cpuPercent(previousCPU: 1, currentCPU: 2, wallMs: 1_000) == 100,
               "One CPU-second per wall-second must equal 100%.")
         check(AssistRuntimeMetrics.cpuPercent(previousCPU: 1, currentCPU: 5, wallMs: 1_000) == 400,
@@ -155,7 +168,10 @@ struct RuntimeMonitorChecks {
         check(state.diagnostic?.completed == 1 && state.diagnostic?.failed == 1,
               "A failed diagnostic transition stops counting without fabricating completion.")
 
-        let monitor = AssistRuntimeMonitor()
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let monitor = AssistRuntimeMonitor(directory: temporary.appendingPathComponent("baseline"))
         let first = try await report(monitor)
         _ = try await report(monitor)
         check(first["kind"] as? String == "assistRuntimeMonitoring" && first["schemaVersion"] as? Int == 1,
@@ -177,6 +193,208 @@ struct RuntimeMonitorChecks {
         let text = String(decoding: data, as: UTF8.self)
         check(!text.contains("private prompt") && !text.contains("raw error") && !text.contains("/path"),
               "Diagnostic arguments never enter snapshots.")
+        try await persistenceAndSamplingChecks(root: temporary)
+        try await abruptProcessRecovery(root: temporary)
         print("PASS: runtime monitor finite metrics, CPU units, decode timing, bounded histories, privacy, context, partial diagnostics, sampling and terminal shutdown")
+    }
+
+    static func persistenceAndSamplingChecks(root: URL) async throws {
+        let manager = FileManager.default
+        let directory = root.appendingPathComponent("restart")
+        let current = directory.appendingPathComponent("current.json")
+        let previous = directory.appendingPathComponent("previous.json")
+        let first = AssistRuntimeMonitor(directory: directory, sampleInterval: .milliseconds(30), checkpointInterval: .milliseconds(100))
+        await first.start()
+        // No JS snapshot/export has occurred: native start must already persist.
+        check(manager.fileExists(atPath: current.path), "Native start checkpoints without any JS export.")
+        let initial = try Data(contentsOf: current)
+        let initialObject = try JSONSerialization.jsonObject(with: initial) as! [String: Any]
+        let id = initialObject["sessionId"] as! String
+        check(UUID(uuidString: id) != nil && initialObject["sessionStartedAt"] is String && initialObject["capturedAt"] is String,
+              "Session ID and UTC timestamps correlate records across restart.")
+        let fileAttributes = try manager.attributesOfItem(atPath: current.path)
+        check((fileAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o600,
+              "Diagnostics are private to the local app user.")
+        #if canImport(Darwin)
+        let backupValues = try current.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        check(backupValues.isExcludedFromBackup == true, "Diagnostics must be excluded from device backup.")
+        #endif
+        await first.start()
+        check(!manager.fileExists(atPath: previous.path), "Repeated start cannot rotate the current session into previous.")
+        try await Task.sleep(for: .milliseconds(650))
+        let periodic = try JSONSerialization.jsonObject(with: Data(contentsOf: current)) as! [String: Any]
+        check((periodic["history"] as! [Any]).count >= 2, "Native sampling advances without requesting JS snapshots.")
+        await first.recordVoiceStage("pocket")
+        await first.transition(phase: "ready", code: "MODEL_LOAD_COMPLETED")
+        await first.recordVoiceStage("listening")
+        await first.recordVoiceStage("private prompt /path")
+        let live = try await report(first)
+        let sample = live["current"] as! [String: Any]
+        check(sample["phase"] as? String == "ready" && sample["voiceStage"] as? String == "listening",
+              "Whitelisted voice stage is independent of the inference phase.")
+        let count = (live["history"] as! [Any]).count
+        for _ in 0..<50 { _ = try await report(first) }
+        let afterExports = try await report(first)
+        check((afterExports["history"] as! [Any]).count == count, "Rapid exports must not append native samples.")
+        await first.recordLifecycle("APP_BACKGROUND")
+        let background = try await report(first)
+        let backgroundCount = (background["history"] as! [Any]).count
+        try await Task.sleep(for: .milliseconds(600))
+        let afterBackground = try await report(first)
+        check((afterBackground["history"] as! [Any]).count == backgroundCount, "Background stops the native sampler.")
+        let oldBackground = ContinuousClock.now
+        await first.recordLifecycle("APP_ACTIVE")
+        await first.recordLifecycle("APP_BACKGROUND", observed: oldBackground)
+        let resumed = try await report(first)
+        let resumedCount = (resumed["history"] as! [Any]).count
+        try await Task.sleep(for: .milliseconds(600))
+        let afterForeground = try await report(first)
+        check((afterForeground["history"] as! [Any]).count > resumedCount,
+              "Foreground restarts sampling; a delayed older background callback cannot stop it again.")
+        let lifecycleEvents = afterForeground["events"] as! [[String: Any]]
+        let delayed = lifecycleEvents.last { $0["code"] as? String == "APP_BACKGROUND" }!
+        let active = lifecycleEvents.last { $0["code"] as? String == "APP_ACTIVE" }!
+        check((delayed["observedElapsedMs"] as! Double) <= (active["observedElapsedMs"] as! Double),
+              "Delayed lifecycle events preserve their actual observation timestamp.")
+        await first.shutdown()
+        let stoppedData = try Data(contentsOf: current)
+        try await Task.sleep(for: .milliseconds(120))
+        _ = try await report(first)
+        let afterStopData = try Data(contentsOf: current)
+        check(afterStopData == stoppedData, "Shutdown and later exports do not resume disk writes.")
+
+        // Restart must preserve the old session before any export, even if the
+        // second process is closed before its first export.
+        let second = AssistRuntimeMonitor(directory: directory)
+        await second.start()
+        let saved = try await second.previousSnapshotJSON()
+        let savedObject = try JSONSerialization.jsonObject(with: Data(saved.utf8)) as! [String: Any]
+        check(savedObject["sessionId"] as? String == id,
+              "Restart rotates the last session at native start, not first export.")
+        let previousData = try Data(contentsOf: previous)
+        await second.start()
+        let previousAfterStart = try Data(contentsOf: previous)
+        check(previousAfterStart == previousData, "One session rotates once.")
+        await second.shutdown()
+
+        for damaged in [Data("{\"schemaVersion\":".utf8), Data(repeating: 32, count: AssistRuntimeArchive.maximumBytes + 1)] {
+            try damaged.write(to: current, options: .atomic)
+            let recovered = AssistRuntimeMonitor(directory: directory)
+            await recovered.start()
+            let preserved = try Data(contentsOf: previous)
+            let recoveredJSON = try await recovered.previousSnapshotJSON()
+            check(preserved == previousData, "Corrupt/truncated/oversized current cannot replace valid previous.")
+            check(recoveredJSON == saved, "A valid previous remains exportable after current corruption.")
+            await recovered.shutdown()
+        }
+        // Both files invalid: report absence rather than exporting arbitrary JSON.
+        try Data("{\"private\":\"raw error /path\"}".utf8).write(to: previous, options: .atomic)
+        try Data("{broken".utf8).write(to: current, options: .atomic)
+        let invalid = AssistRuntimeMonitor(directory: directory)
+        await invalid.start()
+        let invalidJSON = try await invalid.previousSnapshotJSON()
+        check(invalidJSON == "null", "Invalid archives are not exported.")
+        await invalid.shutdown()
+
+        let blockedDirectory = root.appendingPathComponent("not-a-directory")
+        try Data("occupied".utf8).write(to: blockedDirectory)
+        let failing = AssistRuntimeMonitor(directory: blockedDirectory, sampleInterval: .milliseconds(30))
+        await failing.start()
+        await failing.recordVoiceStage("listening")
+        let failedReport = try await report(failing)
+        check((failedReport["persistence"] as! [String: Any])["status"] as? String == "unavailable",
+              "Disk failure remains visible without failing sampling or model work.")
+        check((failedReport["current"] as! [String: Any])["voiceStage"] as? String == "listening", "Disk failure does not block stage recording.")
+        await failing.shutdown()
+
+        let boundedDirectory = root.appendingPathComponent("bounded")
+        let fixedNow = ContinuousClock.now
+        let bounded = AssistRuntimeMonitor(directory: boundedDirectory, clock: { fixedNow })
+        await bounded.start()
+        await bounded.memoryPressureChanged("critical", observed: fixedNow)
+        await bounded.memoryPressureChanged("normal", observed: fixedNow.advanced(by: .milliseconds(1)))
+        let pressureReport = try await report(bounded)
+        let pressureEvents = (pressureReport["events"] as! [[String: Any]]).filter { $0["code"] as? String == "MEMORY_PRESSURE_CHANGED" }
+        check(pressureEvents.count == 2 && pressureEvents.first?["severity"] as? String == "critical",
+              "A critical pressure event remains recorded even when it clears before the next checkpoint.")
+        for index in 0..<500 {
+            await bounded.recordVoiceStage(index.isMultiple(of: 2) ? "pocket" : "failed")
+            await bounded.beginGeneration(requestId: "request-123-\(index)", promptTokens: 1,
+                                          contextCapacity: 32_768, elapsedMs: 0)
+            await bounded.endGeneration(requestId: "request-123-\(index)", promptTokens: 1,
+                                        generatedTokens: 1, elapsedMs: 1, ttftMs: 1, finishReason: "error")
+        }
+        // Rapid checkpoint-producing events remain in the bounded in-memory log;
+        // they cannot each write a checkpoint during the one-second event throttle.
+        let throttledDisk = try JSONSerialization.jsonObject(with: Data(contentsOf: boundedDirectory.appendingPathComponent("current.json"))) as! [String: Any]
+        check((throttledDisk["events"] as! [Any]).count < 200, "Rapid stage/error events do not force one disk write per event.")
+        await bounded.shutdown()
+        let boundedSize = try Data(contentsOf: boundedDirectory.appendingPathComponent("current.json")).count
+        check(boundedSize <= 128 * 1_024, "Every persisted session respects the 128 KiB bound.")
+        let restarted = AssistRuntimeMonitor(directory: boundedDirectory)
+        await restarted.start()
+        for name in ["current.json", "previous.json"] {
+            let size = try Data(contentsOf: boundedDirectory.appendingPathComponent(name)).count
+            check(size <= 128 * 1_024,
+                  "Rotation keeps both persisted sessions within the cap.")
+        }
+        let names = try manager.contentsOfDirectory(atPath: boundedDirectory.path).sorted()
+        check(names == ["current.json", "previous.json"],
+              "Successful atomic checkpoints retain only two fixed report files.")
+        await restarted.shutdown()
+
+        var disposable: AssistRuntimeMonitor? = AssistRuntimeMonitor(directory: root.appendingPathComponent("weak"), sampleInterval: .milliseconds(30))
+        weak var weakMonitor = disposable
+        await disposable?.start()
+        disposable = nil
+        try await Task.sleep(for: .milliseconds(100))
+        check(weakMonitor == nil, "The sampler must not retain its monitor across sleep.")
+        print("PASS: native sampler without JS, foreground lifecycle, terminal stop, independent voice stages, bounded atomic two-session storage, restart/rotation/corruption/disk failures, throttled checkpoints and weak lifetime")
+    }
+
+    static func abruptProcessRecovery(root: URL) async throws {
+        let directory = root.appendingPathComponent("abrupt-process")
+        let current = directory.appendingPathComponent("current.json")
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        child.arguments = ["--abrupt-monitor-child", directory.path]
+        child.standardOutput = FileHandle.nullDevice
+        child.standardError = FileHandle.nullDevice
+        try child.run()
+        let childPID = child.processIdentifier
+        check(childPID > 0, "Only a successfully spawned child may be terminated.")
+        defer {
+            if child.isRunning { _ = kill(childPID, SIGKILL) }
+        }
+        var checkpoint: [String: Any]?
+        for _ in 0..<100 {
+            if let data = try? Data(contentsOf: current),
+               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let sample = object["current"] as? [String: Any], sample["voiceStage"] as? String == "listening" {
+                checkpoint = object
+                break
+            }
+            check(child.isRunning, "The sampler child must stay alive until its checkpoint is observed.")
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        check(checkpoint != nil, "A subprocess must checkpoint its native state without JS or shutdown.")
+        check(kill(childPID, SIGKILL) == 0, "Terminate only the exact subprocess created by this test.")
+        for _ in 0..<100 {
+            if !child.isRunning { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        check(!child.isRunning, "The killed child must exit before testing a new session.")
+        let restarted = AssistRuntimeMonitor(directory: directory)
+        await restarted.start()
+        let previousJSON = try await restarted.previousSnapshotJSON()
+        let previous = try JSONSerialization.jsonObject(with: Data(previousJSON.utf8)) as! [String: Any]
+        check(previous["sessionId"] as? String == checkpoint?["sessionId"] as? String,
+              "A fresh native monitor recovers the session killed before any export or graceful shutdown.")
+        check((previous["current"] as! [String: Any])["voiceStage"] as? String == "listening",
+              "The recovered checkpoint preserves the last saved voice stage.")
+        check(!(previous["events"] as! [[String: Any]]).contains { $0["code"] as? String == "MONITOR_STOPPED" },
+              "Recovery must not fabricate a graceful shutdown event for a killed process.")
+        await restarted.shutdown()
+        print("PASS: real subprocess SIGKILL preserves a native checkpoint and a new process session exports it after restart")
     }
 }

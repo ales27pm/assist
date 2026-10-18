@@ -22,8 +22,9 @@ struct AssistRuntimeSystemReading: Sendable {
     var lowPowerMode: Bool?
 }
 
-struct AssistRuntimeSample: Encodable, Sendable {
+struct AssistRuntimeSample: Codable, Sendable {
     let phase: String
+    let voiceStage: String?
     let sessionElapsedMs: Double
     let physicalFootprintBytes: UInt64?
     let peakPhysicalFootprintBytes: UInt64?
@@ -41,21 +42,22 @@ struct AssistRuntimeSample: Encodable, Sendable {
     let requestId: String?
 }
 
-struct AssistRuntimeEvent: Encodable, Sendable {
+struct AssistRuntimeEvent: Codable, Sendable {
     let sequence: Int
     let elapsedMs: Double
+    let observedElapsedMs: Double?
     let code: String
     let severity: String
     let phase: String
 }
 
-struct AssistRuntimeDiagnostic: Encodable, Sendable {
+struct AssistRuntimeDiagnostic: Codable, Sendable {
     var completed = 0
     let total: Int
     var failed = 0
 }
 
-struct AssistRuntimeGenerationSummary: Encodable, Sendable {
+struct AssistRuntimeGenerationSummary: Codable, Sendable {
     let requestId: String?
     let promptTokens: Int?
     let generatedTokens: Int?
@@ -153,8 +155,9 @@ private struct AssistRuntimeGeneration: Sendable {
 
 /// Pure bounded reducer, shared with the Foundation-only checks.
 struct AssistRuntimeMonitorState: Sendable {
-    private static let phases = Set(["idle", "loading", "ready", "generating", "cancelling", "failed", "diagnosing"])
-    private static let codes = Set([
+    static let phases = Set(["idle", "loading", "ready", "generating", "cancelling", "failed", "diagnosing"])
+    static let voiceStages = Set(["inactive", "preparing", "pocket", "parakeet", "silero", "session", "audio", "listening", "speaking", "failed"])
+    static let codes = Set([
         "MODEL_LOAD_STARTED", "MODEL_LOAD_COMPLETED", "MODEL_LOAD_FAILED", "GENERATION_STARTED",
         "GENERATION_COMPLETED", "GENERATION_CANCELLED", "GENERATION_FAILED", "GENERATION_REJECTED",
         "CANCELLATION_REQUESTED", "CONVERSATION_RESET", "CONVERSATION_RESET_FAILED", "MODEL_UNLOADED",
@@ -164,11 +167,12 @@ struct AssistRuntimeMonitorState: Sendable {
         "DIAGNOSTIC_STARTED", "DIAGNOSTIC_CASE_PASSED", "DIAGNOSTIC_CASE_FAILED",
         "DIAGNOSTIC_COMPLETED", "DIAGNOSTIC_FAILED", "APP_ACTIVE", "APP_BACKGROUND", "APP_FOREGROUND",
         "APP_INACTIVE", "THERMAL_CHANGED", "MEMORY_PRESSURE_CHANGED", "MONITOR_STARTED", "MONITOR_STOPPED",
-        "PHASE_CHANGED",
+        "PHASE_CHANGED", "VOICE_STAGE_CHANGED",
     ])
     private static let thermalStates = Set(["nominal", "fair", "serious", "critical", "unknown"])
     private static let pressureStates = Set(["normal", "warning", "critical", "unknown"])
     private var phase = "idle"
+    private var voiceStage: String?
     private var reading = AssistRuntimeSystemReading()
     private var peakFootprint: UInt64?
     private var cpu: Double?
@@ -211,7 +215,7 @@ struct AssistRuntimeMonitorState: Sendable {
 
     func current(at nowMs: Double) -> AssistRuntimeSample {
         AssistRuntimeSample(
-            phase: phase, sessionElapsedMs: AssistRuntimeMetrics.duration(nowMs) ?? 0,
+            phase: phase, voiceStage: voiceStage, sessionElapsedMs: AssistRuntimeMetrics.duration(nowMs) ?? 0,
             physicalFootprintBytes: reading.physicalFootprintBytes, peakPhysicalFootprintBytes: peakFootprint,
             availableMemoryBytes: reading.availableMemoryBytes, cpuPercent: cpu,
             thermalState: reading.thermalState, memoryPressure: pressure, lowPowerMode: reading.lowPowerMode,
@@ -226,7 +230,7 @@ struct AssistRuntimeMonitorState: Sendable {
         sequence = min(sequence, Int.max - 1) + 1
         lastEventMs = max(lastEventMs, AssistRuntimeMetrics.duration(nowMs) ?? lastEventMs)
         events.append(AssistRuntimeEvent(
-            sequence: sequence, elapsedMs: lastEventMs,
+            sequence: sequence, elapsedMs: lastEventMs, observedElapsedMs: AssistRuntimeMetrics.duration(nowMs),
             code: Self.codes.contains(code) ? code : "PHASE_CHANGED",
             severity: ["info", "warning", "critical"].contains(severity) ? severity : "info", phase: phase
         ))
@@ -234,6 +238,13 @@ struct AssistRuntimeMonitorState: Sendable {
 
     mutating func setContextCapacity(_ value: Int?) {
         contextCapacity = value.flatMap { AssistRuntimeMetrics.count($0) }.flatMap { $0 > 0 ? $0 : nil }
+    }
+
+    mutating func recordVoiceStage(_ value: String, at nowMs: Double) -> Bool {
+        guard Self.voiceStages.contains(value), value != voiceStage else { return false }
+        voiceStage = value
+        event(code: "VOICE_STAGE_CHANGED", severity: value == "failed" ? "warning" : "info", at: nowMs)
+        return true
     }
 
     mutating func transition(phase next: String, code: String, severity: String, at nowMs: Double) {
@@ -338,12 +349,21 @@ struct AssistRuntimeMonitorState: Sendable {
     }
 }
 
-private struct AssistRuntimeReport: Encodable, Sendable {
+private struct AssistRuntimePersistence: Codable, Sendable {
+    var status = "notAttempted"
+    var lastSuccessfulCheckpointAt: Date?
+}
+
+private struct AssistRuntimeReport: Codable, Sendable {
     let schemaVersion = 1
     let kind = "assistRuntimeMonitoring"
     let aneExecution = "unverified"
     let nativeBuild: String
     let osVersion: String
+    let sessionId: String
+    let sessionStartedAt: Date
+    let capturedAt: Date
+    var persistence: AssistRuntimePersistence
     let measurementMethods = [
         "physicalFootprintBytes": "task_info TASK_VM_INFO.phys_footprint; current process; unknown on syscall failure",
         "peakPhysicalFootprintBytes": "maximum of monitor samples; transient and unsampled load peaks may be missed",
@@ -354,18 +374,20 @@ private struct AssistRuntimeReport: Encodable, Sendable {
         "lowPowerMode": "ProcessInfo.isLowPowerModeEnabled",
         "decodeTokensPerSecond": "generation average (native generatedTokens - 1) / (native elapsedMs - TTFT); requires >=2 tokens and positive duration; held between native count updates, not a rolling window or character/event rate",
         "generationElapsedMs": "native generation duration, advanced between progress callbacks with ContinuousClock while active; failure transitions freeze the display without inventing token counts; final summaries use native end duration",
-        "sampling": "foreground JS requests snapshots; syscalls at most once per 500 ms; no native periodic timer; history 60 samples, events 200, generations 100",
-        "events": "bounded constant codes with ContinuousClock elapsed times; late callback delivery cannot move event times backwards",
+        "sampling": "native foreground sampler targets one second independently of JS; syscalls at most once per 500 ms; exports do not append history; history 60 samples, events 200, generations 100; scheduler delays may miss peaks",
+        "persistence": "best-effort atomic local checkpoint at most every five seconds while sampling, plus rate-limited stage, pressure and lifecycle checkpoints; two sessions, each <=128 KiB; not a crash handler; abrupt termination may lose observations after the last successful checkpoint",
+        "events": "bounded constant codes; observedElapsedMs preserves source ContinuousClock time, elapsedMs is monotonic delivery order; stale lifecycle observations cannot replace a newer foreground state",
         "acceleratorUtilization": "GPU/ANE utilization and actual execution placement are not measured",
     ]
     let current: AssistRuntimeSample
-    let history: [AssistRuntimeSample]
-    let events: [AssistRuntimeEvent]
+    var history: [AssistRuntimeSample]
+    var events: [AssistRuntimeEvent]
     let diagnostic: AssistRuntimeDiagnostic?
-    let generations: [AssistRuntimeGenerationSummary]
+    var generations: [AssistRuntimeGenerationSummary]
 
     enum CodingKeys: String, CodingKey {
-        case schemaVersion, kind, aneExecution, nativeBuild, osVersion, measurementMethods, current, history, events, diagnostic, generations
+        case schemaVersion, kind, aneExecution, nativeBuild, osVersion, sessionId, sessionStartedAt, capturedAt, persistence
+        case measurementMethods, current, history, events, diagnostic, generations
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -375,6 +397,10 @@ private struct AssistRuntimeReport: Encodable, Sendable {
         try values.encode(aneExecution, forKey: .aneExecution)
         try values.encode(nativeBuild, forKey: .nativeBuild)
         try values.encode(osVersion, forKey: .osVersion)
+        try values.encode(sessionId, forKey: .sessionId)
+        try values.encode(sessionStartedAt, forKey: .sessionStartedAt)
+        try values.encode(capturedAt, forKey: .capturedAt)
+        try values.encode(persistence, forKey: .persistence)
         try values.encode(measurementMethods, forKey: .measurementMethods)
         try values.encode(current, forKey: .current)
         try values.encode(history, forKey: .history)
@@ -382,38 +408,239 @@ private struct AssistRuntimeReport: Encodable, Sendable {
         try values.encode(diagnostic, forKey: .diagnostic)
         try values.encode(generations, forKey: .generations)
     }
+
+    init(nativeBuild: String, osVersion: String, sessionId: String, sessionStartedAt: Date, capturedAt: Date,
+         persistence: AssistRuntimePersistence, current: AssistRuntimeSample, history: [AssistRuntimeSample],
+         events: [AssistRuntimeEvent], diagnostic: AssistRuntimeDiagnostic?, generations: [AssistRuntimeGenerationSummary]) {
+        self.nativeBuild = nativeBuild; self.osVersion = osVersion; self.sessionId = sessionId
+        self.sessionStartedAt = sessionStartedAt; self.capturedAt = capturedAt; self.persistence = persistence
+        self.current = current; self.history = history; self.events = events
+        self.diagnostic = diagnostic; self.generations = generations
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        guard try values.decode(Int.self, forKey: .schemaVersion) == 1,
+              try values.decode(String.self, forKey: .kind) == "assistRuntimeMonitoring" else {
+            throw AssistRuntimeArchive.error()
+        }
+        nativeBuild = try values.decode(String.self, forKey: .nativeBuild)
+        osVersion = try values.decode(String.self, forKey: .osVersion)
+        sessionId = try values.decode(String.self, forKey: .sessionId)
+        sessionStartedAt = try values.decode(Date.self, forKey: .sessionStartedAt)
+        capturedAt = try values.decode(Date.self, forKey: .capturedAt)
+        persistence = try values.decode(AssistRuntimePersistence.self, forKey: .persistence)
+        current = try values.decode(AssistRuntimeSample.self, forKey: .current)
+        history = try values.decode([AssistRuntimeSample].self, forKey: .history)
+        events = try values.decode([AssistRuntimeEvent].self, forKey: .events)
+        diagnostic = try values.decodeIfPresent(AssistRuntimeDiagnostic.self, forKey: .diagnostic)
+        generations = try values.decode([AssistRuntimeGenerationSummary].self, forKey: .generations)
+        guard UUID(uuidString: sessionId) != nil, nativeBuild.count <= 64, osVersion.count <= 256,
+              !nativeBuild.contains("/"), !osVersion.contains("/"), history.count <= 60, events.count <= 200,
+              generations.count <= 100, ["notAttempted", "saved", "unavailable"].contains(persistence.status),
+              ([current] + history).allSatisfy({ sample in
+                  AssistRuntimeMonitorState.phases.contains(sample.phase) &&
+                  sample.voiceStage.map(AssistRuntimeMonitorState.voiceStages.contains) != false &&
+                  ["nominal", "fair", "serious", "critical", "unknown"].contains(sample.thermalState) &&
+                  ["normal", "warning", "critical", "unknown"].contains(sample.memoryPressure) &&
+                  sample.requestId.map({ AssistRuntimeMetrics.requestId($0) == $0 }) != false &&
+                  sample.sessionElapsedMs.isFinite && sample.sessionElapsedMs >= 0
+              }), events.allSatisfy({
+                  AssistRuntimeMonitorState.codes.contains($0.code) && AssistRuntimeMonitorState.phases.contains($0.phase) &&
+                  ["info", "warning", "critical"].contains($0.severity) && $0.sequence >= 0 && $0.elapsedMs >= 0
+              }), generations.allSatisfy({
+                  $0.requestId.map({ AssistRuntimeMetrics.requestId($0) == $0 }) != false &&
+                  ["eos", "length", "cancelled", "error", "rejected", "interrupted", "unknown"].contains($0.finishReason)
+              }) else { throw AssistRuntimeArchive.error() }
+    }
+
+    func encoded() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(self)
+    }
+
+    func boundedData() throws -> Data {
+        var report = self
+        var data = try report.encoded()
+        while data.count > AssistRuntimeArchive.maximumBytes {
+            if !report.generations.isEmpty { report.generations.removeFirst() }
+            else if !report.events.isEmpty { report.events.removeFirst() }
+            else if !report.history.isEmpty { report.history.removeFirst() }
+            else { throw AssistRuntimeArchive.error() }
+            data = try report.encoded()
+        }
+        return data
+    }
 }
 
-/// Independent of the busy inference actor. No method starts or changes model work.
+/// Actor-owned, fixed-name two-session storage. Reads are capped before allocating;
+/// only typed, allowlisted reports are re-encoded for export. No device content is saved.
+struct AssistRuntimeArchive: Sendable {
+    static let maximumBytes = 128 * 1_024
+    let directory: URL
+    private(set) var rotated = false
+
+    static func error() -> NSError {
+        NSError(domain: "Assist.RuntimeMonitor", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Le diagnostic local précédent est indisponible."])
+    }
+
+    private func read(_ name: String) throws -> Data? {
+        let file = directory.appendingPathComponent(name)
+        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber, size.intValue > 0,
+              size.intValue <= Self.maximumBytes else { return nil }
+        let data = try Data(contentsOf: file)
+        guard data.count <= Self.maximumBytes else { return nil }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        guard let report = try? decoder.decode(AssistRuntimeReport.self, from: data) else { return nil }
+        return try report.boundedData()
+    }
+
+    mutating func prepare() throws {
+        guard !rotated else { return }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                               attributes: [.posixPermissions: 0o700])
+        let attributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+        guard attributes[.type] as? FileAttributeType == .typeDirectory else { throw Self.error() }
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        #if canImport(Darwin)
+        var resourceValues = URLResourceValues(); resourceValues.isExcludedFromBackup = true
+        var protectedDirectory = directory
+        try protectedDirectory.setResourceValues(resourceValues)
+        #endif
+        #if canImport(UIKit)
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                                             ofItemAtPath: directory.path)
+        #endif
+        // Do not overwrite a valid previous report with a corrupt/truncated current.
+        if let data = try read("current.json") { try write(data, name: "previous.json") }
+        rotated = true
+    }
+
+    mutating func checkpoint(_ data: Data) throws {
+        try prepare()
+        try write(data, name: "current.json")
+    }
+
+    func previousJSON() throws -> String {
+        guard let data = try read("previous.json") else { return "null" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func write(_ data: Data, name: String) throws {
+        guard data.count <= Self.maximumBytes else { throw Self.error() }
+        let file = directory.appendingPathComponent(name)
+        #if canImport(UIKit)
+        try data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        #else
+        try data.write(to: file, options: .atomic)
+        #endif
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        #if canImport(Darwin)
+        var values = URLResourceValues(); values.isExcludedFromBackup = true
+        var protectedFile = file; try protectedFile.setResourceValues(values)
+        #endif
+    }
+}
+
+/// Owned only by the monitor actor. Closures capture the monitor weakly, never
+/// this bag; releasing the actor also unregisters notifications/dispatch sources.
+private final class AssistRuntimeObservationBag {
+    var tokens: [any NSObjectProtocol] = []
+    #if canImport(Darwin)
+    var memorySources: [any DispatchSourceMemoryPressure] = []
+    #endif
+    func stop() {
+        for token in tokens { NotificationCenter.default.removeObserver(token) }
+        tokens.removeAll()
+        #if canImport(Darwin)
+        for source in memorySources { source.cancel() }
+        memorySources.removeAll()
+        #endif
+    }
+    deinit { stop() }
+}
+
+/// Independent of JS and the busy inference actor. No method starts or changes model work.
 actor AssistRuntimeMonitor {
-    private let started = ContinuousClock.now
+    private let started: ContinuousClock.Instant
+    private let clock: @Sendable () -> ContinuousClock.Instant
+    private let startedDate = Date()
+    private let sessionId = UUID().uuidString.lowercased()
     private var state = AssistRuntimeMonitorState()
     private var registered = false
     private var stoppedAtMs: Double?
-    private var observers: [any NSObjectProtocol] = []
+    private let observations = AssistRuntimeObservationBag()
     private var lifecycleSetup: Task<Void, Never>?
-    #if canImport(Darwin)
-    private var memorySources: [any DispatchSourceMemoryPressure] = []
-    #endif
+    private var sampler: Task<Void, Never>?
+    private var foreground = true
+    private var lastLifecycleObserved: ContinuousClock.Instant?
+    private let sampleInterval: Duration
+    private let checkpointIntervalMs: Double
+    private var lastCheckpointAttemptMs: Double?
+    private var pendingCheckpoint = false
+    private var persistence = AssistRuntimePersistence()
+    private var archive: AssistRuntimeArchive
+
+    init(directory: URL? = nil, sampleInterval: Duration = .seconds(1), checkpointInterval: Duration = .seconds(5),
+         clock: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }) {
+        self.clock = clock
+        started = clock()
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        archive = AssistRuntimeArchive(directory: directory ?? support.appendingPathComponent("AssistDiagnostics/RuntimeMonitoring", isDirectory: true))
+        self.sampleInterval = max(.milliseconds(20), sampleInterval)
+        checkpointIntervalMs = min(5_000, max(100, AssistRuntimeMetrics.milliseconds(checkpointInterval)))
+    }
+
+    deinit {
+        sampler?.cancel()
+        lifecycleSetup?.cancel()
+    }
+
+    /// Called by native ownership, without waiting for a JS snapshot. Idempotent
+    /// for the monitor lifetime, including rotation before the first export.
+    func start() {
+        startObservingIfNeeded()
+    }
 
     func snapshotJSON() throws -> String {
         startObservingIfNeeded()
         let now = stoppedAtMs ?? elapsed()
-        if stoppedAtMs == nil, state.shouldSample(at: now) { state.sample(Self.readSystem(), at: now) }
-        let report = AssistRuntimeReport(
+        return String(decoding: try report(at: now).boundedData(), as: UTF8.self)
+    }
+
+    func previousSnapshotJSON() throws -> String {
+        startObservingIfNeeded()
+        do { return try archive.previousJSON() }
+        catch { throw AssistRuntimeArchive.error() }
+    }
+
+    func recordVoiceStage(_ value: String) {
+        guard running(), state.recordVoiceStage(value, at: elapsed()) else { return }
+        checkpointEvent()
+    }
+
+    private func report(at now: Double, persistence override: AssistRuntimePersistence? = nil) -> AssistRuntimeReport {
+        AssistRuntimeReport(
             nativeBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
-            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            osVersion: Self.osVersion(),
+            sessionId: sessionId, sessionStartedAt: startedDate,
+            capturedAt: startedDate.addingTimeInterval(now / 1_000), persistence: override ?? persistence,
             current: state.current(at: now), history: state.history.values, events: state.events.values,
             diagnostic: state.diagnostic, generations: state.generations.values
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return String(decoding: try encoder.encode(report), as: UTF8.self)
     }
 
     func transition(phase: String, code: String, severity: String = "info") {
         guard running() else { return }
         state.transition(phase: phase, code: code, severity: severity, at: elapsed())
+        checkpointEvent()
     }
 
     func setContextCapacity(_ value: Int?) {
@@ -425,6 +652,7 @@ actor AssistRuntimeMonitor {
         guard running() else { return }
         state.beginGeneration(requestId: requestId, promptTokens: promptTokens, contextCapacity: contextCapacity,
                               elapsedMs: elapsedMs, at: elapsed())
+        checkpointEvent()
     }
 
     func progress(requestId: String, promptTokens: Int, generatedTokens: Int, elapsedMs: Double, ttftMs: Double?) {
@@ -437,21 +665,25 @@ actor AssistRuntimeMonitor {
         guard running() else { return }
         state.endGeneration(requestId: requestId, promptTokens: promptTokens, generatedTokens: generatedTokens,
                             elapsedMs: elapsedMs, ttftMs: ttftMs, finishReason: finishReason, at: elapsed())
+        checkpointEvent()
     }
 
     func beginDiagnostic(total: Int) {
         guard running() else { return }
         state.beginDiagnostic(total: total, at: elapsed())
+        checkpointEvent()
     }
 
     func diagnosticCase(variant _: String, mode _: String, function _: String, passed: Bool) {
         guard running() else { return }
         state.diagnosticCase(passed: passed, at: elapsed())
+        if !passed { checkpointEvent() }
     }
 
     func endDiagnostic(phase: String = "idle") {
         guard running() else { return }
         state.endDiagnostic(phase: phase, at: elapsed())
+        checkpointEvent()
     }
 
     /// Terminal and idempotent: later transitions/progress cannot register observers again.
@@ -460,18 +692,16 @@ actor AssistRuntimeMonitor {
         let now = elapsed()
         state.event(code: "MONITOR_STOPPED", severity: "info", at: now)
         stoppedAtMs = now
+        sampler?.cancel()
+        sampler = nil
+        checkpoint(at: now)
         lifecycleSetup?.cancel()
         lifecycleSetup = nil
-        for observer in observers { NotificationCenter.default.removeObserver(observer) }
-        observers.removeAll()
-        #if canImport(Darwin)
-        for source in memorySources { source.cancel() }
-        memorySources.removeAll()
-        #endif
+        observations.stop()
     }
 
     private func elapsed(_ observed: ContinuousClock.Instant? = nil) -> Double {
-        AssistRuntimeMetrics.milliseconds(started.duration(to: observed ?? ContinuousClock.now))
+        AssistRuntimeMetrics.milliseconds(started.duration(to: observed ?? clock()))
     }
 
     private func running() -> Bool {
@@ -480,10 +710,64 @@ actor AssistRuntimeMonitor {
         return true
     }
 
+    private func resumeSampler() {
+        guard sampler == nil, foreground, stoppedAtMs == nil else { return }
+        let interval = sampleInterval
+        // Keep only a weak reference across sleep. A stored loop that unwraps
+        // self before sleeping would prevent the actor and observers deallocating.
+        sampler = Task(priority: .utility) { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: interval) } catch { return }
+                guard !Task.isCancelled, await self?.sampleIfForeground() == true else { return }
+            }
+        }
+    }
+
+    private func sampleIfForeground() -> Bool {
+        guard stoppedAtMs == nil, foreground else { return false }
+        let now = elapsed()
+        if state.shouldSample(at: now) { state.sample(Self.readSystem(), at: now) }
+        let since = now - (lastCheckpointAttemptMs ?? -checkpointIntervalMs)
+        if since >= checkpointIntervalMs || (pendingCheckpoint && since >= min(1_000, checkpointIntervalMs)) {
+            checkpoint(at: now)
+        }
+        return true
+    }
+
+    private func checkpointEvent() {
+        let now = elapsed()
+        pendingCheckpoint = true
+        // Event records never force extra system calls inside the 500 ms floor.
+        if foreground, state.shouldSample(at: now) { state.sample(Self.readSystem(), at: now) }
+        if now - (lastCheckpointAttemptMs ?? -1_000) >= min(1_000, checkpointIntervalMs) {
+            checkpoint(at: now)
+        }
+    }
+
+    private func checkpoint(at now: Double) {
+        lastCheckpointAttemptMs = now
+        pendingCheckpoint = false
+        var saved = persistence
+        saved.status = "saved"
+        saved.lastSuccessfulCheckpointAt = startedDate.addingTimeInterval(now / 1_000)
+        do {
+            let data = try report(at: now, persistence: saved).boundedData()
+            try archive.checkpoint(data)
+            persistence = saved
+        } catch {
+            // Do not record paths or a framework's raw error, and do not claim
+            // persistence worked. Sampling/inference continue; retries are bounded.
+            persistence.status = "unavailable"
+        }
+    }
+
     private func startObservingIfNeeded() {
         guard !registered, stoppedAtMs == nil else { return }
         registered = true
         state.event(code: "MONITOR_STARTED", severity: "info", at: elapsed())
+        state.sample(Self.readSystem(), at: elapsed())
+        checkpoint(at: elapsed())
+        resumeSampler()
         #if canImport(Darwin)
         let thermal = NotificationCenter.default.addObserver(
             forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: nil
@@ -491,7 +775,7 @@ actor AssistRuntimeMonitor {
             let observed = ContinuousClock.now
             Task { [weak self] in await self?.thermalChanged(observed: observed) }
         }
-        observers.append(thermal)
+        observations.tokens.append(thermal)
         // One event kind per source avoids retaining a DispatchSource in its own handler.
         let queue = DispatchQueue(label: "org.27pm.assist.runtime-monitor", qos: .utility)
         let pressureEvents: [(DispatchSource.MemoryPressureEvent, String)] = [
@@ -504,7 +788,7 @@ actor AssistRuntimeMonitor {
                 Task { [weak self] in await self?.memoryPressureChanged(level, observed: observed) }
             }
             source.activate()
-            memorySources.append(source)
+            observations.memorySources.append(source)
         }
         #endif
         #if canImport(UIKit)
@@ -512,6 +796,14 @@ actor AssistRuntimeMonitor {
             let names = await Self.lifecycleNames()
             guard !Task.isCancelled else { return }
             await self?.registerLifecycle(names)
+            guard !Task.isCancelled else { return }
+            // Register first, then observe the current state on MainActor. A
+            // transition before registration is covered by this snapshot; one
+            // after registration is also notified. Timestamp ordering prevents
+            // a delayed snapshot/callback overwriting a more recent event.
+            let (isForeground, observed) = await Self.lifecycleState()
+            guard !Task.isCancelled else { return }
+            await self?.initialLifecycleState(foreground: isForeground, observed: observed)
         }
         #endif
     }
@@ -527,32 +819,58 @@ actor AssistRuntimeMonitor {
         ]
     }
 
+    @MainActor
+    private static func lifecycleState() -> (Bool, ContinuousClock.Instant) {
+        (UIApplication.shared.applicationState != .background, ContinuousClock.now)
+    }
+
     private func registerLifecycle(_ names: [(Notification.Name, String)]) {
         guard stoppedAtMs == nil else { return }
         for (name, code) in names {
             let observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
                 let observed = ContinuousClock.now
-                Task { [weak self] in await self?.lifecycleChanged(code, observed: observed) }
+                Task { [weak self] in await self?.recordLifecycle(code, observed: observed) }
             }
-            observers.append(observer)
+            observations.tokens.append(observer)
         }
-        lifecycleSetup = nil
     }
     #endif
 
-    private func lifecycleChanged(_ code: String, observed: ContinuousClock.Instant) {
-        guard stoppedAtMs == nil else { return }
-        state.event(code: code, severity: "info", at: elapsed(observed))
+    private func initialLifecycleState(foreground value: Bool, observed: ContinuousClock.Instant) {
+        guard stoppedAtMs == nil, lastLifecycleObserved.map({ observed >= $0 }) ?? true else { return }
+        lastLifecycleObserved = observed
+        foreground = value
+        if foreground { resumeSampler() }
+        else { sampler?.cancel(); sampler = nil; checkpoint(at: elapsed()) }
+        lifecycleSetup = nil
     }
 
-    private func memoryPressureChanged(_ level: String, observed: ContinuousClock.Instant) {
+    func recordLifecycle(_ code: String, observed: ContinuousClock.Instant = ContinuousClock.now) {
+        guard stoppedAtMs == nil, ["APP_ACTIVE", "APP_BACKGROUND", "APP_FOREGROUND", "APP_INACTIVE"].contains(code) else { return }
+        state.event(code: code, severity: "info", at: elapsed(observed))
+        guard lastLifecycleObserved.map({ observed >= $0 }) ?? true else { checkpointEvent(); return }
+        lastLifecycleObserved = observed
+        if code == "APP_BACKGROUND" {
+            foreground = false
+            sampler?.cancel(); sampler = nil
+            checkpoint(at: elapsed())
+        } else if code == "APP_ACTIVE" || code == "APP_FOREGROUND" {
+            foreground = true
+            resumeSampler()
+            checkpointEvent()
+        } else { checkpointEvent() }
+    }
+
+    func memoryPressureChanged(_ level: String, observed: ContinuousClock.Instant = ContinuousClock.now) {
         guard stoppedAtMs == nil else { return }
         state.memoryPressure(level, at: elapsed(observed))
+        checkpointEvent()
     }
 
     private func thermalChanged(observed: ContinuousClock.Instant) {
         guard stoppedAtMs == nil else { return }
         state.thermal(Self.thermalState(), at: elapsed(observed))
+        checkpointEvent()
     }
 
     private static func thermalState() -> String {
@@ -566,6 +884,17 @@ actor AssistRuntimeMonitor {
         }
         #else
         return "unknown"
+        #endif
+    }
+
+    private static func osVersion() -> String {
+        #if canImport(Darwin)
+        // Preserve the iOS build identifier, including beta releases, for
+        // correlation with the operating system's termination reports.
+        return ProcessInfo.processInfo.operatingSystemVersionString
+        #else
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
         #endif
     }
 

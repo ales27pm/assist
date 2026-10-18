@@ -522,4 +522,199 @@
 +    }
 +}
 +#endif
+
+diff --git a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSession.swift b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSession.swift
+index 5861bd7..e8ad5f0 100644
+--- a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSession.swift
++++ b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSession.swift
+@@ -2,10 +2,10 @@
+ @preconcurrency import CoreML
+ import Foundation
  
+-/// A persistent TTS session that keeps the voice KV cache warm across utterances.
++/// A persistent TTS session that shares immutable voice conditioning across utterances.
+ ///
+-/// Creating a session performs the expensive voice prefill once (~125 tokens),
+-/// then each enqueued utterance only pays the text prefill cost. Mimi decoder
++/// Presets retain their compact baked prefix; cloned voices prefill once.
++/// Each enqueued utterance creates its independent working KV. Mimi decoder
+ /// state persists across utterances for seamless audio continuity.
+ public actor PocketTtsSession {
+ 
+@@ -93,7 +93,7 @@ public actor PocketTtsSession {
+     private let mimiKeys: PocketTtsMimiKeys
+ 
+     // Persistent state (IO placements). `nil` for `.aneState`.
+-    private let voiceKVSnapshot: PocketTtsSynthesizer.KVCacheState?
++    private let voiceConditioning: PocketTtsSynthesizer.SessionVoiceConditioning?
+     private let constants: PocketTtsConstantsBundle
+     private let bosEmb: MLMultiArray
+     private let temperature: Float
+@@ -115,11 +115,11 @@ public actor PocketTtsSession {
+ 
+     // MARK: - Initialization
+ 
+-    /// Create a session with pre-computed voice KV cache.
++    /// Create a session with immutable preset or model-prefilled conditioning.
+     ///
+     /// This initializer is internal — use `PocketTtsManager.makeSession()` instead.
+     init(
+-        voiceKVSnapshot: PocketTtsSynthesizer.KVCacheState,
++        voiceConditioning: PocketTtsSynthesizer.SessionVoiceConditioning,
+         mimiState: PocketTtsSynthesizer.MimiState,
+         constants: PocketTtsConstantsBundle,
+         condModel: MLModel,
+@@ -138,7 +138,7 @@ public actor PocketTtsSession {
+         language: PocketTtsLanguage = .english,
+         maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk
+     ) throws {
+-        self.voiceKVSnapshot = voiceKVSnapshot
++        self.voiceConditioning = voiceConditioning
+         self.mimiState = mimiState
+         self.constants = constants
+         self.condModel = condModel
+@@ -154,7 +154,7 @@ public actor PocketTtsSession {
+         self.bosEmb = bosEmb
+         self.temperature = temperature
+         self.language = language
+-        let voicePosition = Int(voiceKVSnapshot.positions[0][0].floatValue)
++        let voicePosition = voiceConditioning.position
+         self.voiceCachePosition = voicePosition
+         self.maxTokensPerChunk = try PocketTtsSynthesizer.effectiveMaxTokensPerChunk(
+             requested: maxTokensPerChunk, voiceCachePosition: voicePosition
+@@ -196,7 +196,7 @@ public actor PocketTtsSession {
+         language: PocketTtsLanguage = .english,
+         maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk
+     ) throws {
+-        self.voiceKVSnapshot = nil
++        self.voiceConditioning = nil
+         self.mimiState = mimiState
+         self.constants = constants
+         self.condModel = nil
+@@ -317,7 +317,7 @@ public actor PocketTtsSession {
+         }
+ 
+         guard let condModel, let stepModel, let flowModel,
+-            let condLayerKeys, let flowlmLayerKeys, let voiceKVSnapshot
++            let condLayerKeys, let flowlmLayerKeys, let voiceConditioning
+         else {
+             throw PocketTTSError.processingFailed(
+                 "PocketTTS session misconfigured: IO models missing")
+@@ -331,8 +331,8 @@ public actor PocketTtsSession {
+         let tokenIds = constants.tokenizer.encode(normalizedChunk)
+         let textEmbeddings = PocketTtsSynthesizer.embedTokens(tokenIds, constants: constants)
+ 
+-        // Clone voice KV snapshot and prefill text tokens only
+-        var kvState = try PocketTtsSynthesizer.cloneKVCacheState(voiceKVSnapshot)
++        // Each chunk owns its mutable KV; the voice prefix stays immutable.
++        var kvState = try voiceConditioning.makeWorkingState()
+         kvState = try await PocketTtsSynthesizer.prefillKVCacheText(
+             state: kvState, textEmbeddings: textEmbeddings, model: condModel,
+             layerKeys: condLayerKeys,
+diff --git a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+KVCache.swift b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+KVCache.swift
+index 803ad43..a7e3419 100644
+--- a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+KVCache.swift
++++ b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+KVCache.swift
+@@ -4,6 +4,42 @@ import Foundation
+ 
+ extension PocketTtsSynthesizer {
+ 
++    /// An immutable voice prefix. Presets already have a compact baked snapshot;
++    /// cloned prompts require a model-prefilled cache. Each text chunk receives
++    /// its own mutable working state, never the prefix owned by this value.
++    enum SessionVoiceConditioning {
++        case preset(PocketTtsVoiceCacheSnapshot, layers: Int, splitKV: Bool)
++        case prefilled(KVCacheState)
++
++        static func presetSnapshot(_ snapshot: PocketTtsVoiceCacheSnapshot, layers: Int,
++                                   splitKV: Bool) throws -> Self {
++            guard layers > 0, snapshot.layers.count == layers,
++                  (0...PocketTtsConstants.kvCacheMaxLen).contains(snapshot.cacheSeqLen),
++                  snapshot.layers.allSatisfy({ $0.cache.count == 2 * snapshot.cacheSeqLen * 16 * 64 }) else {
++                throw PocketTTSError.processingFailed("Invalid preset voice cache snapshot")
++            }
++            // Keep only the shared compact prefix. Expanding it here and cloning
++            // that full cache per chunk retained an extra 96 MiB for a 24L voice.
++            return .preset(snapshot, layers: layers, splitKV: splitKV)
++        }
++
++        var position: Int {
++            switch self {
++            case .preset(let snapshot, _, _): return snapshot.layers.first?.offset ?? 0
++            case .prefilled(let state): return Int(state.positions[0][0].floatValue)
++            }
++        }
++
++        func makeWorkingState() throws -> KVCacheState {
++            switch self {
++            case .preset(let snapshot, let layers, let splitKV):
++                return try kvCacheStateFromSnapshot(snapshot, layers: layers, splitKV: splitKV)
++            case .prefilled(let state):
++                return try cloneKVCacheState(state)
++            }
++        }
++    }
++
+     /// Reject a conditioning or generation write that would exceed the
+     /// fixed-size KV cache. Core ML scatter operations otherwise fail with an
+     /// opaque model error (or can produce invalid output on some placements).
+diff --git a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer.swift b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer.swift
+index 7e8c9be..ea6d9af 100644
+--- a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer.swift
++++ b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer.swift
+@@ -295,10 +295,10 @@ public struct PocketTtsSynthesizer {
+ 
+     // MARK: - Session API
+ 
+-    /// Create a persistent TTS session that keeps the voice KV cache warm.
++    /// Create a persistent TTS session sharing the voice conditioning prefix.
+     ///
+-    /// Performs the expensive voice prefill once (~125 tokens), then returns a
+-    /// session where each enqueued utterance only pays the text prefill cost.
++    /// Presets keep their compact baked prefix until a chunk needs a working
++    /// KV cache. Cloned voices perform their model prefill once as before.
+     ///
+     /// Must be called within a `withModelStore` context.
+     static func makeSession(
+@@ -338,33 +338,32 @@ public struct PocketTtsSynthesizer {
+         let seedValue = seed ?? UInt64.random(in: 0...UInt64.max)
+ 
+         // One-time voice prefill. Two paths matching `prefillKVCache`:
+-        //  - Shipped voices (cacheSnapshot != nil): drop pre-baked K/V into
+-        //    cache, skip cond_step entirely (`promptLength == 0`, so the
+-        //    loop in `prefillKVCacheVoice` would be a no-op anyway).
++        //  - Shipped voices (cacheSnapshot != nil): share the compact pre-baked
++        //    prefix. Each chunk expands it directly into its working KV cache.
+         //  - Cloned voices (flat audio prompt): feed `bos_before_voice`
+         //    plus every voice token through cond_step.
+-        let voiceKVSnapshot: KVCacheState
++        let voiceConditioning: SessionVoiceConditioning
+         if let snapshot = voiceData.cacheSnapshot {
+-            voiceKVSnapshot = try kvCacheStateFromSnapshot(
++            voiceConditioning = try .presetSnapshot(
+                 snapshot, layers: condLayerKeys.layerCount, splitKV: condLayerKeys.isSplitKV)
+         } else {
+             let emptyState = try emptyKVCacheState(
+                 layers: condLayerKeys.layerCount, splitKV: condLayerKeys.isSplitKV)
+-            voiceKVSnapshot = try await prefillKVCacheVoice(
++            voiceConditioning = .prefilled(try await prefillKVCacheVoice(
+                 state: emptyState, voiceData: voiceData,
+                 bosBeforeVoice: constants.bosBeforeVoice,
+                 model: condModel, layerKeys: condLayerKeys,
+                 prefillModel: condPrefillModel, prefillLayerKeys: condPrefillLayerKeys,
+                 useFastPrefill: useCondPrefill
+-            )
++            ))
+         }
+ 
+         logger.info(
+-            "Session voice prefill at position \(Int(voiceKVSnapshot.positions[0][0].floatValue))"
++            "Session voice prefix at position \(voiceConditioning.position)"
+         )
+ 
+         let session = try PocketTtsSession(
+-            voiceKVSnapshot: voiceKVSnapshot,
++            voiceConditioning: voiceConditioning,
+             mimiState: mimiState,
+             constants: constants,
+             condModel: condModel,

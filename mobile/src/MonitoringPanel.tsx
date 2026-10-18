@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AppState,
   Pressable,
@@ -13,6 +13,7 @@ import { uiGrammar } from './uiGrammar';
 import {
   MonitoringPhase,
   MonitoringSnapshot,
+  MonitoringVoiceStage,
   parseMonitoringSnapshot,
 } from './monitoring';
 
@@ -24,6 +25,18 @@ const phaseLabels: Record<MonitoringPhase, string> = {
   cancelling: 'Annulation',
   failed: 'Échec',
   diagnosing: 'Diagnostic',
+};
+const voiceStageLabels: Record<MonitoringVoiceStage, string> = {
+  inactive: 'Au repos',
+  preparing: 'Préparation',
+  pocket: 'Chargement de PocketTTS',
+  parakeet: 'Chargement de Parakeet',
+  silero: 'Chargement de Silero',
+  session: 'Préparation de la lecture',
+  audio: 'Démarrage audio',
+  listening: 'À l’écoute',
+  speaking: 'Lecture en cours',
+  failed: 'Interrompue',
 };
 const thermalLabels = {
   nominal: 'Nominal',
@@ -80,6 +93,7 @@ const eventLabels: Record<string, string> = {
   PHASE_CHANGED: 'État modifié',
   THERMAL_CHANGED: 'État thermique modifié',
   MEMORY_PRESSURE_CHANGED: 'Pression mémoire modifiée',
+  VOICE_STAGE_CHANGED: 'Étape vocale modifiée',
 };
 
 function number(value: number | null | undefined, digits = 0): string {
@@ -120,7 +134,26 @@ export function MonitoringPanel() {
   const [expanded, setExpanded] = useState(false);
   const [details, setDetails] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState('');
+  const [exportingPrevious, setExportingPrevious] = useState(false);
+  const [previousMessage, setPreviousMessage] = useState<{
+    text: string;
+    error: boolean;
+  } | null>(null);
+  const exportLifetime = useRef({ mounted: false, version: 0, busy: false });
   const available = typeof NativeAssist?.getMonitoringSnapshot === 'function';
+  const previousAvailable =
+    typeof NativeAssist?.getPreviousMonitoringSnapshot === 'function';
+
+  useEffect(() => {
+    const lifetime = exportLifetime.current;
+    lifetime.mounted = true;
+    return () => {
+      lifetime.mounted = false;
+      lifetime.version += 1;
+      lifetime.busy = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!available) {
@@ -170,6 +203,12 @@ export function MonitoringPanel() {
       }
       active = nextActive;
       version += 1;
+      // Share sheets can be cancelled without settling on every platform.
+      // Retire the old continuation before another foreground export starts.
+      exportLifetime.current.version += 1;
+      exportLifetime.current.busy = false;
+      setSharing(false);
+      setExportingPrevious(false);
       setForeground(active);
       setFresh(false);
       stop();
@@ -188,8 +227,83 @@ export function MonitoringPanel() {
     };
   }, [available]);
 
+  const beginExport = () => {
+    const lifetime = exportLifetime.current;
+    if (!lifetime.mounted || lifetime.busy || !foreground) return null;
+    lifetime.busy = true;
+    lifetime.version += 1;
+    return lifetime.version;
+  };
+  const exportIsCurrent = (version: number) =>
+    exportLifetime.current.mounted &&
+    exportLifetime.current.version === version;
+  const finishExport = (version: number) => {
+    if (!exportIsCurrent(version)) return;
+    exportLifetime.current.busy = false;
+    setSharing(false);
+    setExportingPrevious(false);
+  };
+  const shareCurrent = async () => {
+    if (!snapshot) return;
+    const version = beginExport();
+    if (version === null) return;
+    setSharing(true);
+    setShareError('');
+    try {
+      const report = parseMonitoringSnapshot(JSON.stringify(snapshot));
+      await Share.share({ message: JSON.stringify(report, null, 2) });
+    } catch {
+      if (exportIsCurrent(version)) {
+        setShareError('Partage du suivi indisponible.');
+      }
+    } finally {
+      finishExport(version);
+    }
+  };
+  const exportPrevious = async () => {
+    if (typeof NativeAssist?.getPreviousMonitoringSnapshot !== 'function') return;
+    const version = beginExport();
+    if (version === null) return;
+    setExportingPrevious(true);
+    setPreviousMessage(null);
+    let step: 'read' | 'validate' | 'share' = 'read';
+    try {
+      const json = await NativeAssist.getPreviousMonitoringSnapshot();
+      if (!exportIsCurrent(version)) return;
+      if (typeof json === 'string' && json.trim() === 'null') {
+        setPreviousMessage({
+          text: 'Aucune session précédente sauvegardée n’est disponible.',
+          error: false,
+        });
+        return;
+      }
+      step = 'validate';
+      const report = parseMonitoringSnapshot(json);
+      step = 'share';
+      await Share.share({ message: JSON.stringify(report, null, 2) });
+    } catch {
+      if (exportIsCurrent(version)) {
+        const messages = {
+          read: 'Lecture de la session précédente indisponible. Réessaie.',
+          validate:
+            'La session précédente est illisible ou incompatible. Aucun rapport n’a été partagé.',
+          share: 'Export de la session précédente indisponible.',
+        };
+        setPreviousMessage({ text: messages[step], error: true });
+      }
+    } finally {
+      finishExport(version);
+    }
+  };
+
   const current = snapshot?.current;
   const diagnostic = snapshot?.diagnostic;
+  const persistence = snapshot?.persistence;
+  const persistenceUnavailable =
+    persistence !== null &&
+    typeof persistence === 'object' &&
+    'status' in persistence &&
+    persistence.status === 'unavailable';
   return (
     <View style={styles.panel}>
       <Text role="heading" style={styles.title}>
@@ -204,8 +318,14 @@ export function MonitoringPanel() {
           <Text style={styles.muted}>
             {foreground
               ? 'Actualisation chaque seconde au premier plan.'
-              : 'Suivi en pause en arrière-plan.'}
+              : 'Suivi en pause sur cet écran en arrière-plan.'}
           </Text>
+          {previousAvailable && (
+            <Text style={styles.muted}>
+              Le suivi natif fonctionne indépendamment de cet écran lorsque
+              l’app est au premier plan.
+            </Text>
+          )}
           {error ? (
             <Text role="alert" style={styles.warning}>
               {error}
@@ -218,6 +338,11 @@ export function MonitoringPanel() {
               <Text style={styles.body}>
                 État : {phaseLabels[current.phase]}
               </Text>
+              {current.voiceStage !== undefined && (
+                <Text style={styles.body}>
+                  Voix : {voiceStageLabels[current.voiceStage]}
+                </Text>
+              )}
               <Text style={styles.muted}>
                 {!foreground || error || !fresh
                   ? 'Dernier échantillon reçu · '
@@ -405,28 +530,25 @@ export function MonitoringPanel() {
                   )}
                   <Pressable
                     role="button"
-                    aria-disabled={sharing}
-                    disabled={sharing}
-                    style={[styles.button, sharing && styles.disabled]}
-                    onPress={async () => {
-                      setSharing(true);
-                      try {
-                        await Share.share({
-                          message: JSON.stringify(snapshot, null, 2),
-                        });
-                      } catch {
-                        setError('Partage du suivi indisponible.');
-                      } finally {
-                        setSharing(false);
-                      }
-                    }}
+                    aria-disabled={sharing || exportingPrevious || !foreground}
+                    disabled={sharing || exportingPrevious || !foreground}
+                    style={[
+                      styles.button,
+                      (sharing || exportingPrevious || !foreground) &&
+                        styles.disabled,
+                    ]}
+                    onPress={shareCurrent}
                   >
                     <Text style={styles.buttonText}>Partager le suivi</Text>
                   </Pressable>
+                  {!!shareError && (
+                    <Text role="alert" style={styles.warning}>
+                      {shareError}
+                    </Text>
+                  )}
                   <Text style={styles.muted}>
-                    Mesures et événements conservés en mémoire. Le rapport de
-                    suivi exclut les messages, les réponses et le chemin du
-                    modèle.
+                    Le rapport de suivi exclut les messages, les réponses et le
+                    chemin du modèle.
                   </Text>
                 </>
               )}
@@ -434,6 +556,51 @@ export function MonitoringPanel() {
           )}
         </>
       )}
+      <View style={styles.group}>
+        {persistenceUnavailable && (
+          <Text role="alert" style={styles.warning}>
+            Sauvegarde locale indisponible. Les dernières mesures risquent de
+            ne pas être récupérables après fermeture.
+          </Text>
+        )}
+        <Pressable
+          role="button"
+          aria-disabled={
+            !previousAvailable || sharing || exportingPrevious || !foreground
+          }
+          disabled={
+            !previousAvailable || sharing || exportingPrevious || !foreground
+          }
+          style={[
+            styles.secondaryButton,
+            (!previousAvailable || sharing || exportingPrevious || !foreground) &&
+              styles.disabled,
+          ]}
+          onPress={exportPrevious}
+        >
+          <Text style={styles.body}>Exporter la session précédente</Text>
+        </Pressable>
+        {previousAvailable ? (
+          <Text style={styles.muted}>
+            Le dernier point de contrôle sauvegardé peut précéder l’arrêt et
+            manquer un pic mémoire. Il ne détermine pas à lui seul la cause d’un
+            arrêt.
+          </Text>
+        ) : (
+          <Text style={styles.muted}>
+            L’export de la session précédente nécessite une version native plus
+            récente.
+          </Text>
+        )}
+        {previousMessage && (
+          <Text
+            role={previousMessage.error ? 'alert' : undefined}
+            style={previousMessage.error ? styles.warning : styles.muted}
+          >
+            {previousMessage.text}
+          </Text>
+        )}
+      </View>
     </View>
   );
 }

@@ -10,12 +10,16 @@ import Tokenizers
 final class AssistCoreAI: NSObject {
     private let monitor: AssistRuntimeMonitor
     private let coordinator: AssistInferenceCoordinator
+    @MainActor private var voiceMonitoringTask: Task<Void, Never>?
 
     override init() {
         let monitor = AssistRuntimeMonitor()
         self.monitor = monitor
         self.coordinator = AssistInferenceCoordinator(monitor: monitor)
         super.init()
+        // Monitoring starts with the native engine, not with the diagnostics
+        // screen. Model loading and blocked JS must not suspend sampling.
+        Task { @concurrent in await monitor.start() }
     }
 
     @objc(monitoringSnapshot:)
@@ -24,6 +28,27 @@ final class AssistCoreAI: NSObject {
         Task { @concurrent in
             do { completion(try await monitor.snapshotJSON(), nil) }
             catch { completion(nil, error as NSError) }
+        }
+    }
+
+    @objc(previousMonitoringSnapshot:)
+    func previousMonitoringSnapshot(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        let monitor = monitor
+        Task { @concurrent in
+            do { completion(try await monitor.previousSnapshotJSON(), nil) }
+            catch { completion(nil, error as NSError) }
+        }
+    }
+
+    @MainActor @objc(recordVoiceMonitoringStage:)
+    func recordVoiceMonitoringStage(_ stage: String) {
+        let monitor = monitor
+        let previous = voiceMonitoringTask
+        // Preserve native callback order even when actor delivery is delayed.
+        // Neither the task nor the monitor captures this bridge object.
+        voiceMonitoringTask = Task { @concurrent in
+            await previous?.value
+            await monitor.recordVoiceStage(stage)
         }
     }
 

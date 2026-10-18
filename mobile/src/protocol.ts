@@ -92,7 +92,9 @@ export function parseState(json: string): EngineState {
   return value as EngineState;
 }
 export function parseProgress(json: string): Progress {
-  const value = object(json);
+  return progress(object(json));
+}
+function progress(value: Record<string, unknown>): Progress {
   if (
     typeof value.requestId !== 'string' ||
     typeof value.text !== 'string' ||
@@ -106,7 +108,7 @@ export function parseProgress(json: string): Progress {
 }
 export function parseResult(json: string): GenerationResult {
   const value = object(json);
-  parseProgress(json);
+  progress(value);
   if (
     typeof value.finishReason !== 'string' ||
     value.aneExecution !== 'unverified'

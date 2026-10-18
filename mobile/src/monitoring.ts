@@ -7,8 +7,21 @@ export type MonitoringPhase =
   | 'failed'
   | 'diagnosing';
 
+export type MonitoringVoiceStage =
+  | 'inactive'
+  | 'preparing'
+  | 'pocket'
+  | 'parakeet'
+  | 'silero'
+  | 'session'
+  | 'audio'
+  | 'listening'
+  | 'speaking'
+  | 'failed';
+
 export type MonitoringSample = {
   phase: MonitoringPhase;
+  voiceStage?: MonitoringVoiceStage;
   sessionElapsedMs: number;
   physicalFootprintBytes?: number | null;
   peakPhysicalFootprintBytes?: number | null;
@@ -68,6 +81,18 @@ const phases: string[] = [
   'failed',
   'diagnosing',
 ];
+const voiceStages: string[] = [
+  'inactive',
+  'preparing',
+  'pocket',
+  'parakeet',
+  'silero',
+  'session',
+  'audio',
+  'listening',
+  'speaking',
+  'failed',
+];
 const countFields = [
   'physicalFootprintBytes',
   'peakPhysicalFootprintBytes',
@@ -120,6 +145,9 @@ function sample(value: unknown): value is MonitoringSample {
     record(value) &&
     typeof value.phase === 'string' &&
     phases.includes(value.phase) &&
+    (value.voiceStage === undefined ||
+      (typeof value.voiceStage === 'string' &&
+        voiceStages.includes(value.voiceStage))) &&
     finite(value.sessionElapsedMs) &&
     typeof value.thermalState === 'string' &&
     ['nominal', 'fair', 'serious', 'critical', 'unknown'].includes(

@@ -11,6 +11,19 @@ private final class PlaybackProbe {
     let releases = Atomic<Int>(0)
 }
 
+private actor PlaybackCreditProbe {
+    private var credits = 0
+    private var waiter: CheckedContinuation<Void, Never>?
+    func acknowledge() {
+        credits += 1
+        waiter?.resume(); waiter = nil
+    }
+    func waitForCredit() async {
+        if credits == 0 { await withCheckedContinuation { waiter = $0 } }
+    }
+    func count() -> Int { credits }
+}
+
 @MainActor
 private final class TeardownNotificationProbe {
     var ownership = AssistVoiceAudioSessionOwnership()
@@ -126,6 +139,39 @@ struct VoiceDuplexChecks {
             player.stop()
         }
         print("PASS: actual AVAudioPlayerNode.stop releases a scheduled dataPlayedBack callback without starting hardware.")
+    }
+
+    @MainActor
+    private static func weakPlaybackCredits() async throws {
+        func completion(for session: PlaybackCreditProbe) -> @Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void {
+            AssistVoiceCallbacks.playback(release: { [weak session] in
+                Task { [weak session] in
+                    guard let session else { return }
+                    await session.acknowledge()
+                }
+            }) { }
+        }
+        let active = PlaybackCreditProbe()
+        let activeCallback = completion(for: active)
+        activeCallback(.dataPlayedBack)
+        activeCallback(.dataPlayedBack)
+        await active.waitForCredit()
+        let credits = await active.count()
+        precondition(credits == 1, "A live exact producer still receives one credit per completed buffer")
+        var retired: PlaybackCreditProbe? = PlaybackCreditProbe()
+        weak let released = retired
+        let retiredCallback = completion(for: retired!)
+        retired = nil
+        precondition(released == nil, "Queued playback callbacks must not own retired model/session storage")
+        retiredCallback(.dataPlayedBack)
+        let source = try String(contentsOfFile: "mobile/ios/Assist/Voice/AssistVoice.swift", encoding: .utf8)
+        let start = source.range(of: "    private func scheduleFluidPCM(")!
+        let end = source.range(of: "    private func finishFluidSpeechIfDrained(", range: start.upperBound..<source.endIndex)!
+        let body = source[start.lowerBound..<end.lowerBound]
+        precondition(body.contains("AssistVoiceCallbacks.playback(release: { [weak session] in") &&
+                     body.contains("Task { [weak session] in") && body.contains("await session.acknowledgePlaybackFrame()"),
+                     "Production credits must use the tested weak exact-session adapter")
+        print("PASS live exact-session credits remain once-only; retired playback callbacks do not retain producers")
     }
 
     @MainActor
@@ -528,6 +574,7 @@ struct VoiceDuplexChecks {
         longChunkSequence()
         await playbackCallbackAfterStop()
         await actualStoppedPlayer()
+        try await weakPlaybackCredits()
         try await formats()
         await finePacketBudget()
         monitorRetries()

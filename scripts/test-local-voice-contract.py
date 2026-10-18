@@ -24,6 +24,7 @@ class LocalVoiceSourceContractTests(unittest.TestCase):
         cls.bridge = (NATIVE / "RCTNativeAssist.mm").read_text()
         cls.spec = (ROOT / "mobile/specs/NativeAssist.ts").read_text()
         cls.project = (ROOT / "mobile/ios/Assist.xcodeproj/project.pbxproj").read_text()
+        cls.core = (NATIVE / "Inference/AssistCoreAI.swift").read_text()
         cls.info = plistlib.loads((NATIVE / "Info.plist").read_bytes())
 
     def test_both_protected_apple_apis_have_usage_descriptions(self):
@@ -53,6 +54,31 @@ class LocalVoiceSourceContractTests(unittest.TestCase):
         self.assertIn("readonly onVoiceEvent: CodegenTypes.EventEmitter<ProgressEvent>", self.spec)
         self.assertIn("emitOnVoiceEvent:", self.bridge)
         self.assertIn("[self->_voice invalidate]", self.bridge)
+
+    def test_previous_session_export_crosses_the_typed_native_boundary(self):
+        # These are source wiring guards, not proof of an installed binary.
+        self.assertIn("getPreviousMonitoringSnapshot(): Promise<string>;", self.spec)
+        self.assertIn("- (void)getPreviousMonitoringSnapshot:", self.bridge)
+        self.assertIn("[self->_engine previousMonitoringSnapshot:AssistPromise(resolve, reject)]", self.bridge)
+        self.assertIn("@objc(previousMonitoringSnapshot:)", self.core)
+        self.assertIn("try await monitor.previousSnapshotJSON()", self.core)
+
+    def test_monitor_starts_with_native_ownership_without_opening_the_panel(self):
+        initializer = self.core.split("override init() {", 1)[1].split("@objc(monitoringSnapshot:)", 1)[0]
+        self.assertIn("await monitor.start()", initializer)
+        self.assertIn("await monitor.shutdown()", self.core)
+
+    def test_voice_monitor_receives_only_separate_fixed_stage_identifiers(self):
+        handler = self.bridge.split("[_voice setMonitoringStageHandler:", 1)[1].split("]", 1)[0]
+        self.assertIn("recordVoiceMonitoringStage:stage", handler)
+        self.assertNotIn("json", handler)
+        self.assertIn("await previous?.value", self.core)  # Ordered native stage delivery.
+        self.assertIn("await monitor.recordVoiceStage(stage)", self.core)
+        self.assertIn("monitoringStage: stage.rawValue", self.voice)
+        self.assertIn('monitoringStage: "audio"', self.voice)
+        self.assertIn('case "listening", "speaking": recordRuntimeMonitoringStage(phase)', self.voice)
+        self.assertIn("guard stage != lastRuntimeMonitoringStage", self.voice)
+        self.assertIn("monitoringStageHandler = nil", self.voice)
 
     def test_exported_voice_protocol_is_imported_before_generated_swift_header(self):
         # Regression from the real Xcode 27.1 Objective-C++ compile failure:

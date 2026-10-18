@@ -122,6 +122,43 @@ test('queries capabilities without starting capture or playback on mount', async
   expect(result.current.captureBusy).toBe(false);
 });
 
+test('parses each accepted native input event once and preserves its validated observations', async () => {
+  const onEvent = jest.fn();
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), onEvent, enabled: true }),
+  );
+  await act(async () => { await result.current.startListening(); });
+  const sessionId = native.startListening.mock.calls[0][0];
+  const diagnostics = inputDiagnostics();
+  const update = { sessionId, kind: 'input', phase: 'listening', diagnostics };
+  const json = JSON.stringify(update);
+  const parse = jest.spyOn(JSON, 'parse');
+  try {
+    await act(async () => { voiceEvent({ json }); });
+    expect(parse.mock.calls.filter(([input]) => input === json)).toHaveLength(1);
+  } finally {
+    parse.mockRestore();
+  }
+  expect(onEvent).toHaveBeenLastCalledWith(update);
+  expect(result.current.diagnostics).toEqual(diagnostics);
+});
+
+test('ignores invalid fields from a retired session before validating current-event fields', async () => {
+  const onEvent = jest.fn();
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), onEvent, enabled: true }),
+  );
+  await act(async () => { await result.current.startListening(); });
+  await act(async () => {
+    voiceEvent({ json: JSON.stringify({ sessionId: 'retired', kind: 'invented' }) });
+    voiceEvent({ json: 'null' });
+    voiceEvent({ json: '[]' });
+  });
+  expect(result.current.error).toBe('');
+  expect(result.current.phase).toBe('listening');
+  expect(onEvent).not.toHaveBeenCalled();
+});
+
 test('capabilities arriving after the initial hidden-screen cancellation still enable later capture', async () => {
   const capabilities = deferred<string>();
   native.getVoiceStatus.mockReturnValueOnce(capabilities.promise);

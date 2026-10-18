@@ -48,6 +48,36 @@ test('retains additional native evidence and failed diagnostic counts for sharin
   expect(parseMonitoringSnapshot(JSON.stringify(value))).toEqual(value);
 });
 
+test('retains bounded previous-session metadata without inferring an interruption cause', () => {
+  const value = report({
+    nativeBuild: '24',
+    recovery: {
+      source: 'previousSessionCheckpoint',
+      checkpointIntervalMs: 5000,
+      sessionEndedNormally: false,
+    },
+    current: { ...sample, voiceStage: 'pocket' },
+    history: [{ ...sample, voiceStage: 'preparing' }],
+  });
+  expect(parseMonitoringSnapshot(JSON.stringify(value))).toEqual(value);
+});
+
+test.each([
+  'inactive',
+  'preparing',
+  'pocket',
+  'parakeet',
+  'silero',
+  'session',
+  'audio',
+  'listening',
+  'speaking',
+  'failed',
+])('accepts a native voice stage independently of Core AI phase: %s', voiceStage => {
+  const value = report({ current: { ...sample, voiceStage } });
+  expect(parseMonitoringSnapshot(JSON.stringify(value))).toEqual(value);
+});
+
 test.each([
   { aneExecution: 'verified' },
   { current: { ...sample, phase: 'invented' } },
@@ -57,6 +87,10 @@ test.each([
   { current: { ...sample, ttftMs: 'unknown' } },
   { current: { ...sample, memoryPressure: 'low' } },
   { current: { ...sample, lowPowerMode: null } },
+  { current: { ...sample, voiceStage: 'model loading complete' } },
+  { current: { ...sample, voiceStage: null } },
+  { current: { ...sample, voiceStage: 1 } },
+  { history: [{ ...sample, voiceStage: 'invented' }] },
   { history: Array(61).fill(sample) },
   { events: Array(201).fill({}) },
   { generations: Array(101).fill({}) },
@@ -100,3 +134,13 @@ test.each(['prompt', 'text', 'messages', 'content', 'modelPath'])(
     ).toThrow('Suivi natif invalide.');
   },
 );
+
+test('rejects private content hidden in previous-session metadata', () => {
+  expect(() =>
+    parseMonitoringSnapshot(
+      JSON.stringify(
+        report({ recovery: { previousSession: { MeSsAgEs: ['private'] } } }),
+      ),
+    ),
+  ).toThrow('Suivi natif invalide.');
+});

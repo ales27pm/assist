@@ -295,10 +295,10 @@ public struct PocketTtsSynthesizer {
 
     // MARK: - Session API
 
-    /// Create a persistent TTS session that keeps the voice KV cache warm.
+    /// Create a persistent TTS session sharing the voice conditioning prefix.
     ///
-    /// Performs the expensive voice prefill once (~125 tokens), then returns a
-    /// session where each enqueued utterance only pays the text prefill cost.
+    /// Presets keep their compact baked prefix until a chunk needs a working
+    /// KV cache. Cloned voices perform their model prefill once as before.
     ///
     /// Must be called within a `withModelStore` context.
     static func makeSession(
@@ -338,33 +338,32 @@ public struct PocketTtsSynthesizer {
         let seedValue = seed ?? UInt64.random(in: 0...UInt64.max)
 
         // One-time voice prefill. Two paths matching `prefillKVCache`:
-        //  - Shipped voices (cacheSnapshot != nil): drop pre-baked K/V into
-        //    cache, skip cond_step entirely (`promptLength == 0`, so the
-        //    loop in `prefillKVCacheVoice` would be a no-op anyway).
+        //  - Shipped voices (cacheSnapshot != nil): share the compact pre-baked
+        //    prefix. Each chunk expands it directly into its working KV cache.
         //  - Cloned voices (flat audio prompt): feed `bos_before_voice`
         //    plus every voice token through cond_step.
-        let voiceKVSnapshot: KVCacheState
+        let voiceConditioning: SessionVoiceConditioning
         if let snapshot = voiceData.cacheSnapshot {
-            voiceKVSnapshot = try kvCacheStateFromSnapshot(
+            voiceConditioning = try .presetSnapshot(
                 snapshot, layers: condLayerKeys.layerCount, splitKV: condLayerKeys.isSplitKV)
         } else {
             let emptyState = try emptyKVCacheState(
                 layers: condLayerKeys.layerCount, splitKV: condLayerKeys.isSplitKV)
-            voiceKVSnapshot = try await prefillKVCacheVoice(
+            voiceConditioning = .prefilled(try await prefillKVCacheVoice(
                 state: emptyState, voiceData: voiceData,
                 bosBeforeVoice: constants.bosBeforeVoice,
                 model: condModel, layerKeys: condLayerKeys,
                 prefillModel: condPrefillModel, prefillLayerKeys: condPrefillLayerKeys,
                 useFastPrefill: useCondPrefill
-            )
+            ))
         }
 
         logger.info(
-            "Session voice prefill at position \(Int(voiceKVSnapshot.positions[0][0].floatValue))"
+            "Session voice prefix at position \(voiceConditioning.position)"
         )
 
         let session = try PocketTtsSession(
-            voiceKVSnapshot: voiceKVSnapshot,
+            voiceConditioning: voiceConditioning,
             mimiState: mimiState,
             constants: constants,
             condModel: condModel,
