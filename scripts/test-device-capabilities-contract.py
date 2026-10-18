@@ -163,6 +163,18 @@ class DeviceCapabilitySourceContracts(unittest.TestCase):
         self.excludes(r"PHPhotoLibrary\.requestAuthorization\b", self.swift_code)
         self.excludes(r"case\s+\.photoLibrary\s*:", self.swift_code)
 
+    def test_bridge_imports_delegate_framework_before_generated_swift_header(self):
+        bridge = strip_swift_comments(source("mobile/ios/Assist/RCTNativeAssist.mm"))
+        generated = re.search(r'(?m)^\s*#import\s+"Assist-Swift\.h"', bridge)
+        self.assertIsNotNone(generated)
+        for name in ("CoreLocation", "UIKit", "AVFoundation"):
+            with self.subTest(framework=name):
+                framework = re.search(
+                    rf'(?m)^\s*#import\s+<{name}/{name}\.h>', bridge
+                )
+                self.assertIsNotNone(framework)
+                self.assertLess(framework.start(), generated.start())
+
     def test_pending_camera_capture_is_retired_before_a_late_grant(self):
         capture = self.function("capturePhoto")
         assignment = r"(?m)^\s*pendingCameraCaptureCompletion\s*=\s*completion\b"

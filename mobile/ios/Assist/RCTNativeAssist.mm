@@ -2,6 +2,9 @@
 // AssistVoice exposes this protocol through the generated Swift header.
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
+// AssistDeviceCapabilities exposes this delegate in Assist-Swift.h. The
+// Objective-C++ consumer must see Core Location before reading that header.
+#import <CoreLocation/CoreLocation.h>
 // The generated Assist Swift interface exposes Expo Swift base classes used by
 // AppDelegate, SceneDelegate, and ExpoModulesProvider. Import Expo's generated
 // interface before Assist-Swift.h so Objective-C++ can resolve those classes.
