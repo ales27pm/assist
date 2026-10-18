@@ -175,11 +175,12 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   });
 }
 
-- (void)listReminders:(BOOL)includeCompleted limit:(NSString *)limit
+- (void)listReminders:(BOOL)includeCompleted startISO:(NSString *)startISO endISO:(NSString *)endISO limit:(NSString *)limit
               resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
-    [self->_deviceCapabilities listReminders:includeCompleted limit:limit completion:AssistPromise(resolve, reject)];
+    [self->_deviceCapabilities listReminders:includeCompleted startISO:startISO endISO:endISO
+                                       limit:limit completion:AssistPromise(resolve, reject)];
   });
 }
 

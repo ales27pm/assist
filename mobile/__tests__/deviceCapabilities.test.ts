@@ -2,6 +2,7 @@ import NativeAssist from '../specs/NativeAssist';
 import {
   getDeviceCapabilityStatus,
   listCalendarEvents,
+  listReminders,
   requestDeviceCapability,
   searchContacts,
 } from '../src/deviceCapabilities';
@@ -13,6 +14,7 @@ jest.mock('../specs/NativeAssist', () => ({
     requestDeviceCapability: jest.fn(),
     searchContacts: jest.fn(),
     listCalendarEvents: jest.fn(),
+    listReminders: jest.fn(),
   },
 }));
 
@@ -65,6 +67,35 @@ describe('device capability bridge', () => {
       '2026-10-01T00:00:00Z',
       '2026-10-02T00:00:00Z',
       '20',
+    );
+  });
+
+  it('requires and forwards an explicit bounded reminder interval', async () => {
+    native.listReminders.mockResolvedValue(
+      JSON.stringify({
+        reminders: [],
+        startISO: '2026-10-01T00:00:00Z',
+        endISO: '2026-10-02T00:00:00Z',
+      }),
+    );
+
+    await expect(
+      listReminders({
+        startISO: '2026-10-01T00:00:00Z',
+        endISO: '2026-10-02T00:00:00Z',
+        includeCompleted: true,
+        limit: 3,
+      }),
+    ).resolves.toEqual({
+      reminders: [],
+      startISO: '2026-10-01T00:00:00Z',
+      endISO: '2026-10-02T00:00:00Z',
+    });
+    expect(native.listReminders).toHaveBeenCalledWith(
+      true,
+      '2026-10-01T00:00:00Z',
+      '2026-10-02T00:00:00Z',
+      '3',
     );
   });
 });

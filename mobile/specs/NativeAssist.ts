@@ -19,7 +19,12 @@ export interface Spec extends TurboModule {
     limit: string,
   ): Promise<string>;
   createCalendarEvent(payloadJSON: string): Promise<string>;
-  listReminders(includeCompleted: boolean, limit: string): Promise<string>;
+  listReminders(
+    includeCompleted: boolean,
+    startISO: string,
+    endISO: string,
+    limit: string,
+  ): Promise<string>;
   createReminder(payloadJSON: string): Promise<string>;
   getCurrentLocation(): Promise<string>;
   selectPhoto(): Promise<string>;

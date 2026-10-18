@@ -7,7 +7,6 @@ export type DeviceCapability =
   | 'reminders'
   | 'location'
   | 'camera'
-  | 'photoLibrary'
   | 'notifications'
   | 'biometrics';
 
@@ -188,12 +187,24 @@ export async function createCalendarEvent(
   );
 }
 
+/**
+ * Lists reminders only within an explicit interval of at most 31 days.
+ * Incomplete reminders are filtered by due date. When requested, completed
+ * reminders are also included by completion date while the result limit allows.
+ */
 export async function listReminders(
-  options: { includeCompleted?: boolean; limit?: number } = {},
-): Promise<{ reminders: Reminder[] }> {
+  options: {
+    startISO: string;
+    endISO: string;
+    includeCompleted?: boolean;
+    limit?: number;
+  },
+): Promise<{ reminders: Reminder[]; startISO: string; endISO: string }> {
   return parseObject(
     await native().listReminders(
       options.includeCompleted ?? false,
+      options.startISO,
+      options.endISO,
       resultLimit(options.limit),
     ),
     'les rappels',
@@ -210,7 +221,10 @@ export async function createReminder(
   );
 }
 
-/** Gets one foreground location fix; the native layer does not track in background. */
+/**
+ * Gets one foreground location fix. If location has not been decided yet, this
+ * call can show iOS's when-in-use permission prompt; it never tracks in background.
+ */
 export async function getCurrentLocation(): Promise<{
   latitude: number;
   longitude: number;

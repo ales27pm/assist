@@ -15,21 +15,28 @@ import UserNotifications
 /// current action, and iOS owns every consent prompt.
 @MainActor
 @objc(AssistDeviceCapabilities)
-final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
+// Core Location invokes this delegate on the run loop where its manager was
+// created; this class creates and configures that manager on the main actor.
+// Keep the preconcurrency adapter until the iOS SDK annotates the protocol's
+// delegate requirements with the same actor isolation.
+final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManagerDelegate,
     UIImagePickerControllerDelegate, UINavigationControllerDelegate, PHPickerViewControllerDelegate {
 
-    typealias Completion = (String?, NSError?) -> Void
+    typealias Completion = @MainActor @Sendable (String?, NSError?) -> Void
 
     private let contacts = CNContactStore()
     private let events = EKEventStore()
     private let notificationCenter = UNUserNotificationCenter.current()
+    private var invalidated = false
     private var locationManager: CLLocationManager?
     private var locationPermissionCompletion: Completion?
     private var locationCompletion: Completion?
     private var locationTimeout: Task<Void, Never>?
     private var attachmentCompletion: Completion?
     private var attachmentAuthorizationPending = false
+    private var pendingCameraCaptureCompletion: Completion?
     private weak var attachmentPicker: UIViewController?
+    private var generatedAttachmentURLs = Set<URL>()
 
     private static let maxResults = 50
     private static let maxPayloadBytes = 16 * 1024
@@ -74,8 +81,6 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
             requestLocationPermission(completion)
         case .camera:
             requestCamera(completion)
-        case .photoLibrary:
-            requestPhotoLibrary(completion)
         case .notifications:
             requestNotifications(completion)
         case .biometrics:
@@ -117,12 +122,11 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
             CNContactEmailAddressesKey as CNKeyDescriptor,
         ]
         do {
-            let matches = try contacts.unifiedContacts(
-                matching: CNContact.predicateForContacts(matchingName: query),
-                keysToFetch: keys
-            )
-            let rows = matches.prefix(limit).map { contact in
-                [
+            let request = CNContactFetchRequest(keysToFetch: keys)
+            request.predicate = CNContact.predicateForContacts(matchingName: query)
+            var rows = [[String: Any]]()
+            try contacts.enumerateContacts(with: request) { contact, stop in
+                rows.append([
                     "id": contact.identifier,
                     "givenName": contact.givenName,
                     "familyName": contact.familyName,
@@ -135,7 +139,8 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
                         ["label": CNLabeledValue<NSString>.localizedString(forLabel: value.label ?? ""),
                          "value": value.value as String]
                     },
-                ] as [String: Any]
+                ])
+                if rows.count >= limit { stop.pointee = true }
             }
             completion(Self.encode(["contacts": rows, "query": query]), nil)
         } catch {
@@ -168,11 +173,9 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
         }
 
         let predicate = events.predicateForEvents(withStart: interval.start, end: interval.end, calendars: calendars)
-        let rows = events.events(matching: predicate)
-            .sorted { $0.startDate < $1.startDate }
-            .prefix(limit)
-            .map { event in
-                [
+        var rows = [[String: Any]]()
+        events.enumerateEvents(matching: predicate) { event, stop in
+            rows.append([
                     "id": event.eventIdentifier ?? event.calendarItemIdentifier,
                     "calendarId": event.calendar.calendarIdentifier,
                     "calendarTitle": event.calendar.title,
@@ -180,9 +183,10 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
                     "startISO": Self.isoString(event.startDate),
                     "endISO": Self.isoString(event.endDate),
                     "allDay": event.isAllDay,
-                ] as [String: Any]
-            }
-        completion(Self.encode(["events": Array(rows)]), nil)
+            ])
+            if rows.count >= limit { stop.pointee = true }
+        }
+        completion(Self.encode(["events": rows]), nil)
     }
 
     /// Creates a new event only. Updating and deleting existing events are not
@@ -231,37 +235,44 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
         }
     }
 
-    @objc(listReminders:limit:completion:)
-    func listReminders(_ includeCompleted: Bool, limit: String, completion: @escaping Completion) {
+    @objc(listReminders:startISO:endISO:limit:completion:)
+    func listReminders(_ includeCompleted: Bool, startISO: String, endISO: String,
+                       limit: String, completion: @escaping Completion) {
         guard Self.remindersAuthorized else {
             completion(nil, Self.permissionError("reminders"))
             return
         }
-        guard let limit = Self.resultLimit(limit) else {
-            completion(nil, Self.error("E_RESULT_LIMIT", "La limite doit être comprise entre 1 et 50."))
+        guard let interval = Self.reminderDateInterval(startISO: startISO, endISO: endISO),
+              let limit = Self.resultLimit(limit) else {
+            completion(nil, Self.error("E_REMINDER_QUERY", "La période des rappels ou la limite est invalide."))
             return
         }
-        let predicate = includeCompleted
-            ? events.predicateForReminders(in: nil)
-            : events.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: nil)
-        events.fetchReminders(matching: predicate) { [weak self] reminders in
+        let incompletePredicate = events.predicateForIncompleteReminders(
+            withDueDateStarting: interval.start, ending: interval.end, calendars: nil
+        )
+        events.fetchReminders(matching: incompletePredicate) { [weak self] reminders in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let rows = (reminders ?? []).prefix(limit).map { reminder in
-                    var row: [String: Any] = [
-                        "id": reminder.calendarItemIdentifier,
-                        "calendarId": reminder.calendar.calendarIdentifier,
-                        "calendarTitle": reminder.calendar.title,
-                        "title": reminder.title ?? "",
-                        "completed": reminder.isCompleted,
-                    ]
-                    if let dueDate = reminder.dueDateComponents,
-                       let due = Calendar.current.date(from: dueDate) {
-                        row["dueISO"] = Self.isoString(due)
-                    }
-                    return row
+                let incompleteRows = Self.reminderRows(reminders ?? [], limit: limit)
+                guard includeCompleted, incompleteRows.count < limit else {
+                    completion(Self.reminderResponse(incompleteRows, interval: interval), nil)
+                    return
                 }
-                completion(Self.encode(["reminders": rows]), nil)
+
+                // EventKit does not provide a combined, date-bounded predicate
+                // with a row limit. Ask for completed reminders only when there
+                // is room after the equally bounded incomplete query.
+                let completedPredicate = self.events.predicateForCompletedReminders(
+                    withCompletionDateStarting: interval.start, ending: interval.end, calendars: nil
+                )
+                self.events.fetchReminders(matching: completedPredicate) { [weak self] completed in
+                    Task { @MainActor [weak self] in
+                        guard self != nil else { return }
+                        let remaining = limit - incompleteRows.count
+                        let rows = incompleteRows + Self.reminderRows(completed ?? [], limit: remaining)
+                        completion(Self.reminderResponse(rows, interval: interval), nil)
+                    }
+                }
             }
         }
     }
@@ -378,6 +389,10 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
     /// temporary app-private file.
     @objc(selectPhoto:)
     func selectPhoto(_ completion: @escaping Completion) {
+        guard !invalidated else {
+            completion(nil, Self.error("E_INVALIDATED", "Le module a été fermé."))
+            return
+        }
         guard attachmentCompletion == nil, !attachmentAuthorizationPending else {
             completion(nil, Self.error("E_ATTACHMENT_BUSY", "Une sélection d’image est déjà ouverte."))
             return
@@ -401,6 +416,10 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
     /// image. Video recording is intentionally not exposed.
     @objc(capturePhoto:)
     func capturePhoto(_ completion: @escaping Completion) {
+        guard !invalidated else {
+            completion(nil, Self.error("E_INVALIDATED", "Le module a été fermé."))
+            return
+        }
         guard attachmentCompletion == nil, !attachmentAuthorizationPending else {
             completion(nil, Self.error("E_ATTACHMENT_BUSY", "Une capture d’image est déjà ouverte."))
             return
@@ -410,12 +429,19 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
             presentCamera(completion)
         case .notDetermined:
             attachmentAuthorizationPending = true
+            pendingCameraCaptureCompletion = completion
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.attachmentAuthorizationPending = false
-                    if granted { self.presentCamera(completion) }
-                    else { completion(nil, Self.permissionError("camera")) }
+                    guard let pendingCompletion = self.pendingCameraCaptureCompletion else { return }
+                    self.pendingCameraCaptureCompletion = nil
+                    guard !self.invalidated else {
+                        pendingCompletion(nil, Self.error("E_CANCELLED", "La capture d’image a été fermée."))
+                        return
+                    }
+                    if granted { self.presentCamera(pendingCompletion) }
+                    else { pendingCompletion(nil, Self.permissionError("camera")) }
                 }
             }
         case .denied, .restricted:
@@ -439,6 +465,7 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
         result.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] object, error in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                guard !self.invalidated else { return }
                 if let error {
                     self.finishAttachment(nil, Self.error("E_ATTACHMENT", "Impossible de lire cette image.", underlying: error))
                 } else if let image = object as? UIImage {
@@ -479,7 +506,7 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
                       let body = Self.shortString(value["body"], maxLength: 2_000) else {
                     throw Self.error("E_NOTIFICATION", "Le titre et le message de la notification sont requis.")
                 }
-                let authorization = await self.notificationAuthorization()
+                let authorization = try await self.notificationAuthorization()
                 guard authorization.allowed else {
                     throw Self.permissionError("notifications")
                 }
@@ -545,6 +572,7 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
     }
 
     @objc func invalidate() {
+        invalidated = true
         locationTimeout?.cancel()
         locationTimeout = nil
         locationManager?.stopUpdatingLocation()
@@ -558,23 +586,31 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
         }
         attachmentPicker?.dismiss(animated: false)
         attachmentAuthorizationPending = false
+        if let completion = pendingCameraCaptureCompletion {
+            pendingCameraCaptureCompletion = nil
+            completion(nil, Self.error("E_CANCELLED", "La capture d’image a été fermée."))
+        }
         if let completion = attachmentCompletion {
             attachmentCompletion = nil
             completion(nil, Self.error("E_CANCELLED", "La sélection d’image a été fermée."))
         }
         attachmentPicker = nil
+        for url in generatedAttachmentURLs {
+            try? FileManager.default.removeItem(at: url)
+        }
+        generatedAttachmentURLs.removeAll()
     }
 
     // MARK: Permission implementation
 
     private func requestContacts(_ completion: @escaping Completion) {
         switch CNContactStore.authorizationStatus(for: .contacts) {
-        case .authorized:
+        case .authorized, .limited:
             completion(Self.permissionJSON(.contacts), nil)
         case .notDetermined:
             contacts.requestAccess(for: .contacts) { [weak self] _, error in
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard self != nil else { return }
                     if let error { completion(nil, Self.error("E_CONTACTS_PERMISSION", "Impossible de demander l’accès aux contacts.", underlying: error)) }
                     else { completion(Self.permissionJSON(.contacts), nil) }
                 }
@@ -593,7 +629,7 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
         case .notDetermined, .writeOnly:
             events.requestFullAccessToEvents { [weak self] _, error in
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard self != nil else { return }
                     if let error { completion(nil, Self.error("E_CALENDAR_PERMISSION", "Impossible de demander l’accès aux calendriers.", underlying: error)) }
                     else { completion(Self.permissionJSON(.calendar), nil) }
                 }
@@ -612,7 +648,7 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
         case .notDetermined, .writeOnly:
             events.requestFullAccessToReminders { [weak self] _, error in
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard self != nil else { return }
                     if let error { completion(nil, Self.error("E_REMINDERS_PERMISSION", "Impossible de demander l’accès aux rappels.", underlying: error)) }
                     else { completion(Self.permissionJSON(.reminders), nil) }
                 }
@@ -642,29 +678,14 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
     private func requestCamera(_ completion: @escaping Completion) {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { [weak self] _, error in
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    if let error { completion(nil, Self.error("E_CAMERA_PERMISSION", "Impossible de demander l’accès à la caméra.", underlying: error)) }
-                    else { completion(Self.permissionJSON(.camera), nil) }
+                    guard self != nil else { return }
+                    completion(Self.permissionJSON(.camera), nil)
                 }
             }
         default:
             completion(Self.permissionJSON(.camera), nil)
-        }
-    }
-
-    private func requestPhotoLibrary(_ completion: @escaping Completion) {
-        switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
-        case .notDetermined:
-            PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    completion(Self.permissionJSON(.photoLibrary), nil)
-                }
-            }
-        default:
-            completion(Self.permissionJSON(.photoLibrary), nil)
         }
     }
 
@@ -714,6 +735,10 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
     }
 
     private func presentCamera(_ completion: @escaping Completion) {
+        guard !invalidated else {
+            completion(nil, Self.error("E_CANCELLED", "La capture d’image a été fermée."))
+            return
+        }
         guard let presenter = Self.presenter(), presenter.presentedViewController == nil else {
             completion(nil, Self.error("E_PRESENTATION", "Impossible d’ouvrir la caméra actuellement."))
             return
@@ -748,6 +773,7 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let url = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
             try data.write(to: url, options: .atomic)
+            generatedAttachmentURLs.insert(url)
             finishAttachment(Self.encode([
                 "uri": url.absoluteString,
                 "mediaType": "image/jpeg",
@@ -777,11 +803,15 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
     }
 
     private enum Capability: String, CaseIterable {
-        case contacts, calendar, reminders, location, camera, photoLibrary, notifications, biometrics
+        case contacts, calendar, reminders, location, camera, notifications, biometrics
     }
 
     private static var contactsAuthorized: Bool {
-        CNContactStore.authorizationStatus(for: .contacts) == .authorized
+        switch CNContactStore.authorizationStatus(for: .contacts) {
+        case .authorized, .limited: return true
+        case .notDetermined, .denied, .restricted: return false
+        @unknown default: return false
+        }
     }
 
     private static var calendarAuthorized: Bool {
@@ -797,9 +827,8 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
             Capability.contacts.rawValue: contactsState(CNContactStore.authorizationStatus(for: .contacts)),
             Capability.calendar.rawValue: eventState(EKEventStore.authorizationStatus(for: .event)),
             Capability.reminders.rawValue: eventState(EKEventStore.authorizationStatus(for: .reminder)),
-            Capability.location.rawValue: locationState(CLLocationManager.authorizationStatus()),
+            Capability.location.rawValue: locationState(CLLocationManager().authorizationStatus),
             Capability.camera.rawValue: cameraState(AVCaptureDevice.authorizationStatus(for: .video)),
-            Capability.photoLibrary.rawValue: photoState(PHPhotoLibrary.authorizationStatus(for: .readWrite)),
             Capability.notifications.rawValue: "checkRequired",
             Capability.biometrics.rawValue: biometricStatus(),
         ]
@@ -813,6 +842,7 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
     private static func contactsState(_ status: CNAuthorizationStatus) -> String {
         switch status {
         case .authorized: return "authorized"
+        case .limited: return "limited"
         case .notDetermined: return "notDetermined"
         case .denied: return "denied"
         case .restricted: return "restricted"
@@ -845,17 +875,6 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
     private static func cameraState(_ status: AVAuthorizationStatus) -> String {
         switch status {
         case .authorized: return "authorized"
-        case .notDetermined: return "notDetermined"
-        case .denied: return "denied"
-        case .restricted: return "restricted"
-        @unknown default: return "unavailable"
-        }
-    }
-
-    private static func photoState(_ status: PHAuthorizationStatus) -> String {
-        switch status {
-        case .authorized: return "authorized"
-        case .limited: return "limited"
         case .notDetermined: return "notDetermined"
         case .denied: return "denied"
         case .restricted: return "restricted"
@@ -958,6 +977,41 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
         return (start, end)
     }
 
+    /// EventKit fetchReminders has no row-limit API. Require a narrow, explicit
+    /// time interval before asking it for results so the bridge cannot fetch a
+    /// user's entire reminder store and then discard most of it locally.
+    private static func reminderDateInterval(startISO: String, endISO: String) -> (start: Date, end: Date)? {
+        guard startISO.utf8.count <= 128, endISO.utf8.count <= 128,
+              let start = parseDate(startISO), let end = parseDate(endISO), start < end,
+              end.timeIntervalSince(start) <= 31 * 24 * 60 * 60 else { return nil }
+        return (start, end)
+    }
+
+    private static func reminderRows(_ reminders: [EKReminder], limit: Int) -> [[String: Any]] {
+        reminders.prefix(limit).map { reminder in
+            var row: [String: Any] = [
+                "id": reminder.calendarItemIdentifier,
+                "calendarId": reminder.calendar.calendarIdentifier,
+                "calendarTitle": reminder.calendar.title,
+                "title": reminder.title ?? "",
+                "completed": reminder.isCompleted,
+            ]
+            if let dueDate = reminder.dueDateComponents,
+               let due = Calendar.current.date(from: dueDate) {
+                row["dueISO"] = isoString(due)
+            }
+            return row
+        }
+    }
+
+    private static func reminderResponse(_ rows: [[String: Any]], interval: (start: Date, end: Date)) -> String {
+        encode([
+            "reminders": rows,
+            "startISO": isoString(interval.start),
+            "endISO": isoString(interval.end),
+        ])
+    }
+
     private static func date(_ value: Any?) -> Date? {
         guard let raw = value as? String else { return nil }
         return parseDate(raw)
@@ -991,14 +1045,18 @@ final class AssistDeviceCapabilities: NSObject, CLLocationManagerDelegate,
     }
 
     private static func downscaledImage(_ image: UIImage) -> UIImage? {
-        let size = image.size
-        guard size.width > 0, size.height > 0,
-              size.width.isFinite, size.height.isFinite else { return nil }
-        let largest = max(size.width, size.height)
+        let pointSize = image.size
+        let imageScale = image.scale
+        guard pointSize.width > 0, pointSize.height > 0, imageScale > 0,
+              pointSize.width.isFinite, pointSize.height.isFinite, imageScale.isFinite else { return nil }
+        let pixelSize = CGSize(width: pointSize.width * imageScale, height: pointSize.height * imageScale)
+        let largest = max(pixelSize.width, pixelSize.height)
         let scale = min(1, maximumAttachmentDimension / largest)
-        let target = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
+        let target = CGSize(width: (pixelSize.width * scale).rounded(), height: (pixelSize.height * scale).rounded())
         guard target.width > 0, target.height > 0 else { return nil }
-        let renderer = UIGraphicsImageRenderer(size: target)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: target, format: format)
         return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
     }
 
