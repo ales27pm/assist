@@ -161,7 +161,9 @@ export function SettingsRow({
       accessibilityLabel={label}
       accessibilityValue={value ? { text: value } : undefined}
       accessibilityHint={detail}
-      aria-describedby={Platform.OS === 'web' ? describedBy || undefined : undefined}
+      aria-describedby={
+        Platform.OS === 'web' ? describedBy || undefined : undefined
+      }
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
@@ -309,9 +311,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.6,
   },
-  surface: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 16 },
+  surface: {
+    borderWidth: 1,
+    borderRadius: uiGrammar.radius.surface,
+    paddingHorizontal: 16,
+  },
   action: {
-    minHeight: 52,
+    minHeight: uiGrammar.action.height,
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderRadius: uiGrammar.radius.control,
@@ -324,14 +330,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   row: {
-    minHeight: 64,
+    minHeight: uiGrammar.row.minHeight,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingVertical: 16,
   },
   rowBorder: { borderBottomWidth: 1 },
-  stackedRow: { minHeight: 84, gap: 13, paddingVertical: 21 },
+  stackedRow: {
+    minHeight: uiGrammar.row.stackedMinHeight,
+    gap: uiGrammar.row.iconGap,
+    paddingVertical: uiGrammar.harmony.space.large,
+  },
   rowCopy: { flex: 1, gap: 4 },
   leadingIcon: {
     width: 24,
@@ -348,9 +358,9 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   caption: uiGrammar.type.caption,
-  disclosure: { borderWidth: 1, borderRadius: 20 },
+  disclosure: { borderWidth: 1, borderRadius: uiGrammar.radius.surface },
   disclosureHeader: {
-    minHeight: 64,
+    minHeight: uiGrammar.row.minHeight,
     padding: 16,
     flexDirection: 'row',
     gap: 12,
@@ -363,7 +373,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderRadius: 0,
   },
-  plainDisclosureHeader: { minHeight: 84, paddingHorizontal: 0 },
+  plainDisclosureHeader: {
+    minHeight: uiGrammar.row.stackedMinHeight,
+    gap: uiGrammar.row.iconGap,
+    paddingHorizontal: 0,
+  },
   plainDisclosureBody: { paddingHorizontal: 0, paddingBottom: 21 },
   hidden: { display: 'none' },
   disabled: { opacity: 0.42 },

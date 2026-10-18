@@ -47,8 +47,22 @@
 	</dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Assist accède à vos calendriers uniquement lorsque vous lui demandez de rechercher, consulter ou ajouter un événement.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Assist utilise la caméra uniquement lorsque vous choisissez de prendre une photo à joindre à une conversation.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Assist accède à vos contacts uniquement lorsque vous recherchez une personne pour une action demandée.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Assist utilise Face ID uniquement lorsque vous confirmez une action sensible dans l’application.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Assist utilise votre position actuelle uniquement au premier plan lorsque vous la demandez pour une action précise.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>En mode vocal, Assist écoute vos messages et vos interruptions pendant ses réponses. L’audio reste sur cet iPhone.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Assist accède à votre photothèque uniquement lorsque vous choisissez une photo à partager dans une conversation.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Assist accède à vos rappels uniquement lorsque vous lui demandez de les consulter ou d’en créer un.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Assist reconnaît vos messages et interruptions en français canadien sur cet iPhone. Le mode vocal reste désactivé si la reconnaissance locale est indisponible.</string>
 	<key>NSAppTransportSecurity</key>

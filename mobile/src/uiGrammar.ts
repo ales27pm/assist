@@ -3,9 +3,11 @@ export const uiGrammar = {
   unit: 4,
   gutter: 24,
   touchTarget: 44,
+  action: { height: 52 },
+  row: { minHeight: 64, stackedMinHeight: 84, iconGap: 13 },
   composer: { height: 52, maxHeight: 144, border: 1 },
   icon: { size: 24, stroke: 2 },
-  radius: { control: 12, bubble: 16, pill: 24 },
+  radius: { control: 12, bubble: 16, surface: 20, pill: 24 },
   harmony: {
     phi: (1 + Math.sqrt(5)) / 2,
     space: { small: 8, medium: 13, large: 21, section: 34 },

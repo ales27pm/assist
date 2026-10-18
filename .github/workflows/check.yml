@@ -25,6 +25,7 @@ jobs:
       - run: npm run check
       - run: python3 ../scripts/test-ios-launch.py
       - run: python3 ../scripts/test-local-voice-contract.py
+      - run: python3 ../scripts/test-device-capabilities-contract.py
       - run: python3 ../scripts/test-export-contracts.py
       - run: bash ../scripts/test-preflight.sh
       - run: node --test ../scripts/test-bundle-gemma.mjs

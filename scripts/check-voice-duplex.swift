@@ -285,16 +285,20 @@ struct VoiceDuplexChecks {
         func evaluate(reason: UInt? = 8, current: AssistVoiceRouteIdentity? = nil,
                       previous: AssistVoiceRouteIdentity? = nil, committed: Bool = true,
                       owned: AssistVoiceOwnedCategoryTransition? = nil,
+                      baselineOverride: AssistVoiceRouteBaseline? = nil,
+                      check: ([String]) -> Void = { _ in },
                       input: AssistVoiceRouteFormat? = nil, output: AssistVoiceRouteFormat? = nil,
                       player: AssistVoiceRouteFormat? = nil, tap: AssistVoiceRouteFormat? = nil,
                       active: Bool = true, session: Bool = true, configured: Bool = true,
                       constructing: Bool = false, running: Bool = true, vpin: Bool = true,
                       vpout: Bool = true) -> AssistVoiceRouteDecision {
-            AssistVoiceRouteFacts(reason: reason, previous: previous, current: current ?? route,
-                baseline: committed ? baseline : nil, ownedCategoryTransition: owned, input: input ?? format, output: output ?? format,
+            let facts = AssistVoiceRouteFacts(reason: reason, previous: previous, current: current ?? route,
+                baseline: committed ? baselineOverride ?? baseline : nil, ownedCategoryTransition: owned, input: input ?? format, output: output ?? format,
                 player: player ?? format, tapInput: tap ?? format, appActive: active, sessionActive: session,
                 expectedSessionConfiguration: configured, constructing: constructing, engineRunning: running,
-                inputVoiceProcessing: vpin, outputVoiceProcessing: vpout).decision
+                inputVoiceProcessing: vpin, outputVoiceProcessing: vpout)
+            check(facts.rejectionCauses)
+            return facts.decision
         }
         precondition(evaluate(previous: route) == .accept)
         precondition(evaluate() == .accept) // delayed notice without PreviousRouteKey uses committed baseline
@@ -332,6 +336,38 @@ struct VoiceDuplexChecks {
         precondition(evaluate(reason: 3, current: differentDevice, previous: beforeActivation, owned: owned) == .fail)
         precondition(evaluate(reason: 2, previous: beforeActivation, owned: owned) == .fail)
         print("PASS: delayed owned category changes may match the recorded pre-activation route; no unrecorded device or VPIO UID alias is exempted.")
+        let unequalBaseline = AssistVoiceRouteBaseline(route: route, input: format, output: changedChannels, player: format)
+        precondition(evaluate(baselineOverride: unequalBaseline, check: { precondition($0 == ["ioMismatch"]) },
+                              output: changedChannels) == .fail)
+        print("PASS: unequal VPIO client I/O formats fail even with matching committed baseline and tap.")
+        let postStartBaseline = AssistVoiceRouteBaseline(route: route, input: changedChannels, output: changedChannels, player: format)
+        precondition(evaluate(baselineOverride: postStartBaseline, check: { precondition($0 == ["tapMismatch"]) },
+                              input: changedChannels, output: changedChannels) == .fail)
+        let int16 = AssistVoiceRouteFormat(rate: 48_000, channels: 1, commonFormat: 3, interleaved: false)
+        let interleaved = AssistVoiceRouteFormat(rate: 48_000, channels: 1, commonFormat: 1, interleaved: true)
+        for changed in [int16, interleaved] {
+            let changedBaseline = AssistVoiceRouteBaseline(route: route, input: changed, output: changed, player: format)
+            precondition(evaluate(baselineOverride: changedBaseline, check: { precondition($0 == ["tapMismatch"]) },
+                                  input: changed, output: changed) == .fail)
+        }
+        let playerBaseline = AssistVoiceRouteBaseline(route: route, input: format, output: format, player: changedRate)
+        precondition(evaluate(baselineOverride: playerBaseline, check: { precondition($0 == ["playerPCM"]) },
+                              player: changedRate) == .fail)
+        precondition(evaluate(check: { precondition($0 == ["config"]) }, configured: false) == .fail)
+        print("PASS: post-start tap channel/common-format/interleaving, canonical-player and session-configuration failures have independent causes.")
+        let diagnosticFacts = AssistVoiceRouteFacts(reason: 8, previous: nil, current: route, baseline: baseline,
+            ownedCategoryTransition: nil, input: format, output: format, player: changedRate, tapInput: interleaved,
+            appActive: true, sessionActive: true, expectedSessionConfiguration: true, constructing: false,
+            engineRunning: true, inputVoiceProcessing: true, outputVoiceProcessing: true)
+        let lines = diagnosticFacts.diagnosticLines(source: "graph", phase: "requesting", decision: "failed-commit", frames: 0)
+        precondition(diagnosticFacts.decision == .fail && lines.count == 2)
+        precondition(lines[0].hasPrefix("causes=" + diagnosticFacts.rejectionCauses.joined(separator: ",")))
+        precondition(lines[0].contains("app=1 session=1 config=1 base=1") && lines[0].contains("run=1 vp=1/1"))
+        for field in ["in=48000.0/1/c1/i0", "tap=48000.0/1/c1/i1", "out=48000.0/1/c1/i0", "player=44100.0/1/c1/i0"] {
+            precondition(lines[1].contains(field))
+        }
+        precondition(lines.allSatisfy { $0.utf16.count <= 400 && $0.utf8.allSatisfy { $0 < 128 } && !$0.contains("private-") })
+        print("PASS: two bounded ASCII diagnostic lines use the decision's rejection causes and complete in/tap/out/player formats without identifiers.")
         var progress = AssistVoiceRouteProgressWatch()
         let firstNotice = progress.begin(frameCount: 0)
         precondition(progress.progressed(identifier: firstNotice, frameCount: 10) == true)
@@ -371,10 +407,33 @@ struct VoiceDuplexChecks {
     }
 
     @MainActor
+    private static func teardownDeclaration(in source: String) throws -> Range<String.Index>? {
+        // Arguments belong to the production lifecycle, not to this source
+        // locator. Require exactly one declaration and retain the order checks.
+        let pattern = #"(?m)^    private func cancelCurrent\([^\n]*\) \{$"#
+        let matches = try NSRegularExpression(pattern: pattern).matches(
+            in: source, range: NSRange(source.startIndex..<source.endIndex, in: source))
+        guard matches.count == 1 else { return nil }
+        return Range(matches[0].range, in: source)
+    }
+
+    @MainActor
+    private static func teardownLocatorRegression() throws {
+        for declaration in ["    private func cancelCurrent() {",
+                            "    private func cancelCurrent(preservingFluidCache: Bool = true) {"] {
+            let found = try teardownDeclaration(in: declaration + "\n        lifetime.reset()\n    }\n")
+            precondition(found != nil)
+        }
+        let ambiguous = try teardownDeclaration(in: "    private func cancelCurrent() {\n    private func cancelCurrent(flag: Bool) {\n")
+        precondition(ambiguous == nil)
+        print("PASS: teardown locator handles lifecycle parameters and rejects ambiguous declarations.")
+    }
+
+    @MainActor
     private static func teardownSourceOrdering() throws {
         let path = "mobile/ios/Assist/Voice/AssistVoice.swift"
         let source = try String(contentsOfFile: path, encoding: .utf8)
-        guard let start = source.range(of: "    private func cancelCurrent() {"),
+        guard let start = try teardownDeclaration(in: source),
               let end = source.range(of: "    private func fail(", range: start.upperBound..<source.endIndex)
         else { preconditionFailure("Cannot locate production teardown") }
         let body = String(source[start.upperBound..<end.lowerBound])
@@ -387,6 +446,79 @@ struct VoiceDuplexChecks {
         }
         precondition(body.contains("if shouldDeactivate {"))
         print("PASS: the production cancelCurrent source relinquishes ownership before every notifying stop and uses its captured deactivation claim.")
+    }
+
+    @MainActor
+    private static func offlineWiringAndConversion() throws {
+        for rate in [44_100.0, 48_000.0] {
+            let engine = AVAudioEngine()
+            let ioFormat = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1)!
+            let renderFormat = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2)!
+            // Enter offline mode BEFORE accessing any I/O node. Never instantiate
+            // inputNode, enable VPIO, or render to a microphone/output device.
+            try engine.enableManualRenderingMode(.offline, format: renderFormat, maximumFrameCount: 1_024)
+            defer { engine.stop(); engine.disableManualRenderingMode() }
+            let player = AVAudioPlayerNode()
+            engine.attach(player)
+            let mixer = engine.mainMixerNode
+            let canonical = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+            engine.connect(player, to: mixer, format: canonical)
+            // Reproduce the wiring gap: the implicit mixer→output starts with
+            // stereo render format, incompatible with this mono I/O fixture.
+            precondition(engine.outputNode.inputFormat(forBus: 0).channelCount != ioFormat.channelCount)
+            try AssistVoiceIOWiring.connectOutput(engine: engine, mixer: mixer, format: ioFormat)
+            precondition(mixer.outputFormat(forBus: 0) == ioFormat)
+            precondition(engine.outputNode.inputFormat(forBus: 0) == ioFormat)
+            precondition(player.outputFormat(forBus: 0) == canonical)
+            let pcm = AVAudioPCMBuffer(pcmFormat: canonical, frameCapacity: 4_800)!
+            pcm.frameLength = 4_800
+            for index in 0..<4_800 { pcm.floatChannelData![0][index] = Float(sin(Double(index) * .pi / 24)) * 0.2 }
+            player.scheduleBuffer(pcm)
+            engine.prepare()
+            try engine.start()
+            player.play()
+            let output = AVAudioPCMBuffer(pcmFormat: renderFormat, frameCapacity: 1_024)!
+            let expected = Int(rate / 10)
+            var rendered = 0, lastSignal = -1, attempts = 0
+            while rendered < expected + 1_024 && attempts < 32 {
+                attempts += 1
+                let status = try engine.renderOffline(1_024, to: output)
+                if status == .cannotDoInCurrentContext { continue }
+                precondition(status == .success && output.frameLength > 0)
+                for channel in 0..<Int(output.format.channelCount) {
+                    for frame in 0..<Int(output.frameLength) {
+                        let sample = output.floatChannelData![channel][frame]
+                        precondition(sample.isFinite)
+                        if abs(sample) > 0.000_01 { lastSignal = max(lastSignal, rendered + frame) }
+                    }
+                }
+                rendered += Int(output.frameLength)
+            }
+            precondition(rendered >= expected + 1_024 && abs(lastSignal - expected) < 512)
+            precondition(engine.outputNode.inputFormat(forBus: 0) == ioFormat && player.outputFormat(forBus: 0) == canonical)
+        }
+        print("PASS: shared production wiring fixes a real offline implicit-stereo/client-mono gap and renders canonical 48-kHz PCM through 44.1/48-kHz mono client formats.")
+    }
+
+    @MainActor
+    private static func wiringSourceOrdering() throws {
+        let source = try String(contentsOfFile: "mobile/ios/Assist/Voice/AssistVoice.swift", encoding: .utf8)
+        guard let start = source.range(of: "    private func makeDuplexEngine(token: UUID) throws {"),
+              let end = source.range(of: "    private func installRecognition(", range: start.upperBound..<source.endIndex)
+        else { preconditionFailure("Cannot locate production wiring") }
+        let body = String(source[start.upperBound..<end.lowerBound])
+        let ordered = ["setVoiceProcessingEnabled(true)", "let mixer = engine.mainMixerNode",
+                       "engine.connect(player, to: mixer, format: playbackFormat)",
+                       "let ioFormat = engine.inputNode.outputFormat(forBus: 0)",
+                       "AssistVoiceIOWiring.connectOutput(engine: engine, mixer: mixer, format: ioFormat)",
+                       "installRecognition(on: engine, token: token, expectedFormat: ioFormat)",
+                       "engine.prepare()", "try engine.start()"]
+        var cursor = body.startIndex
+        for call in ordered {
+            guard let match = body.range(of: call, range: cursor..<body.endIndex) else { preconditionFailure("Production wiring order changed") }
+            cursor = match.upperBound
+        }
+        print("PASS: actual production wiring selects the client format after VPIO/mixer/player, shares it with the tap, and connects before prepare/start.")
     }
 
     @MainActor
@@ -404,7 +536,41 @@ struct VoiceDuplexChecks {
         await unsupportedAndBounded()
         routePolicy()
         teardownNotifications()
+        try teardownLocatorRegression()
         try teardownSourceOrdering()
-        print("PASS: 19 native duplex checks; no engine start, microphone, speech recognition or real TTS.")
+        try offlineWiringAndConversion()
+        try wiringSourceOrdering()
+        loadingDiagnostics()
+        print("PASS: 28 native duplex checks; offline engines only are started; no microphone, hardware output, recognition or real TTS.")
+    }
+
+    private static func loadingDiagnostics() {
+        let underlying = NSError(domain: "NSPOSIXErrorDomain", code: 12,
+                                 userInfo: [NSLocalizedDescriptionKey: "/private/reference.wav secret transcript"])
+        let native = NSError(domain: "com.apple.CoreML", code: 1,
+                             userInfo: [NSUnderlyingErrorKey: underlying,
+                                        NSLocalizedDescriptionKey: "Speaker Name /private/reference.wav"])
+        let failure = AssistFluidLoadFailure(stage: .pocket, error: native)
+        precondition(failure.diagnosticLine == "load stage=pocket cause=com.apple.CoreML:1 > NSPOSIXErrorDomain:12")
+        precondition(failure.localizedDescription.contains("PocketTTS français"))
+        precondition(!failure.diagnosticLine.contains("reference.wav") && !failure.localizedDescription.contains("Speaker Name"))
+        print("PASS: model-stage and native cause survive without private descriptions or paths")
+
+        let hostile = NSError(domain: "/private/person.wav", code: 42,
+                              userInfo: [NSLocalizedDescriptionKey: "consent document"])
+        let reference = AssistFluidLoadFailure(stage: .session, error: hostile)
+        precondition(reference.diagnosticLine == "load stage=session cause=other:42")
+        precondition(reference.localizedDescription.contains("la voix Estelle"))
+        print("PASS: preset session preparation is distinct; arbitrary native domains are excluded")
+
+        var nested = NSError(domain: "NSCocoaErrorDomain", code: 4)
+        for _ in 0..<10 { nested = NSError(domain: "com.apple.CoreML", code: 2, userInfo: [NSUnderlyingErrorKey: nested]) }
+        let bounded = AssistFluidLoadFailure(stage: .parakeet, error: nested)
+        precondition(bounded.diagnosticLine.components(separatedBy: " > ").count == 3)
+        precondition(bounded.diagnosticLine.count <= 400)
+        var history = AssistVoiceAudioDiagnostics()
+        history.append(bounded.diagnosticLine)
+        precondition(history.lines == [bounded.diagnosticLine])
+        print("PASS: load failures fit the existing bounded audio diagnostics contract")
     }
 }

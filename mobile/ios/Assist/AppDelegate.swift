@@ -1,62 +1,43 @@
 import UIKit
+internal import Expo
 import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
 
 @main
-class AppDelegate: UIResponder, UIApplicationDelegate {
+class AppDelegate: ExpoAppDelegate {
+  var window: UIWindow?
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
-  private(set) var launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+  let reactNativeFactoryModuleName = "main"
 
-  func application(
+  override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
     let delegate = ReactNativeDelegate()
-    let factory = RCTReactNativeFactory(delegate: delegate)
+    let factory = ExpoReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()
 
     reactNativeDelegate = delegate
     reactNativeFactory = factory
-    self.launchOptions = launchOptions
-
-    return true
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }
 
-class SceneDelegate: UIResponder, UIWindowSceneDelegate {
-  var window: UIWindow?
+// Expo's factory provider bridges UIKit's scene delegate and the application
+// delegate. UIKit owns this lifecycle on the main actor, so declare the
+// conformance explicitly for Swift 6's strict-concurrency checking.
+extension AppDelegate: @MainActor ExpoReactNativeFactoryProvider {}
 
-  func scene(
-    _ scene: UIScene,
-    willConnectTo session: UISceneSession,
-    options connectionOptions: UIScene.ConnectionOptions
-  ) {
-    guard let windowScene = scene as? UIWindowScene,
-          let appDelegate = UIApplication.shared.delegate as? AppDelegate,
-          let factory = appDelegate.reactNativeFactory else {
-      return
-    }
-
-    let window = UIWindow(windowScene: windowScene)
-    self.window = window
-    factory.startReactNative(
-      withModuleName: "Assist",
-      in: window,
-      launchOptions: appDelegate.launchOptions
-    )
-  }
-}
-
-class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
+class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {
   override func sourceURL(for bridge: RCTBridge) -> URL? {
-    self.bundleURL()
+    bridge.bundleURL ?? bundleURL()
   }
 
   override func bundleURL() -> URL? {
 #if DEBUG
-    RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: "index")
+    RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: ".expo/.virtual-metro-entry")
 #else
     Bundle.main.url(forResource: "main", withExtension: "jsbundle")
 #endif

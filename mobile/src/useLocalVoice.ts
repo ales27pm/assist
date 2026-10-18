@@ -180,6 +180,26 @@ export function useLocalVoice({
     return pending;
   }, [supported, publishPhase]);
 
+  const prepareResponse = useCallback((): Promise<boolean> => {
+    const completed = lastCaptureCompletion.current;
+    // A capture's final+idle means native already removed its tap, stopped the
+    // engine and deactivated audio. Preserve its loaded models for the reply.
+    // A speech idle may retain the microphone and never satisfies this gate.
+    if (
+      supported &&
+      mounted.current &&
+      visible.current &&
+      foreground.current &&
+      !current.current &&
+      phaseRef.current === 'idle' &&
+      !stopping.current &&
+      completed?.success &&
+      completed.epoch === epoch.current
+    )
+      return Promise.resolve(true);
+    return cancel();
+  }, [supported, cancel]);
+
   const cancelAfterFailure = useCallback(async () => {
     // Stop immediately; fetching optional observations must never delay audio
     // cancellation. Pin the post-cancel epoch before awaiting either command.
@@ -411,8 +431,25 @@ export function useLocalVoice({
       if (mounted.current && version === epoch.current) {
         current.current = null;
         publishPhase('idle');
-        setError(errorMessage(e));
+        const message = errorMessage(e);
+        setError(message);
         await readFailureDiagnostics(version);
+        // A rejected start can beat the native error event. Preserve its
+        // model/permission cause in the conversation coordinator as well.
+        // A stop or replacement capture while reading details retires it.
+        if (
+          mounted.current &&
+          visible.current &&
+          foreground.current &&
+          version === epoch.current
+        ) {
+          eventListener.current?.({
+            sessionId: id,
+            kind: 'error',
+            phase: 'idle',
+            message,
+          });
+        }
       }
       return false;
     }
@@ -646,6 +683,7 @@ export function useLocalVoice({
     startListening,
     finishListening,
     cancel,
+    prepareResponse,
     speak,
     beginSpeech,
     enqueueSpeech,

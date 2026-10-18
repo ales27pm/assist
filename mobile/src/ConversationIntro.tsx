@@ -152,14 +152,19 @@ export function ConversationIntro({
           />
         </View>
       )}
-      <View style={styles.starters}>
-        {starterDrafts.map(item => (
-          <DraftChip
-            key={item.title}
-            title={item.title}
-            onPress={() => onDraft(item.draft)}
-          />
-        ))}
+      <View style={styles.starterSection}>
+        <Text style={[styles.starterHint, { color: theme.colors.muted }]}>
+          Ajoute une amorce à ton message
+        </Text>
+        <View style={styles.starters}>
+          {starterDrafts.map(item => (
+            <DraftChip
+              key={item.title}
+              title={item.title}
+              onPress={() => onDraft(item.draft)}
+            />
+          ))}
+        </View>
       </View>
       <Pressable
         ref={exampleControlRef}
@@ -303,9 +308,14 @@ const styles = StyleSheet.create({
     ...uiGrammar.type.body,
     maxWidth: 320,
   },
-  starters: {
+  starterSection: {
     width: '100%',
     marginTop: uiGrammar.harmony.space.large,
+    gap: uiGrammar.harmony.space.small,
+  },
+  starterHint: uiGrammar.type.caption,
+  starters: {
+    width: '100%',
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: uiGrammar.harmony.space.small,
@@ -316,7 +326,7 @@ const styles = StyleSheet.create({
     padding: 16,
     marginTop: 24,
     borderWidth: 1,
-    borderRadius: 20,
+    borderRadius: uiGrammar.radius.surface,
   },
   preparationHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   modelIcon: {

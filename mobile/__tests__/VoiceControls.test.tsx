@@ -35,6 +35,7 @@ function controller(extra: Partial<VoiceController> = {}): VoiceController {
     startListening: jest.fn(async () => true),
     finishListening: jest.fn(async () => true),
     cancel: jest.fn(async () => true),
+    prepareResponse: jest.fn(async () => true),
     speak: jest.fn(async () => {}),
     beginSpeech: jest.fn(async () => true),
     enqueueSpeech: jest.fn(async () => true),
