@@ -41,4 +41,21 @@ The correction loads the provider's image representation as `Data`, which may cr
 
 Post-fix local verification passed: fresh VM execution of the strengthened object/header guard (actual source, iOS 26 ARM64 SDK), 9 native-device source contracts and 12 local-voice contracts. The added photo-boundary contract fails on `bed2fad1`; direct Swift object emission also reproduced the old error and accepted the correction. Source compilation is not physical photo-picker execution or a signed SDK 27 app archive.
 
-No third build is authorized or launched. No build 26 IPA has been produced or uploaded to Apple, so privacy strings, runtime, signature and physical-device stability remain unverified in a released binary. A further paid build requires a new user decision.
+At that checkpoint no third build was authorized or launched, and no build 26 IPA had been produced or uploaded to Apple. A further paid build required a new user decision; the later authorization and result are recorded below.
+
+## Verified delivery after explicit authorization
+
+The user authorized one further attempt. EAS build [`4bfd41bd-79d1-464f-8901-5e41b5c0cdcc`](https://expo.dev/accounts/ales27/projects/assist/builds/4bfd41bd-79d1-464f-8901-5e41b5c0cdcc) used source commit `52e5bb2d913f2184c765927989f6418f6995eae2` and finished successfully at 2026-10-18 02:02:26 UTC. Its Xcode log reports `Archive Succeeded` and its signed IPA was exported. Only one build was launched for this latest authorization.
+
+Submission [`5651b1f9-71d8-4b27-bc4c-701a0d43e78d`](https://expo.dev/accounts/ales27/projects/assist/submissions/5651b1f9-71d8-4b27-bc4c-701a0d43e78d) reached `FINISHED`. At 2026-10-18 02:05:48 UTC, the App Store Connect API reported version `1.0.0`, build `26`, processing `VALID`, internal state `IN_BETA_TESTING`, external state `READY_FOR_BETA_SUBMISSION`, runtime `1.0.0-native26`, not expired. This confirms internal TestFlight availability; it is not external Beta App Review approval or an App Store release.
+
+Downloaded IPA audit:
+
+- Size: 22,371,759 bytes; SHA-256 `8b0de4b6482044af794d49b359f0ed540f65e6355115286a9446ccd5de029fb1`.
+- Embedded identity: `org.27pm.assist`, version `1.0.0` (`26`), ARM64 executable.
+- All nine expected privacy purpose strings are present and nonempty; `ITSAppUsesNonExemptEncryption` is `false`.
+- Embedded Expo settings enable updates, runtime `1.0.0-native26`, and request header `expo-channel-name: testflight`.
+- `codesign --verify --deep --strict` passed on the extracted app in an isolated macOS scratch directory. The IPA was not installed or launched during this audit.
+- TestFlight What to Test notes were written directly through the App Store Connect API for `fr-CA` and `en-US`, then read back with exact matches, without the EAS Enterprise changelog option or credential files.
+
+PR #2 and the release fixes are in `main`. The original dirty checkout was preserved. This delivered binary still needs physical-iPhone voice, model-load, permission and crash-recovery testing; neither the release nor its diagnostics prove ANE execution or that the prior runtime crash is resolved.
