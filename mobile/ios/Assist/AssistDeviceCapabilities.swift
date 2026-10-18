@@ -458,17 +458,21 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
             finishAttachment(nil, Self.error("E_CANCELLED", "Sélection d’image annulée."))
             return
         }
-        guard result.itemProvider.canLoadObject(ofClass: UIImage.self) else {
+        // Keep the provider's concrete image type rather than asking it to
+        // create a UIKit object on an arbitrary callback executor. The data
+        // completion is Sendable; UIKit decoding remains on the main actor.
+        guard let imageType = result.itemProvider.registeredContentTypes
+            .first(where: { $0.conforms(to: .image) }) else {
             finishAttachment(nil, Self.error("E_ATTACHMENT", "Cette sélection ne contient pas une image lisible."))
             return
         }
-        result.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] object, error in
+        result.itemProvider.loadDataRepresentation(forTypeIdentifier: imageType.identifier) { [weak self] data, error in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 guard !self.invalidated else { return }
                 if let error {
                     self.finishAttachment(nil, Self.error("E_ATTACHMENT", "Impossible de lire cette image.", underlying: error))
-                } else if let image = object as? UIImage {
+                } else if let data, let image = UIImage(data: data) {
                     self.storeImage(image, source: "photoLibrary")
                 } else {
                     self.finishAttachment(nil, Self.error("E_ATTACHMENT", "Cette sélection ne contient pas une image lisible."))

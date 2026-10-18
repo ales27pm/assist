@@ -175,6 +175,15 @@ class DeviceCapabilitySourceContracts(unittest.TestCase):
                 self.assertIsNotNone(framework)
                 self.assertLess(framework.start(), generated.start())
 
+    def test_photo_provider_transfers_data_before_main_actor_decode(self):
+        picker = self.function("picker")
+        self.contains(r"registeredContentTypes\s*\.first\(where:", picker)
+        self.contains(r"loadDataRepresentation\(forTypeIdentifier:\s*imageType\.identifier\)", picker)
+        self.contains(r"Task\s*\{\s*@MainActor", picker)
+        self.contains(r"UIImage\(data:\s*data\)", picker)
+        self.excludes(r"\.loadObject\s*\(", picker)
+        self.excludes(r"object\s+as\?\s+UIImage", picker)
+
     def test_pending_camera_capture_is_retired_before_a_late_grant(self):
         capture = self.function("capturePhoto")
         assignment = r"(?m)^\s*pendingCameraCaptureCompletion\s*=\s*completion\b"

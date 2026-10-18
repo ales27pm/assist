@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Validates the narrow Swift-to-Objective-C++ boundary for the device tools.
 #
-# This is a real iPhoneOS SDK Swift 6 typecheck and Objective-C-header emission,
+# This is real iPhoneOS SDK Swift 6 object compilation and header emission,
 # but not an archive, a full app build, or an iPhone runtime test. The app target
 # emits internal @objc declarations in its generated Swift header. The
 # command-line compiler needs an @main source in the same temporary app module
@@ -51,7 +51,12 @@ printf '%s\n' \
 xcrun --sdk iphoneos swiftc \
   -module-name Assist \
   -parse-as-library \
-  -typecheck \
+  -O \
+  -whole-module-optimization \
+  -emit-object \
+  -o "$CHECK_DIR/Assist.o" \
+  -emit-module \
+  -emit-module-path "$CHECK_DIR/Assist.swiftmodule" \
   -emit-objc-header \
   -emit-objc-header-path "$CHECK_DIR/Assist-Swift.h" \
   -swift-version 6 \
@@ -107,7 +112,7 @@ if xcrun --sdk iphoneos clang++ "${clang_args[@]}" \
   echo "Expected generated-header consumer without CoreLocation to fail." >&2
   exit 1
 fi
-if ! grep -Fq 'CLLocationManagerDelegate' "$CHECK_DIR/without-CoreLocation.log"; then
+if ! grep -Fq "no type or protocol named 'CLLocationManagerDelegate'" "$CHECK_DIR/without-CoreLocation.log"; then
   echo "Negative compile failed for an unexpected reason:" >&2
   sed -n '1,80p' "$CHECK_DIR/without-CoreLocation.log" >&2
   exit 1
