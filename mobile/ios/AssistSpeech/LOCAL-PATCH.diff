@@ -718,3 +718,594 @@ index 7e8c9be..ea6d9af 100644
              mimiState: mimiState,
              constants: constants,
              condModel: condModel,
+diff --git a/Sources/FluidAudio/ASR/Parakeet/SlidingWindow/TDT/AsrModels.swift b/Sources/FluidAudio/ASR/Parakeet/SlidingWindow/TDT/AsrModels.swift
+index 1b396f6e..a385af5a 100644
+--- a/Sources/FluidAudio/ASR/Parakeet/SlidingWindow/TDT/AsrModels.swift
++++ b/Sources/FluidAudio/ASR/Parakeet/SlidingWindow/TDT/AsrModels.swift
+@@ -351,7 +351,9 @@ extension AsrModels {
+             let modelConfig = MLModelConfiguration()
+             modelConfig.computeUnits = units
+             modelConfig.allowLowPrecisionAccumulationOnGPU = config.allowLowPrecisionAccumulationOnGPU
+-            return try MLModel(contentsOf: url, configuration: modelConfig)
++            return try loadLocalComponent(named: name, units: units) {
++                try MLModel(contentsOf: url, configuration: modelConfig)
++            }
+         }
+         let vocabularyURL = directory.appendingPathComponent(names.vocabulary)
+         let vocabulary = try parseVocabulary(at: vocabularyURL)
+@@ -381,6 +383,40 @@ extension AsrModels {
+         )
+     }
+ 
++    /// The local Core ML boundary, separated so its failure contract can be
++    /// checked without loading model weights or contacting a repository.
++    static func loadLocalComponent(
++        named name: String, units: MLComputeUnits, load: () throws -> MLModel
++    ) throws -> MLModel {
++        do {
++            return try load()
++        } catch {
++            if error is CancellationError { throw error }
++            let componentNames = [
++                "Preprocessor.mlmodelc", "Encoder.mlmodelc", "Encoder_v2.mlmodelc", "EncoderInt4.mlmodelc",
++                "Decoder.mlmodelc", "JointDecision.mlmodelc", "JointDecisionv3.mlmodelc", "CtcHead.mlmodelc",
++                "Decoderv2.mlmodelc", "Jointerv2.mlmodelc",
++            ]
++            let computeUnits: String
++            switch units {
++            case .all: computeUnits = "all"
++            case .cpuOnly: computeUnits = "cpuOnly"
++            case .cpuAndGPU: computeUnits = "cpuAndGPU"
++            case .cpuAndNeuralEngine: computeUnits = "cpuAndNeuralEngine"
++            @unknown default: computeUnits = "other"
++            }
++            let underlying = error as NSError
++            // This context contains fixed local filenames and route labels
++            // only; paths and descriptions remain solely in the underlying
++            // error. The app exposes context only during its Parakeet stage.
++            throw NSError(domain: "FluidAudio.ParakeetModelLoad", code: underlying.code, userInfo: [
++                "ParakeetComponent": componentNames.contains(name) ? name : "other",
++                "ParakeetComputeUnits": computeUnits,
++                NSUnderlyingErrorKey: underlying,
++            ])
++        }
++    }
++
+     /// Load ASR models from a directory
+     ///
+     /// - Parameters:
+diff --git a/Sources/FluidAudio/ASR/Parakeet/SlidingWindow/TDT/AsrManager+Pipeline.swift b/Sources/FluidAudio/ASR/Parakeet/SlidingWindow/TDT/AsrManager+Pipeline.swift
+index 5eaf63e4..a3fe5bef 100644
+--- a/Sources/FluidAudio/ASR/Parakeet/SlidingWindow/TDT/AsrManager+Pipeline.swift
++++ b/Sources/FluidAudio/ASR/Parakeet/SlidingWindow/TDT/AsrManager+Pipeline.swift
+@@ -173,7 +173,8 @@ extension AsrManager {
+             try Task.checkCancellation()
+             let preprocessorOutput = try await preprocessorModel.compatPrediction(
+                 from: preprocessorInput,
+-                options: predictionOptions
++                options: predictionOptions,
++                component: "parakeet.preprocessor"
+             )
+             let encoderOutputProvider: MLFeatureProvider
+             if let defaultEncoder = encoderModel {
+@@ -198,7 +199,8 @@ extension AsrManager {
+                 try Task.checkCancellation()
+                 encoderOutputProvider = try await encoderModel.compatPrediction(
+                     from: encoderInput,
+-                    options: predictionOptions
++                    options: predictionOptions,
++                    component: "parakeet.encoder"
+                 )
+             } else {
+                 // Fused frontend: preprocessor output already contains encoder features
+diff --git a/Sources/FluidAudio/Shared/MLModel+Prediction.swift b/Sources/FluidAudio/Shared/MLModel+Prediction.swift
+index f0242437..bccf6960 100644
+--- a/Sources/FluidAudio/Shared/MLModel+Prediction.swift
++++ b/Sources/FluidAudio/Shared/MLModel+Prediction.swift
+@@ -5,9 +5,13 @@ extension MLModel {
+     /// Compatibly call Core ML prediction using async API.
+     public func compatPrediction(
+         from input: MLFeatureProvider,
+-        options: MLPredictionOptions
++        options: MLPredictionOptions,
++        component: String? = nil
+     ) async throws -> MLFeatureProvider {
+-        try Task.checkCancellation()
+-        return try await prediction(from: input, options: options)
++        try await CoreMLPredictionDiagnostics.withPrediction(
++            component: component, computeUnits: configuration.computeUnits, input: input
++        ) {
++            try await prediction(from: input, options: options)
++        }
+     }
+ }
+diff --git a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+Flow.swift b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+Flow.swift
+index b9e8c54d..02c3bb45 100644
+--- a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+Flow.swift
++++ b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+Flow.swift
+@@ -24,6 +24,7 @@ extension PocketTtsSynthesizer {
+         rng: inout some RandomNumberGenerator
+     ) async throws -> [Float] {
+         let latentDim = PocketTtsConstants.latentDim
++        try validateFlowModelDescription(model.modelDescription)
+ 
+         // Initialize z_0 with scaled random noise (host owns the seed/RNG).
+         // sqrt(temperature) because variance scales quadratically with the multiplier.
+@@ -52,25 +53,46 @@ extension PocketTtsSynthesizer {
+             "latent_init": latentArray,
+         ]
+         let input = try MLDictionaryFeatureProvider(dictionary: inputDict)
+-        let output = try await model.compatPrediction(from: input, options: MLPredictionOptions())
++        let output = try await model.compatPrediction(
++            from: input, options: MLPredictionOptions(), component: "pocket.flow")
+ 
+         // Prefer the named output; fall back to the sole output for robustness
+         // against CoreML auto-generated names.
+-        let finalName =
+-            output.featureNames.contains("latent_final")
+-            ? "latent_final" : (output.featureNames.first ?? "")
++        return try checkedFlowOutput(output)
++    }
++
++    static func checkedFlowOutput(_ output: MLFeatureProvider) throws -> [Float] {
++        let finalName = try ModelTensorContract.flowOutputName(in: output.featureNames)
+         guard let finalArray = output.featureValue(for: finalName)?.multiArrayValue else {
+             throw PocketTTSError.processingFailed("Missing fused flow decoder latent_final output")
+         }
+ 
+-        let finalPtr = finalArray.dataPointer.bindMemory(to: Float.self, capacity: latentDim)
+-        return Array(UnsafeBufferPointer(start: finalPtr, count: latentDim))
++        return try ModelTensorContract.float32Values(
++            finalArray, count: PocketTtsConstants.latentDim, role: "PocketTTS flow output")
++    }
++
++    static func validateFlowModelDescription(_ description: MLModelDescription) throws {
++        let inputs = description.inputDescriptionsByName
++        guard Set(inputs.keys) == ["transformer_out", "latent_init"] else {
++            throw ModelTensorContract.failure("PocketTTS flow inputs")
++        }
++        try ModelTensorContract.validateFloat32Description(
++            inputs["transformer_out"], count: PocketTtsConstants.transformerDim,
++            shape: [1, PocketTtsConstants.transformerDim], role: "PocketTTS flow transformer input")
++        try ModelTensorContract.validateFloat32Description(
++            inputs["latent_init"], count: PocketTtsConstants.latentDim,
++            shape: [1, PocketTtsConstants.latentDim], role: "PocketTTS flow latent input")
++        let outputs = description.outputDescriptionsByName
++        let name = try ModelTensorContract.flowOutputName(in: Set(outputs.keys))
++        try ModelTensorContract.validateFloat32Description(
++            outputs[name], count: PocketTtsConstants.latentDim, role: "PocketTTS flow output")
+     }
+ 
+     // MARK: - Private
+ 
+     /// Reshape a [1, 1, D] MLMultiArray to [1, D].
+     private static func reshapeToFlat(_ array: MLMultiArray, dim: Int) throws -> MLMultiArray {
++        try ModelTensorContract.validateFloat32(array, count: dim, role: "PocketTTS transformer output")
+         let flat = try MLMultiArray(shape: [1, NSNumber(value: dim)], dataType: .float32)
+         let srcPtr = array.dataPointer.bindMemory(to: Float.self, capacity: dim)
+         let dstPtr = flat.dataPointer.bindMemory(to: Float.self, capacity: dim)
+diff --git a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+KVCache.swift b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+KVCache.swift
+index a7e34197..67ed1a6e 100644
+--- a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+KVCache.swift
++++ b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+KVCache.swift
+@@ -245,7 +245,8 @@ extension PocketTtsSynthesizer {
+         addCacheInputs(&inputDict, state: state, layers: layers)
+ 
+         let input = try MLDictionaryFeatureProvider(dictionary: inputDict)
+-        let output = try await model.compatPrediction(from: input, options: MLPredictionOptions())
++        let output = try await model.compatPrediction(
++            from: input, options: MLPredictionOptions(), component: "pocket.conditioner")
+ 
+         try extractCacheOutputs(
+             output, state: &state, layerKeys: layerKeys, modelLabel: "cond_step")
+@@ -307,7 +308,7 @@ extension PocketTtsSynthesizer {
+ 
+             let input = try MLDictionaryFeatureProvider(dictionary: inputDict)
+             let output = try await model.compatPrediction(
+-                from: input, options: MLPredictionOptions())
++                from: input, options: MLPredictionOptions(), component: "pocket.conditioner")
+ 
+             try extractCacheOutputs(
+                 output, state: &state, layerKeys: layerKeys, modelLabel: "cond_prefill")
+@@ -631,7 +632,8 @@ extension PocketTtsSynthesizer {
+         addCacheInputs(&inputDict, state: state, layers: layers)
+ 
+         let input = try MLDictionaryFeatureProvider(dictionary: inputDict)
+-        let output = try await model.compatPrediction(from: input, options: MLPredictionOptions())
++        let output = try await model.compatPrediction(
++            from: input, options: MLPredictionOptions(), component: "pocket.flowlm")
+ 
+         // Extract transformer output
+         guard let transformerOut = output.featureValue(for: transformerKey)?.multiArrayValue
+diff --git a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+Mimi.swift b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+Mimi.swift
+index 3ccaf83f..64b4d7ee 100644
+--- a/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+Mimi.swift
++++ b/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSynthesizer+Mimi.swift
+@@ -113,7 +113,8 @@ extension PocketTtsSynthesizer {
+         }
+ 
+         let input = try MLDictionaryFeatureProvider(dictionary: inputDict)
+-        let output = try await model.compatPrediction(from: input, options: MLPredictionOptions())
++        let output = try await model.compatPrediction(
++            from: input, options: MLPredictionOptions(), component: "pocket.mimi")
+ 
+         // Extract audio output [1, 1, 1920]
+         guard let audioArray = output.featureValue(for: mimiKeys.audioOutput)?.multiArrayValue else {
+diff --git a/Sources/FluidAudio/VAD/VadManager.swift b/Sources/FluidAudio/VAD/VadManager.swift
+index e347a534..6d83c1c7 100644
+--- a/Sources/FluidAudio/VAD/VadManager.swift
++++ b/Sources/FluidAudio/VAD/VadManager.swift
+@@ -26,6 +26,7 @@ public actor VadManager {
+     public static let sampleRate = 16000
+ 
+     private var vadModel: MLModel?
++    private var modelContractValidated = false
+ 
+     public var isAvailable: Bool {
+         return vadModel != nil
+@@ -142,7 +143,9 @@ public actor VadManager {
+             throw VadError.modelLoadingFailed
+         }
+ 
++        try Self.validateModelDescription(vadModel.modelDescription)
+         self.vadModel = vadModel
++        modelContractValidated = true
+         logger.info("VAD model loaded successfully")
+     }
+ 
+@@ -163,6 +166,12 @@ public actor VadManager {
+         guard let loadedModel = vadModel else {
+             throw VadError.notInitialized
+         }
++        // Keep the existing nonthrowing preloaded-model initializer compatible,
++        // but reject its actual descriptor before the first prediction/read.
++        if !modelContractValidated {
++            try Self.validateModelDescription(loadedModel.modelDescription)
++            modelContractValidated = true
++        }
+ 
+         let processingStartTime = Date()
+ 
+@@ -228,6 +237,9 @@ public actor VadManager {
+                     shape: [1, NSNumber(value: Self.stateSize)],
+                     dataType: .float32
+                 )
++                try ModelTensorContract.validateFloat32(audioArray, count: Self.modelInputSize, role: "Silero audio input")
++                try ModelTensorContract.validateFloat32(hiddenStateArray, count: Self.stateSize, role: "Silero hidden input")
++                try ModelTensorContract.validateFloat32(cellStateArray, count: Self.stateSize, role: "Silero cell input")
+ 
+                 // Clear and populate audio input (context followed by current chunk)
+                 let audioPointer = audioArray.dataPointer.assumingMemoryBound(to: Float.self)
+@@ -266,58 +278,7 @@ public actor VadManager {
+ 
+                 // Run prediction
+                 let output = try model.prediction(from: input)
+-                // Extract outputs using flexible name matching (model outputs may include suffixes)
+-                guard
+-                    let vadOutputArray = featureValue(
+-                        in: output,
+-                        matchingSubstrings: ["vad_output"]
+-                    )
+-                else {
+-                    logger.error("No vad output found")
+-                    throw VadError.modelProcessingFailed("No VAD output")
+-                }
+-
+-                guard
+-                    let newHiddenStateArray = featureValue(
+-                        in: output,
+-                        matchingSubstrings: ["new_hidden_state"]
+-                    )
+-                else {
+-                    logger.error("No new hidden state output found")
+-                    throw VadError.modelProcessingFailed("No new hidden state output")
+-                }
+-
+-                guard
+-                    let newCellStateArray = featureValue(
+-                        in: output,
+-                        matchingSubstrings: ["new_cell_state"]
+-                    )
+-                else {
+-                    logger.error("No new cell state output found")
+-                    throw VadError.modelProcessingFailed("No new cell state output")
+-                }
+-
+-                // Extract probability value (flatten the 1x1x1 output)
+-                let vadOutputPointer = vadOutputArray.dataPointer.assumingMemoryBound(to: Float.self)
+-                let probability = vadOutputPointer[0]
+-
+-                // Convert output states back to arrays
+-                let newHiddenPointer = newHiddenStateArray.dataPointer.assumingMemoryBound(to: Float.self)
+-                let newHiddenState = Array(
+-                    UnsafeBufferPointer(
+-                        start: newHiddenPointer,
+-                        count: Self.stateSize
+-                    )
+-                )
+-
+-                let newCellPointer = newCellStateArray.dataPointer.assumingMemoryBound(to: Float.self)
+-                let newCellState = Array(
+-                    UnsafeBufferPointer(
+-                        start: newCellPointer,
+-                        count: Self.stateSize
+-                    )
+-                )
+-                return (probability, newHiddenState, newCellState)
++                return try Self.checkedOutputValues(output)
+             }
+ 
+             return result
+@@ -328,24 +289,33 @@ public actor VadManager {
+         }
+     }
+ 
+-    private func featureValue(
+-        in provider: MLFeatureProvider,
+-        matchingSubstrings substrings: [String]
+-    ) -> MLMultiArray? {
+-        for name in substrings {
+-            if let value = provider.featureValue(for: name)?.multiArrayValue {
+-                return value
+-            }
++    static func validateModelDescription(_ description: MLModelDescription) throws {
++        let inputs = description.inputDescriptionsByName
++        guard Set(inputs.keys) == ["audio_input", "hidden_state", "cell_state"] else {
++            throw ModelTensorContract.failure("Silero inputs")
+         }
+-        for substring in substrings {
+-            let target = substring.lowercased()
+-            if let name = provider.featureNames.first(where: { $0.lowercased().contains(target) }) {
+-                if let value = provider.featureValue(for: name)?.multiArrayValue {
+-                    return value
+-                }
++        for (name, count) in [("audio_input", modelInputSize), ("hidden_state", stateSize), ("cell_state", stateSize)] {
++            try ModelTensorContract.validateFloat32Description(
++                inputs[name], count: count, shape: [1, count], role: "Silero \(name)")
++        }
++        let outputs = description.outputDescriptionsByName
++        for (token, count) in [("vad_output", 1), ("new_hidden_state", stateSize), ("new_cell_state", stateSize)] {
++            let name = try ModelTensorContract.uniqueName(in: Set(outputs.keys), containing: token, role: "Silero \(token)")
++            try ModelTensorContract.validateFloat32Description(outputs[name], count: count, role: "Silero \(token)")
++        }
++    }
++
++    static func checkedOutputValues(_ provider: MLFeatureProvider) throws -> (Float, [Float], [Float]) {
++        func values(_ token: String, count: Int) throws -> [Float] {
++            let name = try ModelTensorContract.uniqueName(in: provider.featureNames, containing: token, role: "Silero \(token)")
++            guard let array = provider.featureValue(for: name)?.multiArrayValue else {
++                throw ModelTensorContract.failure("Silero \(token)")
+             }
++            return try ModelTensorContract.float32Values(array, count: count, role: "Silero \(token)")
+         }
+-        return nil
++        return (try values("vad_output", count: 1)[0],
++                try values("new_hidden_state", count: stateSize),
++                try values("new_cell_state", count: stateSize))
+     }
+ 
+     /// Process audio samples using adaptive batch processing for optimal performance
+diff --git a/Sources/FluidAudio/Shared/ModelTensorContract.swift b/Sources/FluidAudio/Shared/ModelTensorContract.swift
+new file mode 100644
+--- /dev/null
++++ b/Sources/FluidAudio/Shared/ModelTensorContract.swift
+@@ -0,0 +1,64 @@
++@preconcurrency import CoreML
++import Foundation
++
++/// The raw Float readers below must not infer storage layout from element count.
++/// A manifest or a successful Core ML load is not a tensor compatibility check.
++enum ModelTensorContract {
++    static func failure(_ role: String) -> NSError {
++        NSError(domain: "FluidAudio.ModelTensorContract", code: 1,
++                userInfo: [NSLocalizedDescriptionKey: "Incompatible local model tensor: \(role)"])
++    }
++
++    static func validateShape(_ shape: [Int], count: Int, role: String) throws {
++        guard count > 0, !shape.isEmpty else { throw failure(role) }
++        var elements = 1
++        for dimension in shape {
++            guard dimension > 0, elements <= count / dimension else { throw failure(role) }
++            elements *= dimension
++        }
++        guard elements == count else { throw failure(role) }
++    }
++
++    static func validateFloat32(_ array: MLMultiArray, count: Int, role: String) throws {
++        let shape = array.shape.map(\.intValue)
++        guard array.dataType == .float32, array.count == count,
++              shape.count == array.strides.count else { throw failure(role) }
++        try validateShape(shape, count: count, role: role)
++        var stride = 1
++        for axis in shape.indices.reversed() {
++            // A singleton axis never changes the address. Core ML may pad its
++            // stride without changing the contiguous logical values we read.
++            if shape[axis] > 1, array.strides[axis].intValue != stride { throw failure(role) }
++            stride *= shape[axis] // validateShape already bounded this product.
++        }
++    }
++
++    static func float32Values(_ array: MLMultiArray, count: Int, role: String) throws -> [Float] {
++        try validateFloat32(array, count: count, role: role)
++        let pointer = array.dataPointer.assumingMemoryBound(to: Float.self)
++        return Array(UnsafeBufferPointer(start: pointer, count: count))
++    }
++
++    static func validateFloat32Description(_ feature: MLFeatureDescription?, count: Int,
++                                           shape: [Int]? = nil, role: String) throws {
++        guard let feature, feature.type == .multiArray,
++              let constraint = feature.multiArrayConstraint, constraint.dataType == .float32 else {
++            throw failure(role)
++        }
++        let actual = constraint.shape.map(\.intValue)
++        try validateShape(actual, count: count, role: role)
++        if let shape, actual != shape { throw failure(role) }
++    }
++
++    static func uniqueName(in names: Set<String>, containing token: String, role: String) throws -> String {
++        let matches = names.filter { $0.lowercased().contains(token.lowercased()) }
++        guard matches.count == 1, let name = matches.first else { throw failure(role) }
++        return name
++    }
++
++    static func flowOutputName(in names: Set<String>) throws -> String {
++        if names.contains("latent_final") { return "latent_final" }
++        guard names.count == 1, let name = names.first else { throw failure("PocketTTS flow output") }
++        return name
++    }
++}
+diff --git a/Sources/FluidAudio/Shared/CoreMLPredictionDiagnostics.swift b/Sources/FluidAudio/Shared/CoreMLPredictionDiagnostics.swift
+new file mode 100644
+--- /dev/null
++++ b/Sources/FluidAudio/Shared/CoreMLPredictionDiagnostics.swift
+@@ -0,0 +1,150 @@
++@preconcurrency import CoreML
++import Foundation
++import OSLog
++
++/// Bounded metadata around explicitly named Core ML predictions. The observer
++/// is copied while locked, then awaited outside the lock before submission so
++/// the host can persist a breadcrumb even if Core ML raises a fatal exception.
++public enum CoreMLPredictionDiagnostics {
++    public struct TensorMetadata: Sendable {
++        public let name: String
++        public let shape: [Int]
++        public let dataType: String
++        public let count: Int
++
++        public init(name: String, shape: [Int], dataType: String, count: Int) {
++            self.name = name; self.shape = shape; self.dataType = dataType; self.count = count
++        }
++    }
++
++    public struct Event: Sendable {
++        public let id: String
++        public let component: String
++        public let state: String
++        public let computeUnits: String
++        public let inputs: [TensorMetadata]
++        public let inputFeatureCount: Int
++        public let metadataTruncated: Bool
++
++        public init(id: String, component: String, state: String, computeUnits: String,
++                    inputs: [TensorMetadata], inputFeatureCount: Int, metadataTruncated: Bool) {
++            self.id = id; self.component = component; self.state = state; self.computeUnits = computeUnits
++            self.inputs = inputs; self.inputFeatureCount = inputFeatureCount
++            self.metadataTruncated = metadataTruncated
++        }
++    }
++
++    private static let observerStorage = OSAllocatedUnfairLock<(@Sendable (Event) async -> Void)?>(initialState: nil)
++
++    public static var observer: (@Sendable (Event) async -> Void)? {
++        get { observerStorage.withLock { $0 } }
++        set { observerStorage.withLock { $0 = newValue } }
++    }
++
++    /// Internal prediction seam: tests inject a model-free boundary while the
++    /// production compat wrapper supplies the actual asynchronous Core ML call.
++    static func withPrediction<T>(
++        component: String?, computeUnits: MLComputeUnits, input: MLFeatureProvider,
++        isolation: isolated (any Actor)? = #isolation,
++        operation: nonisolated(nonsending) () async throws -> T
++    ) async throws -> T {
++        try Task.checkCancellation()
++        guard let component, let capturedObserver = observer, inputNames(for: component) != nil else {
++            return try await operation()
++        }
++        let metadata = inputMetadata(from: input, component: component)
++        let id = UUID().uuidString
++        let units = computeLabel(computeUnits)
++        let event: (String) -> Event = { state in
++            Event(id: id, component: component, state: state, computeUnits: units,
++                  inputs: metadata.inputs, inputFeatureCount: metadata.count, metadataTruncated: metadata.truncated)
++        }
++        await capturedObserver(event("began"))
++        do {
++            // The persisted breadcrumb may itself suspend. Cancellation during
++            // that wait must not submit work that was already cancelled.
++            try Task.checkCancellation()
++            let result = try await operation()
++            await capturedObserver(event("completed"))
++            return result
++        } catch {
++            await capturedObserver(event("failed"))
++            throw error
++        }
++    }
++
++    static func inputMetadata(
++        from input: MLFeatureProvider, component: String
++    ) -> (inputs: [TensorMetadata], count: Int, truncated: Bool) {
++        guard let candidates = inputNames(for: component) else { return ([], 0, false) }
++        let names = input.featureNames
++        var tensors: [TensorMetadata] = []
++        var truncated = names.count > 128
++        for name in candidates where names.contains(name) {
++            guard tensors.count < 8 else { truncated = true; break }
++            guard let array = input.featureValue(for: name)?.multiArrayValue else {
++                truncated = true
++                continue
++            }
++            let shape = array.shape
++            let metadata = boundedTensor(name: name, shape: shape.prefix(8).map(\.intValue),
++                                         dataType: array.dataType, count: array.count)
++            tensors.append(metadata.tensor)
++            truncated = truncated || shape.count > 8 || metadata.truncated
++        }
++        return (tensors, min(names.count, 128), truncated || names.count > tensors.count)
++    }
++
++    static func boundedTensor(
++        name: String, shape: [Int], dataType: MLMultiArrayDataType, count: Int
++    ) -> (tensor: TensorMetadata, truncated: Bool) {
++        let maximum = Int(Int32.max)
++        let dimensions = shape.prefix(8).map { min(maximum, max(0, $0)) }
++        let boundedCount = min(maximum, max(0, count))
++        let label: String
++        switch dataType {
++        case .float16: label = "float16"
++        case .float32: label = "float32"
++        case .double: label = "float64"
++        case .int32: label = "int32"
++        default: label = "other"
++        }
++        return (TensorMetadata(name: name, shape: dimensions, dataType: label, count: boundedCount),
++                shape.count > 8 || dimensions != shape || boundedCount != count)
++    }
++
++    private static let knownInputNames: [String: [String]] = {
++        let caches = (0..<24).flatMap { ["cache\($0)", "k_cache\($0)", "v_cache\($0)", "position\($0)"] }
++        return [
++            "pocket.conditioner": ["conditioning", "valid_len"] + caches,
++            "pocket.flowlm": ["sequence", "bos_emb"] + caches,
++            "pocket.flow": ["transformer_out", "latent_init"],
++            // Exact PocketTtsMimiKeys canonicalStateOrder, plus latent. Never
++            // serialize arbitrary model-discovered state or output names.
++            "pocket.mimi": [
++                "latent", "upsample_partial", "attn0_cache", "attn0_offset", "attn1_cache", "attn1_offset",
++                "conv0_prev", "conv0_first", "convtr0_partial",
++                "res0_conv0_prev", "res0_conv0_first", "res0_conv1_prev", "res0_conv1_first", "convtr1_partial",
++                "res1_conv0_prev", "res1_conv0_first", "res1_conv1_prev", "res1_conv1_first", "convtr2_partial",
++                "res2_conv0_prev", "res2_conv0_first", "res2_conv1_prev", "res2_conv1_first",
++                "conv_final_prev", "conv_final_first",
++            ],
++            "parakeet.preprocessor": ["audio_signal", "audio_length"],
++            "parakeet.encoder": ["mel", "mel_length", "audio_signal", "audio_length"],
++        ]
++    }()
++
++    private static func inputNames(for component: String) -> [String]? {
++        knownInputNames[component]
++    }
++
++    private static func computeLabel(_ units: MLComputeUnits) -> String {
++        switch units {
++        case .all: return "all"
++        case .cpuOnly: return "cpuOnly"
++        case .cpuAndGPU: return "cpuAndGPU"
++        case .cpuAndNeuralEngine: return "cpuAndNeuralEngine"
++        @unknown default: return "other"
++        }
++    }
++}

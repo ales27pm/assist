@@ -1,8 +1,10 @@
 # EAS — compilation et distribution iPhone
 
 EAS compile cette application React Native **bare**, avec son projet Xcode et
-son vrai TurboModule. Il n’ajoute ni Expo Go, ni repli d’inférence distant, ni
-EAS Update. Le code est envoyé au service de compilation. La livraison avec
+son vrai TurboModule. Il n’ajoute ni Expo Go, ni repli d’inférence distant. EAS
+Update est configuré séparément : il ne peut livrer que du JavaScript et des
+assets compatibles avec le runtime natif déjà installé. Le code est envoyé au
+service de compilation. La livraison avec
 Gemma embarqué nécessitera aussi l’envoi de cet export public vérifié ; les
 imports privés et conversations de l’iPhone ne sont jamais récupérés ni envoyés.
 
@@ -48,6 +50,13 @@ Ce profil autorise l’absence de Gemma embarqué et demande son import local
 depuis l’app ; le chargement Gemma reste réservé à iOS 27.2+. Le profil `preview`
 conserve son exigence de modèle embarqué. Une build TestFlight ne constitue pas
 une qualification de l’inférence, des 32K ou de l’ANE.
+
+Les changements Swift, Xcode, Pod ou de résolution du bundler sont natifs. Ils
+font partie de la build **1.0.0 (27)** et du runtime
+`1.0.0-native27`; ils ne sont donc jamais diffusables à une app encore en
+`1.0.0-native26` par OTA. Une fois cette build installée, seules les mises à
+jour JavaScript/assets qui gardent ce runtime et le canal correspondant peuvent
+être publiées via EAS Update.
 
 Depuis `mobile/` pour les deux commandes :
 
@@ -103,6 +112,39 @@ Il conserve uniquement des journaux de compilation. **Il ne produit pas d’IPA
 installable** et ne remplace pas le profil `preview` demandé pour distribution.
 
 ## Archive envoyée
+
+### Conservation et contrôle des symboles iOS
+
+La build 26 a bien généré son `Assist.app.dSYM` sur le runner Xcode, mais
+l’artefact exposé par EAS ne le contenait pas. Il n’est donc pas récupérable
+via les artefacts EAS exposés de cette build, et une IPA seule ne permet pas de
+recréer son dSYM. À partir de la build native 27, les
+profils `preview` et `testflight` produisent explicitement
+`artifacts/ios/assist-symbols.zip` dans le hook `eas-build-on-success`, puis
+le déclarent dans `buildArtifactPaths`. Le hook échoue si le dSYM arm64 est
+absent ou ambigu : l’archive de symboles n’est jamais produite à partir d’un
+bundle manquant ou ambigu.
+
+Le ZIP contient uniquement `Assist.app.dSYM` et `symbol-identity.json`. Ce
+manifeste lie le SHA-256 du DWARF et ses UUID aux champs suivants : identifiant
+de bundle, version, numéro de build, runtime et hash Git source. Il ne contient
+ni certificat, ni identifiant d’équipe, ni modèle, ni conversation. Le hash de
+source vient de `EAS_BUILD_GIT_COMMIT_HASH`, fourni par EAS sur le runner.
+
+Après une build, télécharger tous les artefacts avec la CLI EAS (elle affiche
+le chemin local de `buildArtifacts`), extraire l’archive d’artefacts si EAS
+l’a empaquetée, puis vérifier le ZIP de symboles sur un Mac disposant de
+`dwarfdump` :
+
+```sh
+npx --yes eas-cli@24.14.0 build:download --build-id <build-id> --all-artifacts
+node ../scripts/verify-ios-symbol-artifact.mjs <chemin-vers>/assist-symbols.zip
+```
+
+Ce contrôle établit la présence, l’empreinte et les UUID du dSYM ; la
+symbolication complète d’un crash requiert toujours un rapport portant le même
+UUID. Il ne prouve ni la signature de l’IPA, ni un lancement sur appareil, ni
+une exécution ANE.
 
 La règle racine `.easignore` inclut `mobile/` et `scripts/`, avec une exception
 explicite pour le bundle complet dans

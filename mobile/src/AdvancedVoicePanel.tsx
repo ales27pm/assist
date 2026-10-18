@@ -62,6 +62,7 @@ export function AdvancedVoicePanel({ onClose }: { onClose: () => void }) {
   const operationLabel = {
     pack: 'Importation et vérification du pack en cours…',
     backend: 'Enregistrement du moteur vocal…',
+    restore: 'Restauration du pack précédent…',
   };
 
   return (
@@ -199,6 +200,31 @@ export function AdvancedVoicePanel({ onClose }: { onClose: () => void }) {
                       {label} : {state.resources[key] ? 'importé' : 'absent'}.
                     </Text>
                   ))}
+                  {!!state.packVersion && (
+                    <Text style={[styles.caption, muted]}>
+                      Version du pack : {state.packVersion}.
+                    </Text>
+                  )}
+                  {!!state.previousPackAvailable &&
+                    voice.canRestorePreviousPack && (
+                      <Pressable
+                        role="button"
+                        accessibilityLabel="Restaurer le pack précédent"
+                        accessibilityState={{ disabled }}
+                        disabled={disabled}
+                        onPress={voice.restorePreviousPack}
+                        style={({ pressed }) => [
+                          styles.restore,
+                          { borderColor: colors.border },
+                          disabled && styles.disabled,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <Text style={[styles.restoreText, text]}>
+                          Restaurer le pack précédent
+                        </Text>
+                      </Pressable>
+                    )}
                   <ActionButton
                     label="Importer un pack de modèles"
                     primary
@@ -232,6 +258,14 @@ const styles = StyleSheet.create({
   body: uiGrammar.type.body,
   caption: uiGrammar.type.caption,
   section: { gap: 14 },
+  restore: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  restoreText: { ...uiGrammar.type.caption, fontWeight: '600' },
   choices: { gap: 10, paddingTop: 12 },
   activity: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   choice: {

@@ -351,7 +351,9 @@ extension AsrModels {
             let modelConfig = MLModelConfiguration()
             modelConfig.computeUnits = units
             modelConfig.allowLowPrecisionAccumulationOnGPU = config.allowLowPrecisionAccumulationOnGPU
-            return try MLModel(contentsOf: url, configuration: modelConfig)
+            return try loadLocalComponent(named: name, units: units) {
+                try MLModel(contentsOf: url, configuration: modelConfig)
+            }
         }
         let vocabularyURL = directory.appendingPathComponent(names.vocabulary)
         let vocabulary = try parseVocabulary(at: vocabularyURL)
@@ -379,6 +381,40 @@ extension AsrModels {
             vocabulary: vocabulary,
             version: version
         )
+    }
+
+    /// The local Core ML boundary, separated so its failure contract can be
+    /// checked without loading model weights or contacting a repository.
+    static func loadLocalComponent(
+        named name: String, units: MLComputeUnits, load: () throws -> MLModel
+    ) throws -> MLModel {
+        do {
+            return try load()
+        } catch {
+            if error is CancellationError { throw error }
+            let componentNames = [
+                "Preprocessor.mlmodelc", "Encoder.mlmodelc", "Encoder_v2.mlmodelc", "EncoderInt4.mlmodelc",
+                "Decoder.mlmodelc", "JointDecision.mlmodelc", "JointDecisionv3.mlmodelc", "CtcHead.mlmodelc",
+                "Decoderv2.mlmodelc", "Jointerv2.mlmodelc",
+            ]
+            let computeUnits: String
+            switch units {
+            case .all: computeUnits = "all"
+            case .cpuOnly: computeUnits = "cpuOnly"
+            case .cpuAndGPU: computeUnits = "cpuAndGPU"
+            case .cpuAndNeuralEngine: computeUnits = "cpuAndNeuralEngine"
+            @unknown default: computeUnits = "other"
+            }
+            let underlying = error as NSError
+            // This context contains fixed local filenames and route labels
+            // only; paths and descriptions remain solely in the underlying
+            // error. The app exposes context only during its Parakeet stage.
+            throw NSError(domain: "FluidAudio.ParakeetModelLoad", code: underlying.code, userInfo: [
+                "ParakeetComponent": componentNames.contains(name) ? name : "other",
+                "ParakeetComputeUnits": computeUnits,
+                NSUnderlyingErrorKey: underlying,
+            ])
+        }
     }
 
     /// Load ASR models from a directory

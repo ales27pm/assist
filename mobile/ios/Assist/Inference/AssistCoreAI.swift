@@ -2,6 +2,7 @@ import CoreAI
 import CoreAILanguageModels
 import CryptoKit
 import Foundation
+import FluidAudio
 import Tokenizers
 
 /// Objective-C boundary only. All mutable inference state belongs to the actor below.
@@ -17,6 +18,17 @@ final class AssistCoreAI: NSObject {
         self.monitor = monitor
         self.coordinator = AssistInferenceCoordinator(monitor: monitor)
         super.init()
+        // BEGIN CORE ML MONITOR OBSERVER
+        // Installed by native engine ownership, never per voice runtime. The
+        // global SDK hook cannot keep this bridge or its monitor alive.
+        CoreMLPredictionDiagnostics.observer = { [weak monitor] event in
+            await monitor?.recordCoreMLPrediction(
+                id: event.id, component: event.component, state: event.state, computeUnits: event.computeUnits,
+                inputs: event.inputs.map {
+                    AssistRuntimePredictionTensor(name: $0.name, shape: $0.shape, dataType: $0.dataType, count: $0.count)
+                }, inputFeatureCount: event.inputFeatureCount, metadataTruncated: event.metadataTruncated)
+        }
+        // END CORE ML MONITOR OBSERVER
         // Monitoring starts with the native engine, not with the diagnostics
         // screen. Model loading and blocked JS must not suspend sampling.
         Task { @concurrent in await monitor.start() }

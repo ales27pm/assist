@@ -109,6 +109,34 @@ contrat du diagnostic RMSNorm.
 
 ## Validation et essai iPhone
 
+### Repères Core ML du prochain hôte préparé
+
+Le champ optionnel `coreMLPredictions` conserve la dernière opération observée
+pour chacun de six composants asynchrones Pocket/Parakeet. Chaque entrée porte
+un UUID, un état `began`/`completed`/`failed`, la route de calcul configurée et
+au plus huit métadonnées de tenseurs : nom autorisé, type, forme (rang≤8) et
+nombre d’éléments. Aucune valeur ou erreur brute n’est conservée. Cela ne mesure
+pas le placement matériel effectif.
+
+Le callback natif est attendu avant la soumission. Le premier début par
+composant après une transition `preparing` observée demande un checkpoint
+immédiat (six au maximum). Les succès suivants utilisent les checkpoints
+périodiques existants ; les échecs sont limités en fréquence. `voiceTurn` compte
+ces transitions de préparation, pas les tours de conversation. Une fin tardive
+ne peut pas remplacer le début d’un UUID plus récent du même composant.
+
+Ce n’est pas l’inventaire de toutes les opérations en vol et toutes les
+prédictions ne sont pas instrumentées. Un `began` encore présent après l’arrêt
+signifie seulement qu’aucune fin n’a été observée ou sauvegardée. `failed`
+inclut aussi l’annulation, éventuellement avant toute soumission à Core ML.
+Aucun de ces états ne suffit à nommer le responsable d’un crash. Le moniteur
+ne capture ni le motif d’une NSException fatale ni sa pile.
+
+Tests ajoutés : premier début déjà écrit avant le retour du callback,
+500 cycles sans écriture par trame, corrélation UUID, bornes et confidentialité,
+échecs disque et récupération d’un début après un vrai SIGKILL d’un processus
+de test. L’essai des modèles sur l’iPhone reste distinct.
+
 ### Journal persistant (modifications du 17 octobre 2026)
 
 Les vérifications ajoutées couvrent le prélèvement sans lectures JavaScript,

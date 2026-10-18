@@ -20,4 +20,4 @@ xcrun --sdk macosx swiftc -swift-version 6 -strict-concurrency=complete \
   -module-cache-path "$ADVANCED_FILES_DIR/module-cache" \
   "$ADVANCED_FILES_DIR/contracts.swift" scripts/check-advanced-voice-files.swift \
   -o "$ADVANCED_FILES_DIR/check-advanced-voice-files"
-"$ADVANCED_FILES_DIR/check-advanced-voice-files"
+"$ADVANCED_FILES_DIR/check-advanced-voice-files" "$@"

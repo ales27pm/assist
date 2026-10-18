@@ -113,7 +113,8 @@ extension PocketTtsSynthesizer {
         }
 
         let input = try MLDictionaryFeatureProvider(dictionary: inputDict)
-        let output = try await model.compatPrediction(from: input, options: MLPredictionOptions())
+        let output = try await model.compatPrediction(
+            from: input, options: MLPredictionOptions(), component: "pocket.mimi")
 
         // Extract audio output [1, 1, 1920]
         guard let audioArray = output.featureValue(for: mimiKeys.audioOutput)?.multiArrayValue else {

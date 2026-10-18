@@ -26,6 +26,7 @@ public actor VadManager {
     public static let sampleRate = 16000
 
     private var vadModel: MLModel?
+    private var modelContractValidated = false
 
     public var isAvailable: Bool {
         return vadModel != nil
@@ -142,7 +143,9 @@ public actor VadManager {
             throw VadError.modelLoadingFailed
         }
 
+        try Self.validateModelDescription(vadModel.modelDescription)
         self.vadModel = vadModel
+        modelContractValidated = true
         logger.info("VAD model loaded successfully")
     }
 
@@ -162,6 +165,12 @@ public actor VadManager {
     internal func processChunk(_ audioChunk: [Float], inputState: VadState? = nil) async throws -> VadResult {
         guard let loadedModel = vadModel else {
             throw VadError.notInitialized
+        }
+        // Keep the existing nonthrowing preloaded-model initializer compatible,
+        // but reject its actual descriptor before the first prediction/read.
+        if !modelContractValidated {
+            try Self.validateModelDescription(loadedModel.modelDescription)
+            modelContractValidated = true
         }
 
         let processingStartTime = Date()
@@ -228,6 +237,9 @@ public actor VadManager {
                     shape: [1, NSNumber(value: Self.stateSize)],
                     dataType: .float32
                 )
+                try ModelTensorContract.validateFloat32(audioArray, count: Self.modelInputSize, role: "Silero audio input")
+                try ModelTensorContract.validateFloat32(hiddenStateArray, count: Self.stateSize, role: "Silero hidden input")
+                try ModelTensorContract.validateFloat32(cellStateArray, count: Self.stateSize, role: "Silero cell input")
 
                 // Clear and populate audio input (context followed by current chunk)
                 let audioPointer = audioArray.dataPointer.assumingMemoryBound(to: Float.self)
@@ -266,58 +278,7 @@ public actor VadManager {
 
                 // Run prediction
                 let output = try model.prediction(from: input)
-                // Extract outputs using flexible name matching (model outputs may include suffixes)
-                guard
-                    let vadOutputArray = featureValue(
-                        in: output,
-                        matchingSubstrings: ["vad_output"]
-                    )
-                else {
-                    logger.error("No vad output found")
-                    throw VadError.modelProcessingFailed("No VAD output")
-                }
-
-                guard
-                    let newHiddenStateArray = featureValue(
-                        in: output,
-                        matchingSubstrings: ["new_hidden_state"]
-                    )
-                else {
-                    logger.error("No new hidden state output found")
-                    throw VadError.modelProcessingFailed("No new hidden state output")
-                }
-
-                guard
-                    let newCellStateArray = featureValue(
-                        in: output,
-                        matchingSubstrings: ["new_cell_state"]
-                    )
-                else {
-                    logger.error("No new cell state output found")
-                    throw VadError.modelProcessingFailed("No new cell state output")
-                }
-
-                // Extract probability value (flatten the 1x1x1 output)
-                let vadOutputPointer = vadOutputArray.dataPointer.assumingMemoryBound(to: Float.self)
-                let probability = vadOutputPointer[0]
-
-                // Convert output states back to arrays
-                let newHiddenPointer = newHiddenStateArray.dataPointer.assumingMemoryBound(to: Float.self)
-                let newHiddenState = Array(
-                    UnsafeBufferPointer(
-                        start: newHiddenPointer,
-                        count: Self.stateSize
-                    )
-                )
-
-                let newCellPointer = newCellStateArray.dataPointer.assumingMemoryBound(to: Float.self)
-                let newCellState = Array(
-                    UnsafeBufferPointer(
-                        start: newCellPointer,
-                        count: Self.stateSize
-                    )
-                )
-                return (probability, newHiddenState, newCellState)
+                return try Self.checkedOutputValues(output)
             }
 
             return result
@@ -328,24 +289,33 @@ public actor VadManager {
         }
     }
 
-    private func featureValue(
-        in provider: MLFeatureProvider,
-        matchingSubstrings substrings: [String]
-    ) -> MLMultiArray? {
-        for name in substrings {
-            if let value = provider.featureValue(for: name)?.multiArrayValue {
-                return value
-            }
+    static func validateModelDescription(_ description: MLModelDescription) throws {
+        let inputs = description.inputDescriptionsByName
+        guard Set(inputs.keys) == ["audio_input", "hidden_state", "cell_state"] else {
+            throw ModelTensorContract.failure("Silero inputs")
         }
-        for substring in substrings {
-            let target = substring.lowercased()
-            if let name = provider.featureNames.first(where: { $0.lowercased().contains(target) }) {
-                if let value = provider.featureValue(for: name)?.multiArrayValue {
-                    return value
-                }
-            }
+        for (name, count) in [("audio_input", modelInputSize), ("hidden_state", stateSize), ("cell_state", stateSize)] {
+            try ModelTensorContract.validateFloat32Description(
+                inputs[name], count: count, shape: [1, count], role: "Silero \(name)")
         }
-        return nil
+        let outputs = description.outputDescriptionsByName
+        for (token, count) in [("vad_output", 1), ("new_hidden_state", stateSize), ("new_cell_state", stateSize)] {
+            let name = try ModelTensorContract.uniqueName(in: Set(outputs.keys), containing: token, role: "Silero \(token)")
+            try ModelTensorContract.validateFloat32Description(outputs[name], count: count, role: "Silero \(token)")
+        }
+    }
+
+    static func checkedOutputValues(_ provider: MLFeatureProvider) throws -> (Float, [Float], [Float]) {
+        func values(_ token: String, count: Int) throws -> [Float] {
+            let name = try ModelTensorContract.uniqueName(in: provider.featureNames, containing: token, role: "Silero \(token)")
+            guard let array = provider.featureValue(for: name)?.multiArrayValue else {
+                throw ModelTensorContract.failure("Silero \(token)")
+            }
+            return try ModelTensorContract.float32Values(array, count: count, role: "Silero \(token)")
+        }
+        return (try values("vad_output", count: 1)[0],
+                try values("new_hidden_state", count: stateSize),
+                try values("new_cell_state", count: stateSize))
     }
 
     /// Process audio samples using adaptive batch processing for optimal performance

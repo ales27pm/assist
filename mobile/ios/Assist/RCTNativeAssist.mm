@@ -307,6 +307,14 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   });
 }
 
+- (void)restorePreviousAdvancedVoicePack:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self withAdvancedVoiceResourcesReleased:^{
+      [[AssistAdvancedVoiceResources shared] restorePreviousPack:AssistPromise(resolve, reject)];
+    } reject:reject];
+  });
+}
+
 - (void)setAdvancedVoiceBackend:(NSString *)backend variant:(NSString *)variant
                        resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{

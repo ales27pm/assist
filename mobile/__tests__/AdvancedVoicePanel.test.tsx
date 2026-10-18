@@ -15,6 +15,7 @@ jest.mock('../specs/NativeAssist', () => ({
   default: {
     getAdvancedVoiceState: jest.fn(),
     importAdvancedVoicePack: jest.fn(),
+    restorePreviousAdvancedVoicePack: jest.fn(),
     setAdvancedVoiceBackend: jest.fn(),
     startListening: jest.fn(),
   },
@@ -57,6 +58,9 @@ beforeEach(() => {
   user = userEvent.setup();
   native.getAdvancedVoiceState.mockResolvedValue(JSON.stringify(empty));
   native.importAdvancedVoicePack.mockResolvedValue(JSON.stringify(complete));
+  native.restorePreviousAdvancedVoicePack.mockResolvedValue(
+    JSON.stringify({ ...complete, revision: 2, previousPackAvailable: false }),
+  );
   native.setAdvancedVoiceBackend.mockImplementation(async (backend, variant) =>
     JSON.stringify({
       ...complete,
@@ -148,6 +152,71 @@ test('an in-flight import disables actions and close until the native acknowledg
   expect(
     screen.getByRole('button', { name: 'Retour aux réglages' }),
   ).toBeEnabled();
+});
+
+test('shows a compact rollback action only for a restorable pack on a compatible binary', async () => {
+  native.getAdvancedVoiceState.mockResolvedValueOnce(
+    JSON.stringify({
+      ...complete,
+      packVersion: '2026.10-rc_1',
+      previousPackAvailable: true,
+    }),
+  );
+  await renderAsync(<AdvancedVoicePanel onClose={jest.fn()} />);
+  expect(screen.getByText('Version du pack : 2026.10-rc_1.')).toBeOnTheScreen();
+  await user.press(
+    screen.getByRole('button', { name: 'Restaurer le pack précédent' }),
+  );
+  expect(native.restorePreviousAdvancedVoicePack).toHaveBeenCalledTimes(1);
+  expect(native.startListening).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole('button', { name: 'Restaurer le pack précédent' }),
+  ).not.toBeOnTheScreen();
+});
+
+test('a pending rollback disables controls without starting audio', async () => {
+  const restoring = deferred<string>();
+  native.getAdvancedVoiceState.mockResolvedValueOnce(
+    JSON.stringify({ ...complete, previousPackAvailable: true }),
+  );
+  native.restorePreviousAdvancedVoicePack.mockReturnValueOnce(restoring.promise);
+  await renderAsync(<AdvancedVoicePanel onClose={jest.fn()} />);
+  await user.press(
+    screen.getByRole('button', { name: 'Restaurer le pack précédent' }),
+  );
+  expect(
+    screen.getByRole('button', { name: 'Restaurer le pack précédent' }),
+  ).toBeDisabled();
+  expect(screen.getByRole('status')).toHaveTextContent(/Restauration du pack/);
+  expect(native.startListening).not.toHaveBeenCalled();
+  await act(async () =>
+    restoring.resolve(
+      JSON.stringify({ ...complete, revision: 2, previousPackAvailable: false }),
+    ),
+  );
+});
+
+test('hides rollback when the installed native binary does not expose it', async () => {
+  const original = native.restorePreviousAdvancedVoicePack;
+  Object.defineProperty(native, 'restorePreviousAdvancedVoicePack', {
+    configurable: true,
+    value: undefined,
+  });
+  try {
+    native.getAdvancedVoiceState.mockResolvedValueOnce(
+      JSON.stringify({ ...complete, previousPackAvailable: true }),
+    );
+    await renderAsync(<AdvancedVoicePanel onClose={jest.fn()} />);
+    expect(
+      screen.queryByRole('button', { name: 'Restaurer le pack précédent' }),
+    ).not.toBeOnTheScreen();
+    expect(native.startListening).not.toHaveBeenCalled();
+  } finally {
+    Object.defineProperty(native, 'restorePreviousAdvancedVoicePack', {
+      configurable: true,
+      value: original,
+    });
+  }
 });
 
 test('backend activation waits for native acknowledgement and a failed activation preserves Apple', async () => {

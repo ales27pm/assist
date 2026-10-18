@@ -15,7 +15,11 @@ export type AdvancedVoiceState = {
   };
   voice: 'estelle';
   reason?: string;
+  packVersion?: string;
+  previousPackAvailable?: boolean;
 };
+
+const packVersionPattern = /^[A-Za-z0-9._-]{1,64}$/;
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -29,6 +33,8 @@ export function parseAdvancedVoiceState(json: string): AdvancedVoiceState {
     throw new Error('État de la voix avancée invalide.');
   const value = record(JSON.parse(json));
   const resources = record(value.resources);
+  const packVersion = value.packVersion;
+  const previousPackAvailable = value.previousPackAvailable;
   if (
     value.schemaVersion !== 2 ||
     !Number.isSafeInteger(value.revision) ||
@@ -43,6 +49,10 @@ export function parseAdvancedVoiceState(json: string): AdvancedVoiceState {
     value.voice !== 'estelle' ||
     (value.reason !== undefined &&
       (typeof value.reason !== 'string' || value.reason.length > 2000)) ||
+    (packVersion !== undefined &&
+      (typeof packVersion !== 'string' || !packVersionPattern.test(packVersion))) ||
+    (previousPackAvailable !== undefined &&
+      typeof previousPackAvailable !== 'boolean') ||
     (value.effectiveBackend === 'fluid' &&
       (value.selectedBackend !== 'fluid' ||
         !value.ready ||
@@ -66,5 +76,7 @@ export function parseAdvancedVoiceState(json: string): AdvancedVoiceState {
     },
     voice: 'estelle',
     ...(value.reason !== undefined && { reason: value.reason as string }),
+    ...(packVersion !== undefined && { packVersion }),
+    ...(previousPackAvailable !== undefined && { previousPackAvailable }),
   };
 }

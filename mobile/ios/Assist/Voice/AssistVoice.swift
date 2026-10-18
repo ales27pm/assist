@@ -90,6 +90,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private var advancedResourceMutation = false
     private var fluidPreparationTask: Task<Void, Never>?
     private var fluidShutdownTask: Task<Void, Never>?
+    private var fluidSpeechRetirements = AssistFluidSpeechRetirementBarrier()
     private var fluidInput: AssistFluidAudioInput?
     private var fluidInputTask: Task<Void, Never>?
     private var pendingFluidAdoption: UUID?
@@ -576,6 +577,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
                 self.finishFluidSpeechIfDrained()
             } catch {
                 guard let self, !Task.isCancelled, self.speechGeneration == token, self.phase == "speaking" else { return }
+                self.audioDiagnostics.append(AssistFluidLoadFailure.synthesisDiagnostic(error: error))
                 self.fail("La synthèse PocketTTS locale s’est arrêtée. Reprends le mode vocal.", code: "E_VOICE_FLUID_TTS")
             }
         }
@@ -739,10 +741,11 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         // look up and cancel a later session in a reused warm runtime.
         if let retiredSession {
             let runtime = fluidRuntime
-            Task {
+            let retirement = Task { @concurrent in
                 if let runtime { await runtime.cancelSpeech(retiredSession) }
                 else { await retiredSession.cancel() }
             }
+            fluidSpeechRetirements.append(retirement)
         }
         producerWatchdogTask?.cancel()
         producerWatchdogTask = nil
@@ -1206,11 +1209,15 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         fluidInput = nil
         fluidConfiguration = nil
         let runtime = fluidRuntime
-        if runtime != nil || preparation != nil {
+        // Session ownership may already be nil while its retired producer is
+        // still exiting Core ML. Join that work before admitting another load.
+        let speechRetirements = fluidSpeechRetirements.take()
+        if runtime != nil || preparation != nil || speechRetirements != nil {
             let prior = fluidShutdownTask
-            fluidShutdownTask = Task {
+            fluidShutdownTask = Task { @concurrent in
                 await prior?.value
                 await preparation?.value
+                await speechRetirements?.value
                 await runtime?.cancel()
                 await inputWorker?.value
             }

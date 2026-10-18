@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import { execFileSync } from 'child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { createRequire } from 'module';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
@@ -8,14 +9,36 @@ const mobileRoot = resolve(__dirname, '..');
 const hook = JSON.parse(readFileSync(join(mobileRoot, 'package.json'), 'utf8'))
   .scripts['eas-build-pre-install'];
 
-test('native update runtimes match and isolate the new bridge from build 25', () => {
+test('native update runtimes match the current native build', () => {
   const config = require('../app.config');
   const expoPlist = readFileSync(join(mobileRoot, 'ios/Assist/Supporting/Expo.plist'), 'utf8');
   const strings = readFileSync(join(mobileRoot, 'android/app/src/main/res/values/strings.xml'), 'utf8');
+  const xcodeProject = readFileSync(join(mobileRoot, 'ios/Assist.xcodeproj/project.pbxproj'), 'utf8');
+  const buildNumbers = [...xcodeProject.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map(match => match[1]);
+  expect([...new Set(buildNumbers)]).toEqual(['27']);
   expect(typeof config.runtimeVersion).toBe('string');
-  expect(config.runtimeVersion).not.toBe('1.0.0');
+  expect(config.runtimeVersion).toBe(`1.0.0-native${buildNumbers[0]}`);
   expect(expoPlist.match(/<key>EXUpdatesRuntimeVersion<\/key>\s*<string>([^<]+)<\/string>/)?.[1]).toBe(config.runtimeVersion);
   expect(strings.match(/name="expo_runtime_version">([^<]+)<\/string>/)?.[1]).toBe(config.runtimeVersion);
+});
+
+test('iOS resolves Expo CLI through Expo when the CLI is nested', () => {
+  const xcodeProject = readFileSync(join(mobileRoot, 'ios/Assist.xcodeproj/project.pbxproj'), 'utf8');
+  expect(xcodeProject).toContain(
+    "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })",
+  );
+
+  const expoDirectory = join(fixtureRoot, 'node_modules', 'expo');
+  const cliDirectory = join(expoDirectory, 'node_modules', '@expo', 'cli');
+  mkdirSync(cliDirectory, { recursive: true });
+  writeFileSync(join(expoDirectory, 'package.json'), '{"name":"expo"}\n');
+  writeFileSync(join(cliDirectory, 'package.json'), '{"name":"@expo/cli","main":"index.js"}\n');
+  writeFileSync(join(cliDirectory, 'index.js'), 'module.exports = {};\n');
+
+  const resolver = createRequire(join(fixtureRoot, 'ios', 'xcode-resolver.cjs'));
+  const expoPackage = resolver.resolve('expo/package.json');
+  expect(() => resolver.resolve('@expo/cli')).toThrow();
+  expect(resolver.resolve('@expo/cli', { paths: [expoPackage] })).toBe(join(cliDirectory, 'index.js'));
 });
 let fixtureRoot;
 let logPath;

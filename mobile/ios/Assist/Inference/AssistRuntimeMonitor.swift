@@ -57,6 +57,64 @@ struct AssistRuntimeDiagnostic: Codable, Sendable {
     var failed = 0
 }
 
+/// Technical metadata only. Values, arbitrary model feature names and paths
+/// must never cross the SDK/monitor boundary or survive archive decoding.
+struct AssistRuntimePredictionTensor: Codable, Sendable {
+    let name: String
+    let shape: [Int]
+    let dataType: String
+    let count: Int
+
+    static func knownName(_ name: String) -> Bool {
+        let fixed = [
+            "conditioning", "valid_len", "sequence", "bos_emb", "transformer_out", "latent_init", "latent",
+            "audio_signal", "audio_signal_length", "audio", "audio_length", "length", "mel", "mel_length",
+            "upsample_partial", "attn0_cache", "attn0_offset", "attn1_cache", "attn1_offset",
+            "conv0_prev", "conv0_first", "convtr0_partial", "convtr1_partial", "convtr2_partial",
+            "res0_conv0_prev", "res0_conv0_first", "res0_conv1_prev", "res0_conv1_first",
+            "res1_conv0_prev", "res1_conv0_first", "res1_conv1_prev", "res1_conv1_first",
+            "res2_conv0_prev", "res2_conv0_first", "res2_conv1_prev", "res2_conv1_first",
+            "conv_final_prev", "conv_final_first",
+        ]
+        if fixed.contains(name) { return true }
+        for prefix in ["cache", "position", "k_cache", "v_cache"] where name.hasPrefix(prefix) {
+            let suffix = String(name.dropFirst(prefix.count))
+            if let index = Int(suffix), (0..<24).contains(index), suffix == String(index) { return true }
+        }
+        return false
+    }
+
+    var isValid: Bool {
+        Self.knownName(name) && shape.count <= 8 && shape.allSatisfy { (0...Int(Int32.max)).contains($0) } &&
+            ["float16", "float32", "float64", "int32", "other"].contains(dataType) &&
+            (0...Int(Int32.max)).contains(count)
+    }
+}
+
+struct AssistRuntimePrediction: Codable, Sendable {
+    static let components = Set(["pocket.conditioner", "pocket.flowlm", "pocket.flow", "pocket.mimi",
+                                 "parakeet.preprocessor", "parakeet.encoder"])
+    let id: String
+    let component: String
+    let state: String
+    let computeUnits: String
+    let inputs: [AssistRuntimePredictionTensor]
+    let inputFeatureCount: Int
+    let metadataTruncated: Bool
+    let voiceTurn: Int
+    let observedElapsedMs: Double
+
+    var isValid: Bool {
+        UUID(uuidString: id) != nil && Self.components.contains(component) &&
+            ["began", "completed", "failed"].contains(state) &&
+            ["all", "cpuAndGPU", "cpuOnly", "cpuAndNeuralEngine", "other"].contains(computeUnits) &&
+            inputs.count <= 8 && inputs.allSatisfy(\.isValid) &&
+            Set(inputs.map(\.name)).count == inputs.count && (0...128).contains(inputFeatureCount) &&
+            inputs.count <= inputFeatureCount && (0...Int(Int32.max)).contains(voiceTurn) &&
+            observedElapsedMs.isFinite && observedElapsedMs >= 0
+    }
+}
+
 struct AssistRuntimeGenerationSummary: Codable, Sendable {
     let requestId: String?
     let promptTokens: Int?
@@ -378,16 +436,18 @@ private struct AssistRuntimeReport: Codable, Sendable {
         "persistence": "best-effort atomic local checkpoint at most every five seconds while sampling, plus rate-limited stage, pressure and lifecycle checkpoints; two sessions, each <=128 KiB; not a crash handler; abrupt termination may lose observations after the last successful checkpoint",
         "events": "bounded constant codes; observedElapsedMs preserves source ContinuousClock time, elapsedMs is monotonic delivery order; stale lifecycle observations cannot replace a newer foreground state",
         "acceleratorUtilization": "GPU/ANE utilization and actual execution placement are not measured",
+        "coreMLPredictions": "latest observed asynchronous operation per allowlisted component, not every in-flight operation; voiceTurn counts observed transitions to voice preparing, not conversation turns; native observer is awaited before submission; first begin per component after observed voice preparing requests an immediate best-effort atomic checkpoint (at most six), later successes use periodic checkpoints and failures are rate limited; metadata only, no tensor values; not an NSException handler; an older checkpoint does not prove the crashing component",
     ]
     let current: AssistRuntimeSample
     var history: [AssistRuntimeSample]
     var events: [AssistRuntimeEvent]
     let diagnostic: AssistRuntimeDiagnostic?
     var generations: [AssistRuntimeGenerationSummary]
+    let coreMLPredictions: [AssistRuntimePrediction]
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion, kind, aneExecution, nativeBuild, osVersion, sessionId, sessionStartedAt, capturedAt, persistence
-        case measurementMethods, current, history, events, diagnostic, generations
+        case measurementMethods, current, history, events, diagnostic, generations, coreMLPredictions
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -407,15 +467,18 @@ private struct AssistRuntimeReport: Codable, Sendable {
         try values.encode(events, forKey: .events)
         try values.encode(diagnostic, forKey: .diagnostic)
         try values.encode(generations, forKey: .generations)
+        try values.encode(coreMLPredictions, forKey: .coreMLPredictions)
     }
 
     init(nativeBuild: String, osVersion: String, sessionId: String, sessionStartedAt: Date, capturedAt: Date,
          persistence: AssistRuntimePersistence, current: AssistRuntimeSample, history: [AssistRuntimeSample],
-         events: [AssistRuntimeEvent], diagnostic: AssistRuntimeDiagnostic?, generations: [AssistRuntimeGenerationSummary]) {
+         events: [AssistRuntimeEvent], diagnostic: AssistRuntimeDiagnostic?, generations: [AssistRuntimeGenerationSummary],
+         coreMLPredictions: [AssistRuntimePrediction] = []) {
         self.nativeBuild = nativeBuild; self.osVersion = osVersion; self.sessionId = sessionId
         self.sessionStartedAt = sessionStartedAt; self.capturedAt = capturedAt; self.persistence = persistence
         self.current = current; self.history = history; self.events = events
         self.diagnostic = diagnostic; self.generations = generations
+        self.coreMLPredictions = coreMLPredictions
     }
 
     init(from decoder: any Decoder) throws {
@@ -435,9 +498,12 @@ private struct AssistRuntimeReport: Codable, Sendable {
         events = try values.decode([AssistRuntimeEvent].self, forKey: .events)
         diagnostic = try values.decodeIfPresent(AssistRuntimeDiagnostic.self, forKey: .diagnostic)
         generations = try values.decode([AssistRuntimeGenerationSummary].self, forKey: .generations)
+        coreMLPredictions = try values.decodeIfPresent([AssistRuntimePrediction].self, forKey: .coreMLPredictions) ?? []
         guard UUID(uuidString: sessionId) != nil, nativeBuild.count <= 64, osVersion.count <= 256,
               !nativeBuild.contains("/"), !osVersion.contains("/"), history.count <= 60, events.count <= 200,
-              generations.count <= 100, ["notAttempted", "saved", "unavailable"].contains(persistence.status),
+              generations.count <= 100, coreMLPredictions.count <= 6, coreMLPredictions.allSatisfy(\.isValid),
+              Set(coreMLPredictions.map(\.component)).count == coreMLPredictions.count,
+              ["notAttempted", "saved", "unavailable"].contains(persistence.status),
               ([current] + history).allSatisfy({ sample in
                   AssistRuntimeMonitorState.phases.contains(sample.phase) &&
                   sample.voiceStage.map(AssistRuntimeMonitorState.voiceStages.contains) != false &&
@@ -586,6 +652,9 @@ actor AssistRuntimeMonitor {
     private var pendingCheckpoint = false
     private var persistence = AssistRuntimePersistence()
     private var archive: AssistRuntimeArchive
+    private var predictionVoiceTurn = 0
+    private var predictionFirstBegins = Set<String>()
+    private var predictions: [String: AssistRuntimePrediction] = [:]
 
     init(directory: URL? = nil, sampleInterval: Duration = .seconds(1), checkpointInterval: Duration = .seconds(5),
          clock: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }) {
@@ -623,7 +692,34 @@ actor AssistRuntimeMonitor {
 
     func recordVoiceStage(_ value: String) {
         guard running(), state.recordVoiceStage(value, at: elapsed()) else { return }
+        if value == "preparing" {
+            predictionVoiceTurn = min(Int(Int32.max), predictionVoiceTurn + 1)
+            predictionFirstBegins.removeAll(keepingCapacity: true)
+        }
         checkpointEvent()
+    }
+
+    /// Awaited by the SDK before async prediction submission. Disk failure is
+    /// contained here and must never suppress inference or claim recovery.
+    func recordCoreMLPrediction(id: String, component: String, state operationState: String, computeUnits: String,
+                               inputs: [AssistRuntimePredictionTensor], inputFeatureCount: Int, metadataTruncated: Bool) {
+        guard running() else { return }
+        let now = elapsed()
+        let operationTurn = operationState == "began" ? predictionVoiceTurn : (predictions[component]?.voiceTurn ?? predictionVoiceTurn)
+        let value = AssistRuntimePrediction(id: id.lowercased(), component: component, state: operationState,
+                                           computeUnits: computeUnits, inputs: inputs, inputFeatureCount: inputFeatureCount,
+                                           metadataTruncated: metadataTruncated, voiceTurn: operationTurn,
+                                           observedElapsedMs: now)
+        guard value.isValid else { return }
+        if operationState != "began", predictions[component]?.id != value.id { return }
+        predictions[component] = value
+        if operationState == "began", predictionFirstBegins.insert(component).inserted {
+            checkpoint(at: now)
+        } else if operationState == "failed" {
+            checkpointEvent()
+        }
+        // No per-frame event or pendingCheckpoint flag: repeated successful
+        // Flow/Mimi submissions use only the existing periodic checkpoint.
     }
 
     private func report(at now: Double, persistence override: AssistRuntimePersistence? = nil) -> AssistRuntimeReport {
@@ -633,7 +729,8 @@ actor AssistRuntimeMonitor {
             sessionId: sessionId, sessionStartedAt: startedDate,
             capturedAt: startedDate.addingTimeInterval(now / 1_000), persistence: override ?? persistence,
             current: state.current(at: now), history: state.history.values, events: state.events.values,
-            diagnostic: state.diagnostic, generations: state.generations.values
+            diagnostic: state.diagnostic, generations: state.generations.values,
+            coreMLPredictions: predictions.values.sorted { $0.component < $1.component }
         )
     }
 

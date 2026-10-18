@@ -37,6 +37,7 @@ export interface Spec extends TurboModule {
   getVoiceStatus(): Promise<string>;
   getAdvancedVoiceState(): Promise<string>;
   importAdvancedVoicePack(): Promise<string>;
+  restorePreviousAdvancedVoicePack(): Promise<string>;
   setAdvancedVoiceBackend(backend: string, variant: string): Promise<string>;
   getSpeechVoices(): Promise<string>;
   setSpeechVoice(voiceId: string): Promise<string>;

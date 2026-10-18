@@ -394,6 +394,74 @@ struct FluidVoiceChecks {
         precondition(weakObject == nil, "No retired producer reference remains in the runtime owner")
         print("PASS exact speech retirement clears ownership, awaits producer stop, and preserves a newer response")
     }
+
+    private static func retiredSpeechShutdownBarrier() async throws {
+        var owner = AssistFluidSpeechSessionOwner<RetiringSpeechProbe>()
+        var barrier = AssistFluidSpeechRetirementBarrier()
+        let old = RetiringSpeechProbe()
+        await old.start()
+        owner.install(old)
+        let retired = owner.retire(old)!
+        let retirement = Task { await retired.cancel() }
+        barrier.append(retirement)
+        await old.waitForCancellation()
+        precondition(owner.current == nil)
+        let oldStillRunning = await old.stopped()
+        precondition(!oldStillRunning, "The regression requires a retired producer still inside inference")
+
+        // Mirrors the full shutdown's admission boundary. No sleep or polling:
+        // without a pending retirement, restart deterministically passes while
+        // the old producer is held at its explicit final-drain continuation.
+        let pending = barrier.take()
+        let restart = Task {
+            await pending?.value
+            return await old.stopped()
+        }
+        if pending == nil {
+            let admittedSafely = await restart.value
+            precondition(admittedSafely,
+                         "Restart passed shutdown while a retired speech prediction was still running")
+        }
+        precondition(barrier.take() == nil, "Full shutdown must take ownership of the pending retirements")
+        await old.finishDrain()
+        let admittedSafely = await restart.value
+        precondition(admittedSafely, "Restart must follow the retired producer's complete exit")
+
+        // Several retirements, including one completing out of order, remain
+        // joined until the full shutdown takes them. A later shutdown gets a
+        // new independent snapshot rather than overwriting the earlier one.
+        let first = RetiringSpeechProbe()
+        let second = RetiringSpeechProbe()
+        await first.start(); await second.start()
+        let firstRetirement = Task { await first.cancel() }
+        let secondRetirement = Task { await second.cancel() }
+        barrier.append(firstRetirement)
+        barrier.append(secondRetirement)
+        await first.waitForCancellation(); await second.waitForCancellation()
+        let all = barrier.take()
+        precondition(all != nil && barrier.take() == nil)
+        await second.finishDrain()
+        await secondRetirement.value
+        await first.finishDrain()
+        await all?.value
+        let firstStopped = await first.stopped()
+        let secondStopped = await second.stopped()
+        precondition(firstStopped && secondStopped)
+
+        let source = try String(contentsOfFile: "mobile/ios/Assist/Voice/AssistVoice.swift", encoding: .utf8)
+        let stopStart = source.range(of: "private func stopSpeechOutput(")!
+        let stopEnd = source.range(of: "private func finishSpeechNaturally", range: stopStart.upperBound..<source.endIndex)!
+        precondition(source[stopStart.lowerBound..<stopEnd.lowerBound].contains("fluidSpeechRetirements.append(retirement)"))
+        let shutdownStart = source.range(of: "private func cancelCurrent(")!
+        let shutdownEnd = source.range(of: "private func fail(", range: shutdownStart.upperBound..<source.endIndex)!
+        let shutdown = String(source[shutdownStart.lowerBound..<shutdownEnd.lowerBound])
+        let take = shutdown.range(of: "let speechRetirements = fluidSpeechRetirements.take()")!
+        let joined = shutdown.range(of: "await speechRetirements?.value")!
+        let runtime = shutdown.range(of: "await runtime?.cancel()")!
+        precondition(take.lowerBound < joined.lowerBound && joined.lowerBound < runtime.lowerBound,
+                     "Production shutdown must join retired speech before releasing/reusing the runtime")
+        print("PASS shutdown joins retired speech after owner removal before admitting a fresh model runtime")
+    }
     static func main() async throws {
         ringCopyAndWrap(); ringOverflow(); ringCloseAndFormat(); stereo(); concurrentSPSC()
         try resampling(); try onsetAndPreroll(); try nonconsecutiveAndShort(); try shortCaptureSurvivesEOT(); try boundedUtteranceAndMailbox()
@@ -401,6 +469,7 @@ struct FluidVoiceChecks {
         await retainedWorkerHandoff(cancelled: false)
         await retainedWorkerHandoff(cancelled: true)
         await retiredSpeechOwnership()
-        print("PASS 14 Fluid voice adapter checks · synthetic PCM, no microphone/model/iPhone qualification")
+        try await retiredSpeechShutdownBarrier()
+        print("PASS 15 Fluid voice adapter checks · synthetic PCM, no microphone/model/iPhone qualification")
     }
 }

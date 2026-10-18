@@ -245,7 +245,8 @@ extension PocketTtsSynthesizer {
         addCacheInputs(&inputDict, state: state, layers: layers)
 
         let input = try MLDictionaryFeatureProvider(dictionary: inputDict)
-        let output = try await model.compatPrediction(from: input, options: MLPredictionOptions())
+        let output = try await model.compatPrediction(
+            from: input, options: MLPredictionOptions(), component: "pocket.conditioner")
 
         try extractCacheOutputs(
             output, state: &state, layerKeys: layerKeys, modelLabel: "cond_step")
@@ -307,7 +308,7 @@ extension PocketTtsSynthesizer {
 
             let input = try MLDictionaryFeatureProvider(dictionary: inputDict)
             let output = try await model.compatPrediction(
-                from: input, options: MLPredictionOptions())
+                from: input, options: MLPredictionOptions(), component: "pocket.conditioner")
 
             try extractCacheOutputs(
                 output, state: &state, layerKeys: layerKeys, modelLabel: "cond_prefill")
@@ -631,7 +632,8 @@ extension PocketTtsSynthesizer {
         addCacheInputs(&inputDict, state: state, layers: layers)
 
         let input = try MLDictionaryFeatureProvider(dictionary: inputDict)
-        let output = try await model.compatPrediction(from: input, options: MLPredictionOptions())
+        let output = try await model.compatPrediction(
+            from: input, options: MLPredictionOptions(), component: "pocket.flowlm")
 
         // Extract transformer output
         guard let transformerOut = output.featureValue(for: transformerKey)?.multiArrayValue

@@ -30,14 +30,18 @@ jobs:
       - run: bash ../scripts/test-preflight.sh
       - run: node --test ../scripts/test-bundle-gemma.mjs
       - run: node --test ../scripts/test-eas-archive.mjs
+      - run: node --test ../scripts/test-voice-pack-signing.mjs ../scripts/test-ios-symbol-artifact.mjs
   swift-policy:
     runs-on: macos-15
     timeout-minutes: 10
+    env:
+      # Swift 6.2 is required by AssistSpeech; macos-15 defaults to Xcode 16.4.
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - name: Foundation and CryptoKit contracts (does not compile Core AI)
+      - name: Foundation, CryptoKit and persistent monitoring contracts (does not compile Core AI)
         run: bash scripts/check-swift.sh
       - name: Device tools generated Swift header (SDK import contract only)
         run: bash scripts/check-device-bridge-header.sh
@@ -47,3 +51,14 @@ jobs:
         run: bash scripts/check-voice-input.sh
       - name: Streaming speech queue and cancellation (no playback)
         run: bash scripts/check-voice-speech-queue.sh
+      - name: Duplex and Fluid retirement barriers (synthetic workers)
+        run: bash scripts/check-voice-duplex.sh && bash scripts/check-fluid-voice.sh
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.22.1
+      - name: Signed pack cross-language import (synthetic weights, temporary key)
+        run: |
+          node scripts/create-voice-pack-interop-fixture.mjs "$RUNNER_TEMP/assist-voice-interop"
+          bash scripts/check-advanced-voice-files.sh "$RUNNER_TEMP/assist-voice-interop"
+      - name: Source-vendored speech SDK contracts (no model download)
+        run: bash scripts/check-fluid-sdk.sh

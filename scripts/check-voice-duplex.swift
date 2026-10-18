@@ -587,8 +587,21 @@ struct VoiceDuplexChecks {
         try teardownSourceOrdering()
         try offlineWiringAndConversion()
         try wiringSourceOrdering()
+        try synthesisDiagnosticsWiring()
         loadingDiagnostics()
-        print("PASS: 28 native duplex checks; offline engines only are started; no microphone, hardware output, recognition or real TTS.")
+        print("PASS: 32 native duplex checks; offline engines only are started; no microphone, hardware output, recognition or real TTS.")
+    }
+
+    private static func synthesisDiagnosticsWiring() throws {
+        let source = try String(contentsOfFile: "mobile/ios/Assist/Voice/AssistVoice.swift", encoding: .utf8)
+        let start = source.range(of: "    private func startFluidSpeechFrames()")!
+        let end = source.range(of: "    private func scheduleFluidPCM(", range: start.upperBound..<source.endIndex)!
+        let consumer = String(source[start.lowerBound..<end.lowerBound])
+        let diagnostic = consumer.range(of: "self.audioDiagnostics.append(AssistFluidLoadFailure.synthesisDiagnostic(error: error))")
+        let fail = consumer.range(of: "self.fail(\"La synthèse PocketTTS locale s’est arrêtée. Reprends le mode vocal.\", code: \"E_VOICE_FLUID_TTS\")")
+        precondition(diagnostic != nil && fail != nil && diagnostic!.upperBound < fail!.lowerBound,
+                     "The real synthesis catch must preserve redacted diagnostics before its generic failure emits")
+        print("PASS: the production synthesis catch appends redacted native diagnostics before emitting its generic error")
     }
 
     private static func loadingDiagnostics() {
@@ -617,6 +630,26 @@ struct VoiceDuplexChecks {
         precondition(redactedModel.diagnosticLine == "load stage=pocket cause=FluidAudio.PocketModelLoad:0")
         print("PASS: exact Pocket model and retry route are retained, arbitrary paths remain excluded")
 
+        let parakeetLoad = NSError(domain: "FluidAudio.ParakeetModelLoad", code: 19, userInfo: [
+            NSUnderlyingErrorKey: NSError(domain: "com.apple.CoreML", code: 19),
+            "ParakeetComponent": "Encoder.mlmodelc", "ParakeetComputeUnits": "cpuAndNeuralEngine",
+            NSLocalizedDescriptionKey: "/private/voice model secret transcript",
+        ])
+        let parakeetFailure = AssistFluidLoadFailure(stage: .parakeet, error: parakeetLoad)
+        precondition(parakeetFailure.diagnosticLine == "load stage=parakeet model=Encoder.mlmodelc units=cpuAndNeuralEngine cause=FluidAudio.ParakeetModelLoad:19 > com.apple.CoreML:19")
+        precondition(!AssistFluidLoadFailure(stage: .silero, error: parakeetLoad).diagnosticLine.contains("model="))
+        let forgedDomain = NSError(domain: "FluidAudio.PrivateSpeaker.Name", code: 42)
+        precondition(AssistFluidLoadFailure(stage: .parakeet, error: forgedDomain).diagnosticLine == "load stage=parakeet cause=other:42",
+                     "A syntactically valid SDK prefix must not expose arbitrary private domain text")
+        for metadata in [
+            ["ParakeetComponent": "/private/Encoder.mlmodelc", "ParakeetComputeUnits": "cpuOnly"],
+            ["ParakeetComponent": "Encoder.mlmodelc", "ParakeetComputeUnits": "private transcript"],
+        ] {
+            let hostileMetadata = NSError(domain: "FluidAudio.ParakeetModelLoad", code: 8, userInfo: metadata)
+            precondition(AssistFluidLoadFailure(stage: .parakeet, error: hostileMetadata).diagnosticLine == "load stage=parakeet cause=FluidAudio.ParakeetModelLoad:8")
+        }
+        print("PASS: Parakeet context is component-allowlisted and stage-scoped; arbitrary SDK domain text is redacted")
+
         let hostile = NSError(domain: "/private/person.wav", code: 42,
                               userInfo: [NSLocalizedDescriptionKey: "consent document"])
         let reference = AssistFluidLoadFailure(stage: .session, error: hostile)
@@ -633,5 +666,24 @@ struct VoiceDuplexChecks {
         history.append(bounded.diagnosticLine)
         precondition(history.lines == [bounded.diagnosticLine])
         print("PASS: load failures fit the existing bounded audio diagnostics contract")
+
+        let synthesis = AssistFluidLoadFailure.synthesisDiagnostic(error: native)
+        precondition(synthesis == "synthesis cause=com.apple.CoreML:1 > NSPOSIXErrorDomain:12")
+        for domain in ["Assist.Voice", "Assist.Voice.PCM", "FluidAudio.PocketTTSError", "FluidAudio.ASRError",
+                       "FluidAudio.AsrModelsError", "FluidAudio.VadError"] {
+            let local = NSError(domain: domain, code: 7, userInfo: [NSLocalizedDescriptionKey: "private transcript /private/model"])
+            precondition(AssistFluidLoadFailure.synthesisDiagnostic(error: local) == "synthesis cause=\(domain):7")
+        }
+        precondition(AssistFluidLoadFailure.synthesisDiagnostic(error: forgedDomain) == "synthesis cause=other:42")
+        precondition(!AssistFluidLoadFailure.synthesisDiagnostic(error: parakeetLoad).contains("model="))
+        print("PASS: synthesis preserves only native domain and code, not descriptions, arbitrary domains or load-stage context")
+
+        let synthesisBounded = AssistFluidLoadFailure.synthesisDiagnostic(error: nested)
+        precondition(synthesisBounded.components(separatedBy: " > ").count == 3 && synthesisBounded.count <= 400)
+        precondition(!synthesisBounded.contains("NSCocoaErrorDomain:4"))
+        let longDomain = NSError(domain: String(repeating: "private/", count: 1_000), code: Int.max,
+                                 userInfo: [NSLocalizedDescriptionKey: String(repeating: "private transcript", count: 1_000)])
+        precondition(AssistFluidLoadFailure.synthesisDiagnostic(error: longDomain) == "synthesis cause=other:\(Int.max)")
+        print("PASS: synthesis error chains stop after three levels and remain within the 400-character privacy bound")
     }
 }

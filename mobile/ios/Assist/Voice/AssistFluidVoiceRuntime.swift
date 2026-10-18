@@ -104,6 +104,26 @@ struct AssistFluidSpeechSessionOwner<Session: AnyObject & Sendable>: Sendable {
         return expected
     }
 }
+
+/// A response can relinquish its session before its Core ML prediction exits.
+/// The coordinator transfers every retirement to the next full shutdown.
+struct AssistFluidSpeechRetirementBarrier: Sendable {
+    private var pending: Task<Void, Never>?
+
+    mutating func append(_ retirement: Task<Void, Never>) {
+        guard let previous = pending else { pending = retirement; return }
+        pending = Task { @concurrent in
+            await previous.value
+            await retirement.value
+        }
+    }
+
+    mutating func take() -> Task<Void, Never>? {
+        let value = pending
+        pending = nil
+        return value
+    }
+}
 // END PURE FLUID CAPTURE POLICY
 
 /// Only values cross from model actors to the main-owned audio coordinator.

@@ -62,6 +62,32 @@ test('retains bounded previous-session metadata without inferring an interruptio
   expect(parseMonitoringSnapshot(JSON.stringify(value))).toEqual(value);
 });
 
+test('preserves bounded native Core ML breadcrumbs for export without inferring a crash cause', () => {
+  const value = report({
+    coreMLPredictions: [
+      {
+        id: '79c94ce2-078e-4d7c-8f43-fd4ba031fe81',
+        component: 'pocket.flowlm',
+        state: 'began',
+        computeUnits: 'cpuAndGPU',
+        inputs: [
+          {
+            name: 'sequence',
+            shape: [1, 1, 32],
+            dataType: 'float32',
+            count: 32,
+          },
+        ],
+        inputFeatureCount: 49,
+        metadataTruncated: true,
+        voiceTurn: 2,
+        observedElapsedMs: 315627,
+      },
+    ],
+  });
+  expect(parseMonitoringSnapshot(JSON.stringify(value))).toEqual(value);
+});
+
 test.each([
   'inactive',
   'preparing',

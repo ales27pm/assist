@@ -173,7 +173,8 @@ extension AsrManager {
             try Task.checkCancellation()
             let preprocessorOutput = try await preprocessorModel.compatPrediction(
                 from: preprocessorInput,
-                options: predictionOptions
+                options: predictionOptions,
+                component: "parakeet.preprocessor"
             )
             let encoderOutputProvider: MLFeatureProvider
             if let defaultEncoder = encoderModel {
@@ -198,7 +199,8 @@ extension AsrManager {
                 try Task.checkCancellation()
                 encoderOutputProvider = try await encoderModel.compatPrediction(
                     from: encoderInput,
-                    options: predictionOptions
+                    options: predictionOptions,
+                    component: "parakeet.encoder"
                 )
             } else {
                 // Fused frontend: preprocessor output already contains encoder features

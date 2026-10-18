@@ -50,11 +50,16 @@ Transférer le dossier complet dans **Sur mon iPhone**, avec ses sous-dossiers
 `pocket`, `silero` et `redux`/`ultra`. Dans Assist : **Réglages → Voix locale
 avancée → Importer un pack de modèles**. Les fichiers doivent déjà être
 matérialisés localement. L’import rejette liens symboliques et placeholders,
-copie par blocs bornés et vérifie tailles et SHA-256 contre le manifeste inclus
-dans l’app, indépendamment de tout manifeste fourni par le dossier sélectionné.
-Il faut l’espace d’une nouvelle copie plus 256 Mo; l’ancien pack reste en place
-jusqu’à validation du nouveau. Une erreur ou mise en arrière-plan annule l’import
-et conserve la sélection précédente. Aucun microphone ne s’ouvre dans Réglages.
+copie par blocs bornés et vérifie tailles et SHA-256. Les packs hérités restent
+liés au manifeste inclus dans l’app. Le prochain hôte préparé accepte aussi un
+[manifeste versionné signé et compatible](versioned-voice-packs.md), sans
+accepter la déclaration d’un éditeur inconnu. Ce mécanisme n’est pas disponible
+dans la build26 déjà installée.
+Il faut l’espace d’une nouvelle copie plus 256 Mo; le pack actif reste en place
+jusqu’à validation du nouveau. Un seul pack précédent est conservé pour une
+restauration explicite, avec sa variante ASR. Une erreur ou mise en arrière-plan
+annule l’import et conserve la sélection précédente. Aucun microphone ne
+s’ouvre dans Réglages.
 
 ## Voix française intégrée
 
@@ -115,9 +120,9 @@ attendent leur nettoyage avant réemploi ou remplacement du pack.
 Les limites du SDK sont64 segments texte et192 frames de sortie (15,36secondes)
 avec erreur explicite si le consommateur ne suit plus. Une limite supplémentaire
 de150 frames suspend la production jusqu’aux confirmations de lecture effective;
-elle évite de remplir la file pendant une longue réponse. Le chargement refuse
-une réserve d’allocation par app inférieure à2 Go et un état thermique sérieux
-ou critique; ce sont des garde-fous de prototype, pas une mesure du RSS requis.
+elle évite de remplir la file pendant une longue réponse. Aucun seuil fixe de
+budget mémoire ne remplace le résultat du chargeur natif : ce budget ne réserve
+pas la mémoire nécessaire à Core ML et ne mesure pas le pic à venir.
 L’échec du moteur avancé reste visible; l’application ne réessaie pas une réponse
 avec une autre voix à l’insu de l’utilisateur.
 

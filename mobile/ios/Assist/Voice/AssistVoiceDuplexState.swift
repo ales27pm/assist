@@ -244,6 +244,16 @@ struct AssistFluidLoadFailure: Error, LocalizedError, Sendable {
     let diagnosticLine: String
     init(stage: Stage, error: Error) {
         self.stage = stage
+        diagnosticLine = Self.formattedDiagnostic(error: error, stage: stage)
+    }
+
+    /// The synthesis consumer keeps its generic user-facing message while
+    /// exposing only a bounded, redacted native error chain in audio details.
+    static func synthesisDiagnostic(error: Error) -> String {
+        formattedDiagnostic(error: error, stage: nil)
+    }
+
+    private static func formattedDiagnostic(error: Error, stage: Stage?) -> String {
         var chain: [String] = []
         var current: NSError? = error as NSError
         var modelContext = ""
@@ -259,14 +269,29 @@ struct AssistFluidLoadFailure: Error, LocalizedError, Sendable {
                 let retried = value.userInfo["PocketTtsRetried"] as? Bool == true ? 1 : 0
                 modelContext = " model=\(component) units=\(units) retried=\(retried)"
             }
-            let known = ["com.apple.CoreML", "NSCocoaErrorDomain", "NSPOSIXErrorDomain", "NSOSStatusErrorDomain"]
-            let isSDK = value.domain.hasPrefix("FluidAudio.") && value.domain.count < 120 &&
-                value.domain.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 46 || $0 == 95 }
-            let domain = known.contains(value.domain) || isSDK ? value.domain : "other"
+            if stage == .parakeet, value.domain == "FluidAudio.ParakeetModelLoad",
+               let component = value.userInfo["ParakeetComponent"] as? String,
+               ["Preprocessor.mlmodelc", "Encoder.mlmodelc", "Encoder_v2.mlmodelc", "EncoderInt4.mlmodelc",
+                "Decoder.mlmodelc", "JointDecision.mlmodelc", "JointDecisionv3.mlmodelc", "CtcHead.mlmodelc",
+                "Decoderv2.mlmodelc", "Jointerv2.mlmodelc"].contains(component),
+               let units = value.userInfo["ParakeetComputeUnits"] as? String,
+               ["all", "cpuAndGPU", "cpuOnly", "cpuAndNeuralEngine"].contains(units) {
+                modelContext = " model=\(component) units=\(units)"
+            }
+            // An SDK prefix alone is insufficient: an arbitrary domain can
+            // contain a private name even when it contains only ASCII letters.
+            let known = [
+                "com.apple.CoreML", "NSCocoaErrorDomain", "NSPOSIXErrorDomain", "NSOSStatusErrorDomain",
+                "AVFoundationErrorDomain", "com.apple.coreaudio.avfaudio", "Assist.Voice", "Assist.Voice.PCM",
+                "FluidAudio.PocketModelLoad", "FluidAudio.ParakeetModelLoad", "FluidAudio.PocketTTSError",
+                "FluidAudio.ASRError", "FluidAudio.AsrModelsError", "FluidAudio.VadError", "FluidAudio.ModelTensorContract",
+            ]
+            let domain = known.contains(value.domain) ? value.domain : "other"
             chain.append("\(domain):\(value.code)")
             current = value.userInfo[NSUnderlyingErrorKey] as? NSError
         }
-        diagnosticLine = String("load stage=\(stage.rawValue)\(modelContext) cause=\(chain.joined(separator: " > "))".prefix(400))
+        let prefix = stage.map { "load stage=\($0.rawValue)" } ?? "synthesis"
+        return String("\(prefix)\(modelContext) cause=\(chain.joined(separator: " > "))".prefix(400))
     }
     var errorDescription: String? {
         "Impossible de charger \(stage.label). Consulte les détails audio ci-dessous; les ressources importées sont conservées."

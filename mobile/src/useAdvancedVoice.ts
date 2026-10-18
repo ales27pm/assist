@@ -9,7 +9,7 @@ import type {
   AdvancedVoiceVariant,
 } from './advancedVoice';
 
-type Operation = 'pack' | 'backend';
+type Operation = 'pack' | 'backend' | 'restore';
 const unsupported =
   'La voix locale avancée nécessite une version compatible d’Assist sur iPhone.';
 
@@ -21,6 +21,12 @@ export function useAdvancedVoice() {
     typeof NativeAssist.importAdvancedVoicePack === 'function' &&
     typeof NativeAssist.setAdvancedVoiceBackend === 'function'
   );
+  // Newer JavaScript can run on an installed native26 binary. Keep the
+  // original resource controls available there, but never call this optional
+  // bridge method until the native27 binary is installed.
+  const canRestorePreviousPack =
+    supported &&
+    typeof NativeAssist?.restorePreviousAdvancedVoicePack === 'function';
   const [state, setState] = useState<AdvancedVoiceState | null>(null);
   const [loading, setLoading] = useState(supported);
   const [operation, setOperation] = useState<Operation | null>(null);
@@ -150,6 +156,12 @@ export function useAdvancedVoice() {
       ),
     [perform],
   );
+  const restorePreviousPack = useCallback(async () => {
+    if (!canRestorePreviousPack) return false;
+    return perform('restore', () =>
+      NativeAssist!.restorePreviousAdvancedVoicePack(),
+    );
+  }, [canRestorePreviousPack, perform]);
   return {
     supported,
     state,
@@ -159,6 +171,8 @@ export function useAdvancedVoice() {
     error,
     refresh,
     importPack,
+    canRestorePreviousPack,
+    restorePreviousPack,
     setBackend,
   };
 }

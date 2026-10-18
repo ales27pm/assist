@@ -3,6 +3,11 @@ import { AppState } from 'react-native';
 import type { AppStateStatus } from 'react-native';
 import NativeAssist from '../specs/NativeAssist';
 import { parseAdvancedVoiceState } from '../src/advancedVoice';
+import type {
+  AdvancedVoiceBackend,
+  AdvancedVoiceState,
+  AdvancedVoiceVariant,
+} from '../src/advancedVoice';
 import { useAdvancedVoice } from '../src/useAdvancedVoice';
 
 jest.mock('../specs/NativeAssist', () => ({
@@ -10,12 +15,13 @@ jest.mock('../specs/NativeAssist', () => ({
   default: {
     getAdvancedVoiceState: jest.fn(),
     importAdvancedVoicePack: jest.fn(),
+    restorePreviousAdvancedVoicePack: jest.fn(),
     setAdvancedVoiceBackend: jest.fn(),
     startListening: jest.fn(),
   },
 }));
 const native = jest.mocked(NativeAssist!);
-const empty = {
+const empty: AdvancedVoiceState = {
   schemaVersion: 2,
   revision: 0,
   selectedBackend: 'apple',
@@ -54,12 +60,20 @@ beforeEach(() => {
   });
   native.getAdvancedVoiceState.mockResolvedValue(json());
   native.importAdvancedVoicePack.mockResolvedValue(json(complete));
+  native.restorePreviousAdvancedVoicePack.mockResolvedValue(
+    json({
+      ...complete,
+      revision: 2,
+      packVersion: '2026.10',
+      previousPackAvailable: false,
+    }),
+  );
   native.setAdvancedVoiceBackend.mockImplementation(async (backend, variant) =>
     json({
       ...complete,
-      selectedBackend: backend,
-      selectedVariant: variant,
-      effectiveBackend: backend,
+      selectedBackend: backend as AdvancedVoiceBackend,
+      selectedVariant: variant as AdvancedVoiceVariant,
+      effectiveBackend: backend as AdvancedVoiceBackend,
     }),
   );
 });
@@ -146,6 +160,53 @@ test('a failed import preserves installed resources and can be retried', async (
   expect(result.current.error).toBe('');
 });
 
+test('a rejected rollback preserves the confirmed pack and never starts audio', async () => {
+  const restorable = {
+    ...complete,
+    packVersion: '2026.10',
+    previousPackAvailable: true,
+  };
+  native.getAdvancedVoiceState.mockResolvedValueOnce(json(restorable));
+  native.restorePreviousAdvancedVoicePack.mockRejectedValueOnce(
+    new Error('Le pack précédent est incomplet.'),
+  );
+  const { result } = await renderHookAsync(useAdvancedVoice);
+  await act(async () =>
+    expect(await result.current.restorePreviousPack()).toBe(false),
+  );
+  expect(result.current.state).toEqual(restorable);
+  expect(result.current.error).toContain('précédent est incomplet');
+  expect(native.startListening).not.toHaveBeenCalled();
+});
+
+test('rollback stays pending until native acknowledgement and blocks other resource changes', async () => {
+  const restoring = deferred<string>();
+  native.getAdvancedVoiceState.mockResolvedValueOnce(
+    json({ ...complete, previousPackAvailable: true }),
+  );
+  native.restorePreviousAdvancedVoicePack.mockReturnValueOnce(restoring.promise);
+  const { result } = await renderHookAsync(useAdvancedVoice);
+  let restored!: Promise<boolean>;
+  await act(async () => {
+    restored = result.current.restorePreviousPack();
+  });
+  expect(result.current.operation).toBe('restore');
+  expect(result.current.busy).toBe(true);
+  await act(async () => {
+    expect(await result.current.importPack()).toBe(false);
+    expect(await result.current.setBackend('fluid', 'redux')).toBe(false);
+  });
+  expect(native.importAdvancedVoicePack).not.toHaveBeenCalled();
+  expect(native.setAdvancedVoiceBackend).not.toHaveBeenCalled();
+  expect(native.startListening).not.toHaveBeenCalled();
+  await act(async () => {
+    restoring.resolve(json({ ...complete, revision: 3, previousPackAvailable: false }));
+    expect(await restored).toBe(true);
+  });
+  expect(result.current.busy).toBe(false);
+  expect(result.current.state?.previousPackAvailable).toBe(false);
+});
+
 test('an older native revision cannot replace a newer confirmed inventory', async () => {
   native.getAdvancedVoiceState.mockResolvedValueOnce(
     json({ ...complete, revision: 4 }),
@@ -222,6 +283,31 @@ test('missing new APIs leaves older builds readable and makes no unsupported cal
   }
 });
 
+test('an older binary without rollback support remains readable and receives no rollback call', async () => {
+  const original = native.restorePreviousAdvancedVoicePack;
+  Object.defineProperty(native, 'restorePreviousAdvancedVoicePack', {
+    configurable: true,
+    value: undefined,
+  });
+  try {
+    native.getAdvancedVoiceState.mockResolvedValueOnce(
+      json({ ...complete, previousPackAvailable: true }),
+    );
+    const { result } = await renderHookAsync(useAdvancedVoice);
+    expect(result.current.supported).toBe(true);
+    expect(result.current.canRestorePreviousPack).toBe(false);
+    await act(async () =>
+      expect(await result.current.restorePreviousPack()).toBe(false),
+    );
+    expect(native.startListening).not.toHaveBeenCalled();
+  } finally {
+    Object.defineProperty(native, 'restorePreviousAdvancedVoicePack', {
+      configurable: true,
+      value: original,
+    });
+  }
+});
+
 test('parser strips private or unexpected data including obsolete reference metadata', () => {
   expect(
     parseAdvancedVoiceState(
@@ -238,6 +324,25 @@ test('parser strips private or unexpected data including obsolete reference meta
       }),
     ),
   ).toEqual(complete);
+});
+
+test('parser retains only bounded safe rollback metadata', () => {
+  const restorable = {
+    ...complete,
+    packVersion: '2026.10-rc_1',
+    previousPackAvailable: true,
+  };
+  expect(parseAdvancedVoiceState(JSON.stringify(restorable))).toEqual(restorable);
+  expect(() =>
+    parseAdvancedVoiceState(
+      JSON.stringify({ ...complete, packVersion: '../private/path' }),
+    ),
+  ).toThrow();
+  expect(() =>
+    parseAdvancedVoiceState(
+      JSON.stringify({ ...complete, previousPackAvailable: 'true' }),
+    ),
+  ).toThrow();
 });
 
 test.each([

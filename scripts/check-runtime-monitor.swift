@@ -20,11 +20,25 @@ struct RuntimeMonitorChecks {
         try JSONSerialization.jsonObject(with: Data(try await monitor.snapshotJSON().utf8)) as! [String: Any]
     }
 
+    /// Observe autonomous persisted progress, not a presumed VM timer deadline.
+    /// Reads only: this cannot manufacture a native sample through an export.
+    static func waitForSavedHistory(_ file: URL, count: Int) async throws -> [String: Any] {
+        var latest: [String: Any] = [:]
+        for _ in 0..<100 {
+            latest = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
+            if (latest["history"] as? [Any])?.count ?? 0 >= count { return latest }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        return latest
+    }
+
     static func main() async throws {
         if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--abrupt-monitor-child" {
             let monitor = AssistRuntimeMonitor(directory: URL(fileURLWithPath: CommandLine.arguments[2]), sampleInterval: .milliseconds(50))
             await monitor.start()
-            await monitor.recordVoiceStage("listening")
+            await monitor.recordVoiceStage("preparing")
+            await monitor.recordVoiceStage("speaking")
+            await prediction(monitor, component: "pocket.flowlm")
             // The parent kills only this exact subprocess. Do not run shutdown:
             // recovery must use a periodic checkpoint, not graceful teardown.
             while true { try await Task.sleep(for: .seconds(30)) }
@@ -194,8 +208,142 @@ struct RuntimeMonitorChecks {
         check(!text.contains("private prompt") && !text.contains("raw error") && !text.contains("/path"),
               "Diagnostic arguments never enter snapshots.")
         try await persistenceAndSamplingChecks(root: temporary)
+        try await predictionChecks(root: temporary)
         try await abruptProcessRecovery(root: temporary)
         print("PASS: runtime monitor finite metrics, CPU units, decode timing, bounded histories, privacy, context, partial diagnostics, sampling and terminal shutdown")
+    }
+
+    static func prediction(_ monitor: AssistRuntimeMonitor, component: String,
+                           id: String = UUID().uuidString, state: String = "began",
+                           inputs: [AssistRuntimePredictionTensor] = [
+                            .init(name: "sequence", shape: [1, 1, 32], dataType: "float32", count: 32)
+                           ], featureCount: Int = 1) async {
+        await monitor.recordCoreMLPrediction(id: id, component: component, state: state, computeUnits: "all",
+                                            inputs: inputs, inputFeatureCount: featureCount, metadataTruncated: false)
+    }
+
+    static func predictionChecks(root: URL) async throws {
+        let bridge = try String(contentsOfFile: "mobile/ios/Assist/Inference/AssistCoreAI.swift", encoding: .utf8)
+        let hookStart = bridge.range(of: "// BEGIN CORE ML MONITOR OBSERVER")!
+        let hookEnd = bridge.range(of: "// END CORE ML MONITOR OBSERVER", range: hookStart.upperBound..<bridge.endIndex)!
+        let hook = bridge[hookStart.upperBound..<hookEnd.lowerBound]
+        check(hook.contains("CoreMLPredictionDiagnostics.observer = { [weak monitor] event in") &&
+              hook.contains("await monitor?.recordCoreMLPrediction("),
+              "The native engine installs an awaited observer without retaining the bridge or monitor.")
+        let voiceRuntime = try String(contentsOfFile: "mobile/ios/Assist/Voice/AssistFluidVoiceRuntime.swift", encoding: .utf8)
+        check(!voiceRuntime.contains("CoreMLPredictionDiagnostics.observer ="),
+              "Replacing a voice runtime must not replace the engine-owned global prediction observer.")
+        let directory = root.appendingPathComponent("predictions")
+        let current = directory.appendingPathComponent("current.json")
+        let fixedNow = ContinuousClock.now
+        let monitor = AssistRuntimeMonitor(directory: directory, clock: { fixedNow })
+        await monitor.start()
+        await monitor.recordVoiceStage("preparing")
+        let firstID = UUID().uuidString.lowercased()
+        await prediction(monitor, component: "pocket.flowlm", id: firstID)
+        let beganData = try Data(contentsOf: current)
+        let began = try JSONSerialization.jsonObject(with: beganData) as! [String: Any]
+        let firstDisk = (began["coreMLPredictions"] as! [[String: Any]]).first
+        check(firstDisk?["id"] as? String == firstID && firstDisk?["state"] as? String == "began",
+              "The first component begin must already be checkpointed when its awaited callback returns.")
+        check(firstDisk?["voiceTurn"] as? Int == 1, "Preparing starts a new native voice-turn checkpoint allowance.")
+        await prediction(monitor, component: "pocket.flowlm", id: firstID, state: "completed")
+        let completedReport = try await report(monitor)
+        check((completedReport["coreMLPredictions"] as! [[String: Any]]).first?["state"] as? String == "completed",
+              "A matching successful operation records completion without claiming that it remains in flight.")
+        let newerID = UUID().uuidString.lowercased()
+        await prediction(monitor, component: "pocket.flowlm", id: newerID)
+        await prediction(monitor, component: "pocket.flowlm", id: firstID, state: "failed")
+        let inMemory = try await report(monitor)
+        let newer = (inMemory["coreMLPredictions"] as! [[String: Any]]).first!
+        check(newer["id"] as? String == newerID && newer["state"] as? String == "began",
+              "A late completion/failure cannot overwrite a newer operation of the same component.")
+        await prediction(monitor, component: "pocket.flowlm", id: newerID, state: "failed")
+        let failureReport = try await report(monitor)
+        check((failureReport["coreMLPredictions"] as! [[String: Any]]).first?["state"] as? String == "failed",
+              "A matching Swift failure remains distinguishable from a completed or open operation.")
+        for _ in 0..<500 {
+            let id = UUID().uuidString
+            await prediction(monitor, component: "pocket.flowlm", id: id)
+            await prediction(monitor, component: "pocket.flowlm", id: id, state: "completed")
+        }
+        let hotLoopDisk = try Data(contentsOf: current)
+        check(hotLoopDisk == beganData,
+              "A hot prediction loop cannot force one checkpoint per frame, begin or completion.")
+        for component in AssistRuntimePrediction.components.sorted() where component != "pocket.flowlm" {
+            await prediction(monitor, component: component)
+            let disk = try JSONSerialization.jsonObject(with: Data(contentsOf: current)) as! [String: Any]
+            check((disk["coreMLPredictions"] as! [[String: Any]]).contains { $0["component"] as? String == component && $0["state"] as? String == "began" },
+                  "Each of the six components gets its first awaited begin checkpoint.")
+        }
+        let sixBegins = try Data(contentsOf: current)
+        await monitor.recordVoiceStage("preparing")
+        for component in AssistRuntimePrediction.components {
+            await prediction(monitor, component: component)
+        }
+        let repeatedBegins = try Data(contentsOf: current)
+        check(repeatedBegins == sixBegins, "Only six first-begin allowances exist in a voice turn.")
+        let beforeInvalid = try await report(monitor)["coreMLPredictions"] as! [[String: Any]]
+        let previousTurnFlowID = beforeInvalid.first { $0["component"] as? String == "pocket.flow" }!["id"] as! String
+        await prediction(monitor, component: "/private/Speaker")
+        await prediction(monitor, component: "pocket.flowlm", id: "private transcript")
+        await prediction(monitor, component: "pocket.flowlm", state: "private /path")
+        for tensor in [
+            AssistRuntimePredictionTensor(name: "PrivateSpeaker", shape: [1], dataType: "float32", count: 1),
+            .init(name: "sequence", shape: Array(repeating: 1, count: 9), dataType: "float32", count: 1),
+            .init(name: "sequence", shape: [Int.max], dataType: "float32", count: 1),
+            .init(name: "sequence", shape: [1], dataType: "private /path", count: 1),
+            .init(name: "sequence", shape: [1], dataType: "float32", count: -1),
+        ] {
+            await prediction(monitor, component: "pocket.flowlm", inputs: [tensor])
+        }
+        await prediction(monitor, component: "pocket.flowlm", featureCount: 129)
+        let afterInvalid = try await report(monitor)
+        let afterInvalidPredictions = afterInvalid["coreMLPredictions"] as! [[String: Any]]
+        check(NSDictionary(dictionary: ["values": beforeInvalid]).isEqual(to: ["values": afterInvalidPredictions]),
+              "Invalid components, IDs and tensor metadata never enter monitoring storage.")
+        await monitor.recordVoiceStage("speaking")
+        await monitor.recordVoiceStage("preparing")
+        let nextTurnID = UUID().uuidString.lowercased()
+        await prediction(monitor, component: "pocket.flowlm", id: nextTurnID)
+        let nextTurn = try JSONSerialization.jsonObject(with: Data(contentsOf: current)) as! [String: Any]
+        let nextDisk = (nextTurn["coreMLPredictions"] as! [[String: Any]]).first { $0["component"] as? String == "pocket.flowlm" }!
+        check(nextDisk["id"] as? String == nextTurnID && nextDisk["voiceTurn"] as? Int == 2,
+              "A new preparing stage restores the first-begin allowance without changing the LLM phase.")
+        await prediction(monitor, component: "pocket.flow", id: previousTurnFlowID, state: "completed")
+        let lateTurnReport = try await report(monitor)
+        let lateTurnFlow = (lateTurnReport["coreMLPredictions"] as! [[String: Any]]).first { $0["component"] as? String == "pocket.flow" }!
+        check(lateTurnFlow["voiceTurn"] as? Int == 1 && lateTurnFlow["state"] as? String == "completed",
+              "A delayed completion keeps the turn of its original begin, not the current preparing turn.")
+        let exported = try await monitor.snapshotJSON()
+        for forbidden in ["PrivateSpeaker", "private transcript", "/private/", "private /path"] {
+            check(!exported.contains(forbidden), "Prediction metadata must never retain arbitrary names or user values.")
+        }
+        await monitor.shutdown()
+        let validData = try Data(contentsOf: current)
+        check(validData.count <= 128 * 1_024, "Tensor metadata remains inside the existing report cap.")
+        try validData.write(to: directory.appendingPathComponent("previous.json"), options: .atomic)
+        var corrupted = try JSONSerialization.jsonObject(with: validData) as! [String: Any]
+        var badPredictions = corrupted["coreMLPredictions"] as! [[String: Any]]
+        badPredictions[0]["inputs"] = [["name": "PrivateSpeaker", "shape": [1], "dataType": "float32", "count": 1]]
+        corrupted["coreMLPredictions"] = badPredictions
+        try JSONSerialization.data(withJSONObject: corrupted).write(to: current, options: .atomic)
+        let restarted = AssistRuntimeMonitor(directory: directory)
+        await restarted.start()
+        let previous = try await restarted.previousSnapshotJSON()
+        check(previous == String(decoding: validData, as: UTF8.self),
+              "Corrupted prediction metadata cannot replace the previous valid checkpoint on restart.")
+        await restarted.shutdown()
+        let blocked = root.appendingPathComponent("prediction-disk-failure")
+        try Data("occupied".utf8).write(to: blocked)
+        let failing = AssistRuntimeMonitor(directory: blocked)
+        await prediction(failing, component: "pocket.mimi")
+        let failed = try await report(failing)
+        check((failed["persistence"] as! [String: Any])["status"] as? String == "unavailable" &&
+              (failed["coreMLPredictions"] as! [Any]).count == 1,
+              "Checkpoint failure returns normally, preserves metadata in memory, and cannot claim persistence.")
+        await failing.shutdown()
+        print("PASS: awaited first prediction checkpoints, six-per-turn allowance, hot-loop rate bounds, UUID correlation, tensor privacy and corrupt/disk-failure recovery")
     }
 
     static func persistenceAndSamplingChecks(root: URL) async throws {
@@ -221,8 +369,7 @@ struct RuntimeMonitorChecks {
         #endif
         await first.start()
         check(!manager.fileExists(atPath: previous.path), "Repeated start cannot rotate the current session into previous.")
-        try await Task.sleep(for: .milliseconds(650))
-        let periodic = try JSONSerialization.jsonObject(with: Data(contentsOf: current)) as! [String: Any]
+        let periodic = try await waitForSavedHistory(current, count: 2)
         check((periodic["history"] as! [Any]).count >= 2, "Native sampling advances without requesting JS snapshots.")
         await first.recordVoiceStage("pocket")
         await first.transition(phase: "ready", code: "MODEL_LOAD_COMPLETED")
@@ -232,13 +379,14 @@ struct RuntimeMonitorChecks {
         let sample = live["current"] as! [String: Any]
         check(sample["phase"] as? String == "ready" && sample["voiceStage"] as? String == "listening",
               "Whitelisted voice stage is independent of the inference phase.")
-        let count = (live["history"] as! [Any]).count
-        for _ in 0..<50 { _ = try await report(first) }
-        let afterExports = try await report(first)
-        check((afterExports["history"] as! [Any]).count == count, "Rapid exports must not append native samples.")
         await first.recordLifecycle("APP_BACKGROUND")
         let background = try await report(first)
         let backgroundCount = (background["history"] as! [Any]).count
+        // Pause the sampler explicitly: a legitimate autonomous sample during
+        // slow exports must not be mistaken for an export-created sample.
+        for _ in 0..<50 { _ = try await report(first) }
+        let afterExports = try await report(first)
+        check((afterExports["history"] as! [Any]).count == backgroundCount, "Exports cannot append native samples while the sampler is paused.")
         try await Task.sleep(for: .milliseconds(600))
         let afterBackground = try await report(first)
         check((afterBackground["history"] as! [Any]).count == backgroundCount, "Background stops the native sampler.")
@@ -247,7 +395,7 @@ struct RuntimeMonitorChecks {
         await first.recordLifecycle("APP_BACKGROUND", observed: oldBackground)
         let resumed = try await report(first)
         let resumedCount = (resumed["history"] as! [Any]).count
-        try await Task.sleep(for: .milliseconds(600))
+        _ = try await waitForSavedHistory(current, count: resumedCount + 1)
         let afterForeground = try await report(first)
         check((afterForeground["history"] as! [Any]).count > resumedCount,
               "Foreground restarts sampling; a delayed older background callback cannot stop it again.")
@@ -344,7 +492,7 @@ struct RuntimeMonitorChecks {
         await restarted.shutdown()
 
         var disposable: AssistRuntimeMonitor? = AssistRuntimeMonitor(directory: root.appendingPathComponent("weak"), sampleInterval: .milliseconds(30))
-        weak var weakMonitor = disposable
+        weak let weakMonitor = disposable
         await disposable?.start()
         disposable = nil
         try await Task.sleep(for: .milliseconds(100))
@@ -370,7 +518,9 @@ struct RuntimeMonitorChecks {
         for _ in 0..<100 {
             if let data = try? Data(contentsOf: current),
                let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-               let sample = object["current"] as? [String: Any], sample["voiceStage"] as? String == "listening" {
+               let sample = object["current"] as? [String: Any], sample["voiceStage"] as? String == "speaking",
+               let predictions = object["coreMLPredictions"] as? [[String: Any]],
+               predictions.contains(where: { $0["component"] as? String == "pocket.flowlm" && $0["state"] as? String == "began" }) {
                 checkpoint = object
                 break
             }
@@ -390,8 +540,10 @@ struct RuntimeMonitorChecks {
         let previous = try JSONSerialization.jsonObject(with: Data(previousJSON.utf8)) as! [String: Any]
         check(previous["sessionId"] as? String == checkpoint?["sessionId"] as? String,
               "A fresh native monitor recovers the session killed before any export or graceful shutdown.")
-        check((previous["current"] as! [String: Any])["voiceStage"] as? String == "listening",
+        check((previous["current"] as! [String: Any])["voiceStage"] as? String == "speaking",
               "The recovered checkpoint preserves the last saved voice stage.")
+        check((previous["coreMLPredictions"] as! [[String: Any]]).contains { $0["component"] as? String == "pocket.flowlm" && $0["state"] as? String == "began" },
+              "A begin checkpoint survives SIGKILL without a completion callback or graceful shutdown.")
         check(!(previous["events"] as! [[String: Any]]).contains { $0["code"] as? String == "MONITOR_STOPPED" },
               "Recovery must not fabricate a graceful shutdown event for a killed process.")
         await restarted.shutdown()

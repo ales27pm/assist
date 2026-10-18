@@ -24,6 +24,7 @@ extension PocketTtsSynthesizer {
         rng: inout some RandomNumberGenerator
     ) async throws -> [Float] {
         let latentDim = PocketTtsConstants.latentDim
+        try validateFlowModelDescription(model.modelDescription)
 
         // Initialize z_0 with scaled random noise (host owns the seed/RNG).
         // sqrt(temperature) because variance scales quadratically with the multiplier.
@@ -52,25 +53,46 @@ extension PocketTtsSynthesizer {
             "latent_init": latentArray,
         ]
         let input = try MLDictionaryFeatureProvider(dictionary: inputDict)
-        let output = try await model.compatPrediction(from: input, options: MLPredictionOptions())
+        let output = try await model.compatPrediction(
+            from: input, options: MLPredictionOptions(), component: "pocket.flow")
 
         // Prefer the named output; fall back to the sole output for robustness
         // against CoreML auto-generated names.
-        let finalName =
-            output.featureNames.contains("latent_final")
-            ? "latent_final" : (output.featureNames.first ?? "")
+        return try checkedFlowOutput(output)
+    }
+
+    static func checkedFlowOutput(_ output: MLFeatureProvider) throws -> [Float] {
+        let finalName = try ModelTensorContract.flowOutputName(in: output.featureNames)
         guard let finalArray = output.featureValue(for: finalName)?.multiArrayValue else {
             throw PocketTTSError.processingFailed("Missing fused flow decoder latent_final output")
         }
 
-        let finalPtr = finalArray.dataPointer.bindMemory(to: Float.self, capacity: latentDim)
-        return Array(UnsafeBufferPointer(start: finalPtr, count: latentDim))
+        return try ModelTensorContract.float32Values(
+            finalArray, count: PocketTtsConstants.latentDim, role: "PocketTTS flow output")
+    }
+
+    static func validateFlowModelDescription(_ description: MLModelDescription) throws {
+        let inputs = description.inputDescriptionsByName
+        guard Set(inputs.keys) == ["transformer_out", "latent_init"] else {
+            throw ModelTensorContract.failure("PocketTTS flow inputs")
+        }
+        try ModelTensorContract.validateFloat32Description(
+            inputs["transformer_out"], count: PocketTtsConstants.transformerDim,
+            shape: [1, PocketTtsConstants.transformerDim], role: "PocketTTS flow transformer input")
+        try ModelTensorContract.validateFloat32Description(
+            inputs["latent_init"], count: PocketTtsConstants.latentDim,
+            shape: [1, PocketTtsConstants.latentDim], role: "PocketTTS flow latent input")
+        let outputs = description.outputDescriptionsByName
+        let name = try ModelTensorContract.flowOutputName(in: Set(outputs.keys))
+        try ModelTensorContract.validateFloat32Description(
+            outputs[name], count: PocketTtsConstants.latentDim, role: "PocketTTS flow output")
     }
 
     // MARK: - Private
 
     /// Reshape a [1, 1, D] MLMultiArray to [1, D].
     private static func reshapeToFlat(_ array: MLMultiArray, dim: Int) throws -> MLMultiArray {
+        try ModelTensorContract.validateFloat32(array, count: dim, role: "PocketTTS transformer output")
         let flat = try MLMultiArray(shape: [1, NSNumber(value: dim)], dataType: .float32)
         let srcPtr = array.dataPointer.bindMemory(to: Float.self, capacity: dim)
         let dstPtr = flat.dataPointer.bindMemory(to: Float.self, capacity: dim)
