@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -51,7 +51,8 @@ const states: Record<
 > = {
   starting: {
     title: 'Préparation du mode vocal',
-    description: 'Le micro démarre. Autorise son accès si iOS le demande.',
+    description:
+      'Le mode vocal local se prépare. Autorise le micro si iOS le demande.',
   },
   listening: {
     title: 'À ton écoute',
@@ -103,6 +104,29 @@ export function VoiceConversationScreen({
 }: VoiceConversationScreenProps) {
   const { theme } = useAppearance();
   const { colors } = theme;
+  const [preparationSeconds, setPreparationSeconds] = useState(0);
+  useEffect(() => {
+    setPreparationSeconds(0);
+    if (phase !== 'starting') return;
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      setPreparationSeconds(
+        Math.max(0, Math.floor((Date.now() - startedAt) / 1_000)),
+      );
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [phase]);
+  const preparationProgress =
+    phase === 'starting'
+      ? audioDiagnostics
+          ?.slice(-8)
+          .reverse()
+          .find(line => line.startsWith('Préparation · '))
+          ?.slice(0, 240)
+      : undefined;
+  const longPreparation = phase === 'starting' && preparationSeconds >= 10;
+  const preparationExplanation =
+    'Le premier chargement des modèles locaux peut prendre du temps. Tu peux mettre en pause à tout moment.';
   const state = states[phase];
   const monitoringResponse =
     bargeInReady && (phase === 'thinking' || phase === 'speaking');
@@ -129,7 +153,9 @@ export function VoiceConversationScreen({
   const statusColor = phase === 'error' ? colors.danger : colors.accent;
   const stateLabel = `${state.title}. ${
     monitoringLabel ? `${monitoringLabel} ` : ''
-  }${description}`;
+  }${description}${preparationProgress ? ` ${preparationProgress}` : ''}${
+    longPreparation ? ` ${preparationExplanation}` : ''
+  }`;
   const announcement = `${stateLabel}${error ? ` ${error}` : ''}`;
   const previousAnnouncement = useRef(announcement);
   useEffect(() => {
@@ -222,6 +248,21 @@ export function VoiceConversationScreen({
           <Text style={[styles.body, { color: colors.muted }]}>
             {description}
           </Text>
+          {!!preparationProgress && (
+            <Text style={[styles.caption, { color: colors.text }]}>
+              {preparationProgress}
+            </Text>
+          )}
+          {longPreparation && (
+            <>
+              <Text style={[styles.caption, { color: colors.muted }]}>
+                {`Préparation en cours · ${preparationSeconds} s`}
+              </Text>
+              <Text style={[styles.caption, { color: colors.muted }]}>
+                {preparationExplanation}
+              </Text>
+            </>
+          )}
         </View>
 
         {phase === 'listening' && (

@@ -259,14 +259,8 @@ export function useLocalVoice({
       if (!session) return;
       const version = epoch.current;
       try {
-        const payload: unknown = JSON.parse(event.json);
-        if (
-          !payload ||
-          typeof payload !== 'object' ||
-          (payload as { sessionId?: unknown }).sessionId !== session.id
-        )
-          return;
-        const update = parseVoiceEvent(event.json);
+        const update = parseVoiceEvent(event.json, session.id);
+        if (!update) return;
         if (update.audioDiagnostics !== undefined)
           setAudioDiagnostics(update.audioDiagnostics);
         if (update.kind === 'interruption') {

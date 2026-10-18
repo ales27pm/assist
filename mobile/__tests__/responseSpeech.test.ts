@@ -182,6 +182,33 @@ test('cancel while begin is pending prevents queued speech and finish', async ()
   expect(native.finish).not.toHaveBeenCalled();
 });
 
+test('keeps pending scheduling constant while begin is blocked and later speaks every phrase', async () => {
+  const native = commands();
+  const pending = deferred<boolean>();
+  native.begin.mockReturnValueOnce(pending.promise);
+  const stream = new ResponseSpeechStream(native);
+  const text = 'Bonjour le monde. '.repeat(1800);
+  const chained = jest.spyOn(Promise.prototype, 'then');
+  let pendingHandlers: number;
+  try {
+    stream.push(text);
+    pendingHandlers = chained.mock.calls.length;
+  } finally {
+    chained.mockRestore();
+  }
+  // Output length must not create one queued promise/closure per phrase.
+  expect(pendingHandlers).toBeLessThanOrEqual(1);
+  expect(native.enqueue).not.toHaveBeenCalled();
+  const finished = stream.finish(text);
+  pending.resolve(true);
+  await finished;
+  expect(native.enqueue).toHaveBeenCalledTimes(1800);
+  expect(native.enqueue.mock.calls.map(([chunk]) => chunk).join(' ')).toBe(
+    text.trim(),
+  );
+  expect(native.finish).toHaveBeenCalledTimes(1);
+});
+
 test('serializes commands and cancels the queue behind an already-started enqueue', async () => {
   const native = commands();
   const started = deferred<void>();

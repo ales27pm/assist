@@ -42,6 +42,8 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private var lastInputDiagnostics: [String: Any]?
     private var observers: [NSObjectProtocol] = []
     private var eventHandler: ((String) -> Void)?
+    private var monitoringStageHandler: ((String) -> Void)?
+    private var lastRuntimeMonitoringStage = "inactive"
     private var startCompletion: ((String?, NSError?) -> Void)?
     private var pendingForegroundAction: (() -> Void)?
     private var phase = "idle"
@@ -150,6 +152,11 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     @objc(setEventHandler:)
     func setEventHandler(_ handler: @escaping (String) -> Void) {
         eventHandler = handler
+    }
+
+    @objc(setMonitoringStageHandler:)
+    func setMonitoringStageHandler(_ handler: @escaping (String) -> Void) {
+        monitoringStageHandler = handler
     }
 
     /// Querying capabilities must never request either privacy permission.
@@ -261,7 +268,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         lastInputDiagnostics = nil
         startCompletion = completion
         phase = "requesting"
-        emitState()
+        recordPreparation("Vérification des autorisations", token: token, monitoringStage: "preparing")
         if fluidConfiguration != nil { requestMicrophone(token); return }
         switch SFSpeechRecognizer.authorizationStatus() {
         case .authorized: requestMicrophone(token)
@@ -354,11 +361,13 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         if selectedConfiguration != nil {
             phase = "requesting"
             startCompletion = completion
+            recordRuntimeMonitoringStage("preparing")
             emitState()
             prepareFluid(token: generation, speaking: true)
             return
         }
         do {
+            recordRuntimeMonitoringStage("audio")
             try activateAudioSession()
             try makeDuplexEngine(token: generation)
             speechQueue.begin(generation: speechGeneration)
@@ -407,6 +416,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
     private func prepareFluid(token: UUID, speaking: Bool) {
         guard fluidPreparationTask == nil, let configuration = fluidConfiguration else { return }
         let shutdown = fluidShutdownTask
+        if shutdown != nil { recordPreparation("Fin du chargement précédent", token: token) }
         fluidPreparationTask = Task { @MainActor [weak self] in
             await shutdown?.value
             guard let self, self.generation == token, self.phase == "requesting", !Task.isCancelled else { return }
@@ -416,6 +426,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
                     self?.receiveFluid(event, token: token)
                 }
                 if let cached = self.fluidCachedRuntime, Self.sameConfiguration(cached.configuration, configuration) {
+                    self.recordPreparation("Réutilisation des modèles vocaux", token: token)
                     runtime = cached.runtime
                     self.fluidCachedRuntime = nil
                     await runtime.resetCapture(monitoring: speaking, receive: receive)
@@ -431,13 +442,20 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
                           ProcessInfo.processInfo.thermalState != .critical else {
                         throw Self.error("E_VOICE_THERMAL", "L’iPhone est trop chaud pour charger les modèles vocaux avancés. Laisse-le refroidir ou choisis Apple.")
                     }
-                    runtime = try await AssistFluidVoiceRuntime(configuration: configuration, monitoring: speaking, receive: receive)
+                    runtime = try await AssistFluidVoiceRuntime(
+                        configuration: configuration, monitoring: speaking,
+                        progress: { [weak self] stage, detail in
+                            let suffix = detail.map { " · \($0)" } ?? ""
+                            self?.recordPreparation("Chargement de \(stage.label)\(suffix)", token: token,
+                                                    monitoringStage: stage.rawValue)
+                        }, receive: receive)
                 }
                 guard self.generation == token, self.phase == "requesting", !Task.isCancelled else {
                     await runtime.cancel(); return
                 }
                 self.fluidRuntime = runtime
                 if speaking {
+                    self.recordPreparation("Préparation de la voix Estelle", token: token, monitoringStage: "session")
                     let session = try await runtime.makeSpeechSession()
                     guard self.generation == token, self.phase == "requesting", !Task.isCancelled else {
                         await runtime.cancel(); return
@@ -470,6 +488,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         }
         fluidPreparationTask = nil
         do {
+            recordPreparation("Démarrage du microphone et de l’annulation d’écho", token: token, monitoringStage: "audio")
             try activateAudioSession()
             try makeDuplexEngine(token: token)
             phase = speaking ? "speaking" : "listening"
@@ -569,10 +588,13 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             throw Self.error("E_VOICE_PCM", "La file audio locale dépasse quinze secondes.")
         }
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack,
-                              completionHandler: AssistVoiceCallbacks.playback(release: {
+                              completionHandler: AssistVoiceCallbacks.playback(release: { [weak session] in
             // This exact old session receives its own credit, even when stop
             // discards the buffer. Never credit a later response's generation.
-            Task { for _ in 0..<credits { await session.acknowledgePlaybackFrame() } }
+            Task { [weak session] in
+                guard let session else { return }
+                for _ in 0..<credits { await session.acknowledgePlaybackFrame() }
+            }
         }) { [weak self] in
             guard let self, self.speechGeneration == token, self.phase == "speaking",
                   self.currentUtterance?.identifier == identifier else { return }
@@ -715,7 +737,13 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         fluidFrameCredits = 0
         // Capture the exact retired producer. A delayed cleanup must never
         // look up and cancel a later session in a reused warm runtime.
-        if let retiredSession { Task { await retiredSession.cancel() } }
+        if let retiredSession {
+            let runtime = fluidRuntime
+            Task {
+                if let runtime { await runtime.cancelSpeech(retiredSession) }
+                else { await retiredSession.cancel() }
+            }
+        }
         producerWatchdogTask?.cancel()
         producerWatchdogTask = nil
         pcmTransfer?.invalidate()
@@ -815,6 +843,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         observers.removeAll()
         synthesizer.delegate = nil
         eventHandler = nil
+        monitoringStageHandler = nil
     }
 
     private func requestMicrophone(_ token: UUID) {
@@ -846,6 +875,7 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
             return
         }
         do {
+            recordPreparation("Démarrage du microphone et de l’annulation d’écho", token: token, monitoringStage: "audio")
             try activateAudioSession()
             try makeDuplexEngine(token: token)
             phase = "listening"
@@ -1205,12 +1235,22 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         emit(kind: "error", message: message)
         settleStart(nil, Self.error(code, message))
         cancelCurrent(preservingFluidCache: false)
+        recordRuntimeMonitoringStage("failed")
     }
 
     private func settleStart(_ value: String?, _ error: NSError?) {
         let completion = startCompletion
         startCompletion = nil
         completion?(value, error)
+    }
+
+    /// Only the current pending start may publish model progress. A cancelled
+    /// Core ML load can finish later without reviving its retired session.
+    private func recordPreparation(_ label: String, token: UUID, monitoringStage: String? = nil) {
+        guard generation == token, phase == "requesting", !invalidated else { return }
+        if let monitoringStage { recordRuntimeMonitoringStage(monitoringStage) }
+        audioDiagnostics.append("Préparation · \(label)")
+        emitState()
     }
 
     private func observe(_ name: Notification.Name) {
@@ -1426,7 +1466,20 @@ final class AssistVoice: NSObject, AVSpeechSynthesizerDelegate {
         return encode(status)
     }
 
-    private func emitState() { emit(kind: "state") }
+    private func recordRuntimeMonitoringStage(_ stage: String) {
+        guard stage != lastRuntimeMonitoringStage else { return }
+        lastRuntimeMonitoringStage = stage
+        monitoringStageHandler?(stage)
+    }
+
+    private func emitState() {
+        switch phase {
+        case "idle": recordRuntimeMonitoringStage("inactive")
+        case "listening", "speaking": recordRuntimeMonitoringStage(phase)
+        default: break // Preserve the more specific native loading stage.
+        }
+        emit(kind: "state")
+    }
 
     private func captureInputDiagnostics(errorDomain: String? = nil, errorCode: Int? = nil) {
         guard let meter = inputMeter else { return }

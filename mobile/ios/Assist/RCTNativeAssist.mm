@@ -118,6 +118,12 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
       if (!strongSelf || strongSelf->_invalidated) { return; }
       [strongSelf emitOnVoiceEvent:@{ @"json": json }];
     }];
+    [_voice setMonitoringStageHandler:^(NSString *stage) {
+      RCTNativeAssist *strongSelf = weakSelf;
+      if (!strongSelf || strongSelf->_invalidated) { return; }
+      // Fixed native stage IDs only; never forward transcript/event JSON.
+      [strongSelf->_engine recordVoiceMonitoringStage:stage];
+    }];
   }
   return YES;
 }
@@ -481,6 +487,13 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
     // Read-only telemetry has its own actor and remains available while the
     // inference adapter holds its load/generation/diagnostic operation gate.
     [self->_engine monitoringSnapshot:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)getPreviousMonitoringSnapshot:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    [self->_engine previousMonitoringSnapshot:AssistPromise(resolve, reject)];
   });
 }
 

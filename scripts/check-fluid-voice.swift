@@ -59,6 +59,43 @@ private actor RetainedInputProbe: AssistFluidInputProcessor {
     }
 }
 
+/// An actual suspended text-stream producer, with a controllable final drain.
+private actor RetiringSpeechProbe {
+    private let stream: AsyncStream<String>
+    private let continuation: AsyncStream<String>.Continuation
+    private var worker: Task<Void, Never>?
+    private var requested = false
+    private var requestedWaiter: CheckedContinuation<Void, Never>?
+    private var drainWaiter: CheckedContinuation<Void, Never>?
+    private var loopEnded = false
+
+    init() {
+        let pair = AsyncStream.makeStream(of: String.self)
+        stream = pair.stream; continuation = pair.continuation
+    }
+    func start() {
+        worker = Task { [self] in
+            for await _ in stream { }
+            await withCheckedContinuation { drainWaiter = $0 }
+            loopEnded = true
+        }
+    }
+    func cancel() async {
+        requested = true
+        continuation.finish()
+        requestedWaiter?.resume(); requestedWaiter = nil
+        await worker?.value
+    }
+    func waitForCancellation() async {
+        if !requested { await withCheckedContinuation { requestedWaiter = $0 } }
+    }
+    func finishDrain() async {
+        while drainWaiter == nil { await Task.yield() }
+        drainWaiter?.resume(); drainWaiter = nil
+    }
+    func stopped() -> Bool { loopEnded }
+}
+
 /// Synthetic PCM only. No engine, microphone, speech recognizer, model load,
 /// file import or inference; these checks do not prove iPhone audio behavior.
 @main
@@ -326,12 +363,44 @@ struct FluidVoiceChecks {
         precondition(box.take() == nil)
         print("PASS finite utterance / latest decode coalescing / final priority / cancel clears PCM")
     }
+    private static func retiredSpeechOwnership() async {
+        var owner = AssistFluidSpeechSessionOwner<RetiringSpeechProbe>()
+        let old = RetiringSpeechProbe()
+        await old.start()
+        owner.install(old)
+        let retired = owner.retire(old)
+        precondition(retired === old && owner.current == nil,
+                     "Retiring the current response must release the runtime's strong reference")
+        let cancellation = Task { await retired?.cancel() }
+        await old.waitForCancellation()
+        let beforeDrain = await old.stopped()
+        precondition(!beforeDrain, "Cancellation must wait for producer drain")
+        let newer = RetiringSpeechProbe()
+        owner.install(newer)
+        let late = owner.retire(old)
+        precondition(late === old && owner.current === newer,
+                     "A delayed old retirement cannot erase the next response")
+        await old.finishDrain()
+        await cancellation.value
+        let afterDrain = await old.stopped()
+        precondition(afterDrain, "Cancellation must close the actual text-stream loop")
+        precondition(owner.current === newer)
+        var object: RetiringSpeechProbe? = RetiringSpeechProbe()
+        weak let weakObject = object
+        owner.install(object!)
+        object = nil
+        precondition(weakObject != nil)
+        _ = owner.retire()
+        precondition(weakObject == nil, "No retired producer reference remains in the runtime owner")
+        print("PASS exact speech retirement clears ownership, awaits producer stop, and preserves a newer response")
+    }
     static func main() async throws {
         ringCopyAndWrap(); ringOverflow(); ringCloseAndFormat(); stereo(); concurrentSPSC()
         try resampling(); try onsetAndPreroll(); try nonconsecutiveAndShort(); try shortCaptureSurvivesEOT(); try boundedUtteranceAndMailbox()
         try retainedCapturePolicy()
         await retainedWorkerHandoff(cancelled: false)
         await retainedWorkerHandoff(cancelled: true)
-        print("PASS 13 Fluid voice adapter checks · synthetic PCM, no microphone/model/iPhone qualification")
+        await retiredSpeechOwnership()
+        print("PASS 14 Fluid voice adapter checks · synthetic PCM, no microphone/model/iPhone qualification")
     }
 }

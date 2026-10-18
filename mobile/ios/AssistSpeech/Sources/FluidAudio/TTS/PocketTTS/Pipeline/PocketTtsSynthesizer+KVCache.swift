@@ -4,6 +4,42 @@ import Foundation
 
 extension PocketTtsSynthesizer {
 
+    /// An immutable voice prefix. Presets already have a compact baked snapshot;
+    /// cloned prompts require a model-prefilled cache. Each text chunk receives
+    /// its own mutable working state, never the prefix owned by this value.
+    enum SessionVoiceConditioning {
+        case preset(PocketTtsVoiceCacheSnapshot, layers: Int, splitKV: Bool)
+        case prefilled(KVCacheState)
+
+        static func presetSnapshot(_ snapshot: PocketTtsVoiceCacheSnapshot, layers: Int,
+                                   splitKV: Bool) throws -> Self {
+            guard layers > 0, snapshot.layers.count == layers,
+                  (0...PocketTtsConstants.kvCacheMaxLen).contains(snapshot.cacheSeqLen),
+                  snapshot.layers.allSatisfy({ $0.cache.count == 2 * snapshot.cacheSeqLen * 16 * 64 }) else {
+                throw PocketTTSError.processingFailed("Invalid preset voice cache snapshot")
+            }
+            // Keep only the shared compact prefix. Expanding it here and cloning
+            // that full cache per chunk retained an extra 96 MiB for a 24L voice.
+            return .preset(snapshot, layers: layers, splitKV: splitKV)
+        }
+
+        var position: Int {
+            switch self {
+            case .preset(let snapshot, _, _): return snapshot.layers.first?.offset ?? 0
+            case .prefilled(let state): return Int(state.positions[0][0].floatValue)
+            }
+        }
+
+        func makeWorkingState() throws -> KVCacheState {
+            switch self {
+            case .preset(let snapshot, let layers, let splitKV):
+                return try kvCacheStateFromSnapshot(snapshot, layers: layers, splitKV: splitKV)
+            case .prefilled(let state):
+                return try cloneKVCacheState(state)
+            }
+        }
+    }
+
     /// Reject a conditioning or generation write that would exceed the
     /// fixed-size KV cache. Core ML scatter operations otherwise fail with an
     /// opaque model error (or can produce invalid output on some placements).

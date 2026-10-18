@@ -56,6 +56,7 @@ export interface Spec extends TurboModule {
   enqueueSpeech(text: string, utteranceId: string): Promise<string>;
   finishSpeech(utteranceId: string): Promise<string>;
   getMonitoringSnapshot(): Promise<string>;
+  getPreviousMonitoringSnapshot(): Promise<string>;
   selectModel(): Promise<string>;
   loadModel(): Promise<string>;
   loadBundledModel(): Promise<string>;

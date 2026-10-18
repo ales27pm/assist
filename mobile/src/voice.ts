@@ -60,7 +60,10 @@ export type VoiceEvent = {
 const phases = ['idle', 'requesting', 'listening', 'finishing', 'speaking'];
 
 function object(json: string): Record<string, unknown> {
-  const value: unknown = JSON.parse(json);
+  return objectValue(JSON.parse(json));
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Réponse vocale native invalide.');
   }
@@ -159,8 +162,25 @@ export function parseVoiceStatus(json: string): VoiceStatus {
   } as VoiceStatus;
 }
 
-export function parseVoiceEvent(json: string): VoiceEvent {
-  const value = object(json);
+export function parseVoiceEvent(json: string): VoiceEvent;
+export function parseVoiceEvent(
+  json: string,
+  expectedSessionId: string,
+): VoiceEvent | null;
+export function parseVoiceEvent(
+  json: string,
+  expectedSessionId?: string,
+): VoiceEvent | null {
+  const payload: unknown = JSON.parse(json);
+  // Retired or unrelated sessions must be ignored before validating fields,
+  // including malformed objects that could otherwise overwrite a current error.
+  if (
+    expectedSessionId !== undefined &&
+    (!payload ||
+      typeof payload !== 'object' ||
+      (payload as { sessionId?: unknown }).sessionId !== expectedSessionId)
+  ) return null;
+  const value = objectValue(payload);
   if (
     typeof value.sessionId !== 'string' ||
     !value.sessionId ||

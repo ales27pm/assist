@@ -1,6 +1,6 @@
 import React from 'react';
 import { AccessibilityInfo, Platform } from 'react-native';
-import { renderAsync, screen } from '@testing-library/react-native';
+import { act, renderAsync, screen } from '@testing-library/react-native';
 import {
   VoiceConversationScreen,
   VoiceConversationScreenProps,
@@ -29,6 +29,44 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.restoreAllMocks();
+  jest.useRealTimers();
+});
+
+test('announces native preparation steps without repeating every elapsed second', async () => {
+  jest.useFakeTimers();
+  const announcement = jest.spyOn(
+    AccessibilityInfo,
+    'announceForAccessibilityWithOptions',
+  );
+  const state = props({ phase: 'starting' });
+  const { rerenderAsync } = await renderAsync(
+    <VoiceConversationScreen {...state} />,
+  );
+  const progress = 'Préparation · Chargement de PocketTTS';
+  await rerenderAsync(
+    <VoiceConversationScreen {...state} audioDiagnostics={[progress]} />,
+  );
+  expect(announcement).toHaveBeenCalledTimes(1);
+  expect(announcement).toHaveBeenLastCalledWith(
+    expect.stringContaining(progress),
+    { priority: 'low' },
+  );
+  await act(async () => jest.advanceTimersByTime(10_000));
+  expect(announcement).toHaveBeenCalledTimes(2);
+  await act(async () => jest.advanceTimersByTime(5_000));
+  expect(screen.getByText('Préparation en cours · 15 s')).toBeOnTheScreen();
+  expect(announcement).toHaveBeenCalledTimes(2);
+  await rerenderAsync(
+    <VoiceConversationScreen
+      {...state}
+      phase="listening"
+      audioDiagnostics={[progress]}
+    />,
+  );
+  expect(announcement).toHaveBeenLastCalledWith(
+    'À ton écoute. Parle, puis laisse une pause pour terminer ton tour.',
+    { priority: 'low' },
+  );
 });
 
 test('native phase and error updates announce once, independent of streamed content and microphone samples', async () => {

@@ -145,3 +145,27 @@ test('rejects negative metrics', () => {
     ),
   ).toThrow();
 });
+
+test('parses a generation report once while preserving its complete result and validation', () => {
+  const value = {
+    requestId: 'result-single-parse',
+    text: 'Bonjour '.repeat(4096),
+    generatedTokens: 4096,
+    promptTokens: 16,
+    elapsedMs: 5000,
+    finishReason: 'eos',
+    aneExecution: 'unverified',
+    numericalDiagnostics: { nativeEvidence: true },
+  };
+  const json = JSON.stringify(value);
+  const parse = jest.spyOn(JSON, 'parse');
+  try {
+    expect(parseResult(json)).toEqual(value);
+    expect(parse.mock.calls.filter(([input]) => input === json)).toHaveLength(1);
+  } finally {
+    parse.mockRestore();
+  }
+  expect(() =>
+    parseResult(JSON.stringify({ ...value, generatedTokens: -1 })),
+  ).toThrow('Mesure native invalide.');
+});

@@ -40,6 +40,17 @@ its file size/duration before decoding. Current encoder code keeps 1–10 second
 and at most 125 conditioning frames. These cloning APIs remain unused SDK functionality: Assist uses only the public
 Estelle preset and exposes no reference import. No Québec accent is guaranteed.
 
+Pocket's four normal pipeline models load through the asynchronous Core ML API.
+The optional `initialize(progress:)` callback reports the component, compute
+route and whether a compatibility retry is in progress. When automatic `.all`
+placement fails with a Core ML error, only that exact component is retried once
+on `.cpuAndGPU`, with the same local file and weights. Explicit CPU/GPU/ANE
+choices, non-Core ML failures and cancellation are not retried. A terminal
+`FluidAudio.PocketModelLoad` error retains the underlying error plus fixed
+component/route metadata for the app's bounded diagnostics; arbitrary paths and
+descriptions are not displayed. This retry does not establish that the original
+failure was caused by the Neural Engine, nor can it preempt a load inside Core ML.
+
 Use `AsrModels.loadLocal(from:version:)` with `.redux` or `.ultra`; avoid the
 similarly named `load`, `loadModels()` and `downloadAndLoad` convenience paths,
 which retain upstream downloading behavior. Inject a locally loaded Silero

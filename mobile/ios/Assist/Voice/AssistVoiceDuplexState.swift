@@ -246,8 +246,19 @@ struct AssistFluidLoadFailure: Error, LocalizedError, Sendable {
         self.stage = stage
         var chain: [String] = []
         var current: NSError? = error as NSError
+        var modelContext = ""
         for _ in 0..<3 {
             guard let value = current else { break }
+            // SDK metadata is a fixed local component name and compute route,
+            // never a path or a framework's arbitrary error description.
+            if stage == .pocket, value.domain == "FluidAudio.PocketModelLoad",
+               let component = value.userInfo["PocketTtsComponent"] as? String,
+               ["cond_prefill.mlmodelc", "flowlm_stepv2.mlmodelc", "flow_decoder_fused.mlmodelc", "mimi_decoder.mlmodelc"].contains(component),
+               let units = value.userInfo["PocketTtsComputeUnits"] as? String,
+               ["all", "cpuAndGPU", "cpuOnly", "cpuAndNeuralEngine"].contains(units) {
+                let retried = value.userInfo["PocketTtsRetried"] as? Bool == true ? 1 : 0
+                modelContext = " model=\(component) units=\(units) retried=\(retried)"
+            }
             let known = ["com.apple.CoreML", "NSCocoaErrorDomain", "NSPOSIXErrorDomain", "NSOSStatusErrorDomain"]
             let isSDK = value.domain.hasPrefix("FluidAudio.") && value.domain.count < 120 &&
                 value.domain.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 46 || $0 == 95 }
@@ -255,7 +266,7 @@ struct AssistFluidLoadFailure: Error, LocalizedError, Sendable {
             chain.append("\(domain):\(value.code)")
             current = value.userInfo[NSUnderlyingErrorKey] as? NSError
         }
-        diagnosticLine = String("load stage=\(stage.rawValue) cause=\(chain.joined(separator: " > "))".prefix(400))
+        diagnosticLine = String("load stage=\(stage.rawValue)\(modelContext) cause=\(chain.joined(separator: " > "))".prefix(400))
     }
     var errorDescription: String? {
         "Impossible de charger \(stage.label). Consulte les détails audio ci-dessous; les ressources importées sont conservées."

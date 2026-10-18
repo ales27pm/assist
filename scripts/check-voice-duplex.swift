@@ -11,6 +11,19 @@ private final class PlaybackProbe {
     let releases = Atomic<Int>(0)
 }
 
+private actor PlaybackCreditProbe {
+    private var credits = 0
+    private var waiter: CheckedContinuation<Void, Never>?
+    func acknowledge() {
+        credits += 1
+        waiter?.resume(); waiter = nil
+    }
+    func waitForCredit() async {
+        if credits == 0 { await withCheckedContinuation { waiter = $0 } }
+    }
+    func count() -> Int { credits }
+}
+
 @MainActor
 private final class TeardownNotificationProbe {
     var ownership = AssistVoiceAudioSessionOwnership()
@@ -126,6 +139,39 @@ struct VoiceDuplexChecks {
             player.stop()
         }
         print("PASS: actual AVAudioPlayerNode.stop releases a scheduled dataPlayedBack callback without starting hardware.")
+    }
+
+    @MainActor
+    private static func weakPlaybackCredits() async throws {
+        func completion(for session: PlaybackCreditProbe) -> @Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void {
+            AssistVoiceCallbacks.playback(release: { [weak session] in
+                Task { [weak session] in
+                    guard let session else { return }
+                    await session.acknowledge()
+                }
+            }) { }
+        }
+        let active = PlaybackCreditProbe()
+        let activeCallback = completion(for: active)
+        activeCallback(.dataPlayedBack)
+        activeCallback(.dataPlayedBack)
+        await active.waitForCredit()
+        let credits = await active.count()
+        precondition(credits == 1, "A live exact producer still receives one credit per completed buffer")
+        var retired: PlaybackCreditProbe? = PlaybackCreditProbe()
+        weak let released = retired
+        let retiredCallback = completion(for: retired!)
+        retired = nil
+        precondition(released == nil, "Queued playback callbacks must not own retired model/session storage")
+        retiredCallback(.dataPlayedBack)
+        let source = try String(contentsOfFile: "mobile/ios/Assist/Voice/AssistVoice.swift", encoding: .utf8)
+        let start = source.range(of: "    private func scheduleFluidPCM(")!
+        let end = source.range(of: "    private func finishFluidSpeechIfDrained(", range: start.upperBound..<source.endIndex)!
+        let body = source[start.lowerBound..<end.lowerBound]
+        precondition(body.contains("AssistVoiceCallbacks.playback(release: { [weak session] in") &&
+                     body.contains("Task { [weak session] in") && body.contains("await session.acknowledgePlaybackFrame()"),
+                     "Production credits must use the tested weak exact-session adapter")
+        print("PASS live exact-session credits remain once-only; retired playback callbacks do not retain producers")
     }
 
     @MainActor
@@ -528,6 +574,7 @@ struct VoiceDuplexChecks {
         longChunkSequence()
         await playbackCallbackAfterStop()
         await actualStoppedPlayer()
+        try await weakPlaybackCredits()
         try await formats()
         await finePacketBudget()
         monitorRetries()
@@ -555,6 +602,20 @@ struct VoiceDuplexChecks {
         precondition(failure.localizedDescription.contains("PocketTTS français"))
         precondition(!failure.diagnosticLine.contains("reference.wav") && !failure.localizedDescription.contains("Speaker Name"))
         print("PASS: model-stage and native cause survive without private descriptions or paths")
+
+        let modelLoad = NSError(domain: "FluidAudio.PocketModelLoad", code: 0, userInfo: [
+            NSUnderlyingErrorKey: NSError(domain: "com.apple.CoreML", code: 0),
+            "PocketTtsComponent": "cond_prefill.mlmodelc", "PocketTtsComputeUnits": "cpuAndGPU",
+            "PocketTtsRetried": true,
+        ])
+        let modelFailure = AssistFluidLoadFailure(stage: .pocket, error: modelLoad)
+        precondition(modelFailure.diagnosticLine == "load stage=pocket model=cond_prefill.mlmodelc units=cpuAndGPU retried=1 cause=FluidAudio.PocketModelLoad:0 > com.apple.CoreML:0")
+        let privateMetadata = NSError(domain: "FluidAudio.PocketModelLoad", code: 0, userInfo: [
+            "PocketTtsComponent": "/private/reference.wav", "PocketTtsComputeUnits": "secret transcript",
+        ])
+        let redactedModel = AssistFluidLoadFailure(stage: .pocket, error: privateMetadata)
+        precondition(redactedModel.diagnosticLine == "load stage=pocket cause=FluidAudio.PocketModelLoad:0")
+        print("PASS: exact Pocket model and retry route are retained, arbitrary paths remain excluded")
 
         let hostile = NSError(domain: "/private/person.wav", code: 42,
                               userInfo: [NSLocalizedDescriptionKey: "consent document"])

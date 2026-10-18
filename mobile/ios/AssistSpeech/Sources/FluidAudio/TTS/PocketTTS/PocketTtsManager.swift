@@ -85,8 +85,10 @@ public actor PocketTtsManager {
     }
 
     /// Initialize by downloading and loading all PocketTTS models.
-    public func initialize() async throws {
-        try await modelStore.loadIfNeeded()
+    public func initialize(
+        progress: (@Sendable (PocketTtsModelLoadAttempt) async -> Void)? = nil
+    ) async throws {
+        try await modelStore.loadIfNeeded(progress: progress)
         isInitialized = true
         logger.notice("PocketTtsManager initialized")
     }

@@ -122,6 +122,43 @@ test('queries capabilities without starting capture or playback on mount', async
   expect(result.current.captureBusy).toBe(false);
 });
 
+test('parses each accepted native input event once and preserves its validated observations', async () => {
+  const onEvent = jest.fn();
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), onEvent, enabled: true }),
+  );
+  await act(async () => { await result.current.startListening(); });
+  const sessionId = native.startListening.mock.calls[0][0];
+  const diagnostics = inputDiagnostics();
+  const update = { sessionId, kind: 'input', phase: 'listening', diagnostics };
+  const json = JSON.stringify(update);
+  const parse = jest.spyOn(JSON, 'parse');
+  try {
+    await act(async () => { voiceEvent({ json }); });
+    expect(parse.mock.calls.filter(([input]) => input === json)).toHaveLength(1);
+  } finally {
+    parse.mockRestore();
+  }
+  expect(onEvent).toHaveBeenLastCalledWith(update);
+  expect(result.current.diagnostics).toEqual(diagnostics);
+});
+
+test('ignores invalid fields from a retired session before validating current-event fields', async () => {
+  const onEvent = jest.fn();
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), onEvent, enabled: true }),
+  );
+  await act(async () => { await result.current.startListening(); });
+  await act(async () => {
+    voiceEvent({ json: JSON.stringify({ sessionId: 'retired', kind: 'invented' }) });
+    voiceEvent({ json: 'null' });
+    voiceEvent({ json: '[]' });
+  });
+  expect(result.current.error).toBe('');
+  expect(result.current.phase).toBe('listening');
+  expect(onEvent).not.toHaveBeenCalled();
+});
+
 test('capabilities arriving after the initial hidden-screen cancellation still enable later capture', async () => {
   const capabilities = deferred<string>();
   native.getVoiceStatus.mockReturnValueOnce(capabilities.promise);
@@ -1378,6 +1415,45 @@ test('a pending native start cannot revive capture after cancellation', async ()
   expect(onTranscript).not.toHaveBeenCalled();
   expect(result.current.phase).toBe('idle');
   expect(result.current.captureBusy).toBe(false);
+});
+
+test('model progress stays pending and a cancelled loader cannot replace the next start', async () => {
+  const first = deferred<string>();
+  const second = deferred<string>();
+  native.startListening.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  const { result } = await renderHookAsync(() =>
+    useLocalVoice({ onTranscript: jest.fn(), enabled: true }),
+  );
+  let firstStart!: Promise<boolean>;
+  await act(async () => { firstStart = result.current.startListening(); });
+  const firstId = native.startListening.mock.calls[0][0];
+  await act(async () => {
+    emit({ sessionId: firstId, kind: 'state', phase: 'requesting',
+      audioDiagnostics: ['Préparation · Chargement de PocketTTS français'] });
+  });
+  expect(result.current.phase).toBe('requesting');
+  expect(result.current.audioDiagnostics).toEqual(['Préparation · Chargement de PocketTTS français']);
+  expect(native.startListening).toHaveBeenCalledTimes(1);
+
+  await act(async () => { await result.current.cancel(); });
+  let secondStart!: Promise<boolean>;
+  await act(async () => { secondStart = result.current.startListening(); });
+  const secondId = native.startListening.mock.calls[1][0];
+  await act(async () => {
+    emit({ sessionId: secondId, kind: 'state', phase: 'requesting',
+      audioDiagnostics: ['Préparation · Fin du chargement précédent'] });
+    emit({ sessionId: firstId, kind: 'state', phase: 'requesting',
+      audioDiagnostics: ['Préparation · Chargement de Silero'] });
+    first.resolve(status('listening'));
+    expect(await firstStart).toBe(false);
+  });
+  expect(result.current.phase).toBe('requesting');
+  expect(result.current.audioDiagnostics).toEqual(['Préparation · Fin du chargement précédent']);
+  await act(async () => {
+    second.resolve(status('listening'));
+    expect(await secondStart).toBe(true);
+  });
+  expect(result.current.phase).toBe('listening');
 });
 
 test('an inactive privacy prompt preserves the pending first-time authorization', async () => {

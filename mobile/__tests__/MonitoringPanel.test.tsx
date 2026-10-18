@@ -11,7 +11,10 @@ import NativeAssist from '../specs/NativeAssist';
 
 jest.mock('../specs/NativeAssist', () => ({
   __esModule: true,
-  default: { getMonitoringSnapshot: jest.fn() },
+  default: {
+    getMonitoringSnapshot: jest.fn(),
+    getPreviousMonitoringSnapshot: jest.fn(),
+  },
 }));
 const native = jest.mocked(NativeAssist!);
 const nativeModule = jest.requireMock('../specs/NativeAssist');
@@ -59,6 +62,7 @@ beforeEach(() => {
     return { remove };
   });
   native.getMonitoringSnapshot.mockResolvedValue(JSON.stringify(snapshot()));
+  native.getPreviousMonitoringSnapshot.mockResolvedValue('null');
 });
 
 afterEach(() => {
@@ -354,4 +358,224 @@ test('starts compact and keeps live summaries polling after the full dashboard i
       expanded: false,
     }),
   ).toBeOnTheScreen();
+});
+
+test('reads the previous session only on explicit export and preserves its own build and recovery evidence', async () => {
+  const report = snapshot({
+    nativeBuild: '24',
+    recovery: {
+      source: 'previousSessionCheckpoint',
+      sessionEndedNormally: false,
+      checkpointIntervalMs: 5000,
+    },
+  });
+  native.getPreviousMonitoringSnapshot.mockResolvedValue(JSON.stringify(report));
+  const share = jest
+    .spyOn(Share, 'share')
+    .mockResolvedValue({ action: Share.sharedAction, activityType: undefined });
+  const user = userEvent.setup();
+  await renderAsync(<MonitoringPanel />);
+  expect(native.getPreviousMonitoringSnapshot).not.toHaveBeenCalled();
+  expect(share).not.toHaveBeenCalled();
+  const currentRequests = native.getMonitoringSnapshot.mock.calls.length;
+  await user.press(
+    screen.getByRole('button', { name: 'Exporter la session précédente' }),
+  );
+  expect(native.getPreviousMonitoringSnapshot).toHaveBeenCalledTimes(1);
+  expect(native.getMonitoringSnapshot).toHaveBeenCalledTimes(currentRequests);
+  expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual(report);
+});
+
+test('keeps previous-session export available when current monitoring has no sample', async () => {
+  native.getMonitoringSnapshot.mockRejectedValue(new Error('current unavailable'));
+  native.getPreviousMonitoringSnapshot.mockResolvedValue(
+    JSON.stringify(snapshot({ nativeBuild: '24' })),
+  );
+  const share = jest
+    .spyOn(Share, 'share')
+    .mockResolvedValue({ action: Share.dismissedAction, activityType: undefined });
+  const user = userEvent.setup();
+  await renderAsync(<MonitoringPanel />);
+  await user.press(
+    screen.getByRole('button', { name: 'Exporter la session précédente' }),
+  );
+  expect(share).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(share.mock.calls[0][0].message!).nativeBuild).toBe('24');
+});
+
+test('explains the native update needed by an older binary without falling back to the current session', async () => {
+  nativeModule.default = {
+    getMonitoringSnapshot: native.getMonitoringSnapshot,
+  };
+  const share = jest.spyOn(Share, 'share');
+  await renderAsync(<MonitoringPanel />);
+  expect(
+    screen.getByRole('button', { name: 'Exporter la session précédente' }),
+  ).toBeDisabled();
+  expect(
+    screen.getByText(
+      'L’export de la session précédente nécessite une version native plus récente.',
+    ),
+  ).toBeOnTheScreen();
+  expect(native.getPreviousMonitoringSnapshot).not.toHaveBeenCalled();
+  expect(share).not.toHaveBeenCalled();
+});
+
+test.each([
+  ['null', 'Aucune session précédente sauvegardée n’est disponible.'],
+  [' { broken', 'La session précédente est illisible ou incompatible. Aucun rapport n’a été partagé.'],
+  [
+    JSON.stringify(snapshot({ recovery: { messages: ['private'] } })),
+    'La session précédente est illisible ou incompatible. Aucun rapport n’a été partagé.',
+  ],
+])('does not share an absent or unsafe previous report: %#', async (json, message) => {
+  native.getPreviousMonitoringSnapshot.mockResolvedValue(json);
+  const share = jest.spyOn(Share, 'share');
+  const user = userEvent.setup();
+  await renderAsync(<MonitoringPanel />);
+  await user.press(
+    screen.getByRole('button', { name: 'Exporter la session précédente' }),
+  );
+  expect(screen.getByText(message)).toBeOnTheScreen();
+  expect(share).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole('button', { name: 'Exporter la session précédente' }),
+  ).toBeEnabled();
+});
+
+test('allows a fresh read after a previous-session request rejects', async () => {
+  native.getPreviousMonitoringSnapshot
+    .mockRejectedValueOnce(new Error('disk unavailable'))
+    .mockResolvedValueOnce(JSON.stringify(snapshot({ nativeBuild: '24' })));
+  const share = jest
+    .spyOn(Share, 'share')
+    .mockResolvedValue({ action: Share.dismissedAction, activityType: undefined });
+  const user = userEvent.setup();
+  await renderAsync(<MonitoringPanel />);
+  const exportButton = screen.getByRole('button', {
+    name: 'Exporter la session précédente',
+  });
+  await user.press(exportButton);
+  expect(
+    screen.getByRole('alert', {
+      name: 'Lecture de la session précédente indisponible. Réessaie.',
+    }),
+  ).toBeOnTheScreen();
+  await user.press(exportButton);
+  expect(native.getPreviousMonitoringSnapshot).toHaveBeenCalledTimes(2);
+  expect(share).toHaveBeenCalledTimes(1);
+  expect(
+    screen.queryByText('Lecture de la session précédente indisponible. Réessaie.'),
+  ).not.toBeOnTheScreen();
+});
+
+test('clears a rejected share and never exposes native error details', async () => {
+  native.getPreviousMonitoringSnapshot.mockResolvedValue(JSON.stringify(snapshot()));
+  const share = jest
+    .spyOn(Share, 'share')
+    .mockRejectedValueOnce(new Error('private-path-and-credentials'))
+    .mockResolvedValueOnce({ action: Share.dismissedAction, activityType: undefined });
+  const user = userEvent.setup();
+  await renderAsync(<MonitoringPanel />);
+  const exportButton = screen.getByRole('button', {
+    name: 'Exporter la session précédente',
+  });
+  await user.press(exportButton);
+  expect(
+    screen.getByText('Export de la session précédente indisponible.'),
+  ).toBeOnTheScreen();
+  expect(screen.queryByText(/private-path/)).not.toBeOnTheScreen();
+  await user.press(exportButton);
+  expect(share).toHaveBeenCalledTimes(2);
+  expect(exportButton).toBeEnabled();
+});
+
+test('ignores a previous-session read resolved after the panel unmounts', async () => {
+  let finish!: (json: string) => void;
+  native.getPreviousMonitoringSnapshot.mockImplementationOnce(
+    () => new Promise(resolve => { finish = resolve; }),
+  );
+  const share = jest.spyOn(Share, 'share');
+  const user = userEvent.setup();
+  await renderAsync(<MonitoringPanel />);
+  await user.press(
+    screen.getByRole('button', { name: 'Exporter la session précédente' }),
+  );
+  await screen.unmountAsync();
+  await act(async () => finish(JSON.stringify(snapshot())));
+  expect(share).not.toHaveBeenCalled();
+});
+
+test('drops a pre-background previous-session read and fetches the latest archive on a new export', async () => {
+  let finish!: (json: string) => void;
+  const latestReport = snapshot({ nativeBuild: '25' });
+  native.getPreviousMonitoringSnapshot
+    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+    .mockResolvedValueOnce(JSON.stringify(latestReport));
+  const share = jest
+    .spyOn(Share, 'share')
+    .mockResolvedValue({ action: Share.dismissedAction, activityType: undefined });
+  const user = userEvent.setup();
+  await renderAsync(<MonitoringPanel />);
+  const exportButton = screen.getByRole('button', {
+    name: 'Exporter la session précédente',
+  });
+  await user.press(exportButton);
+  await act(async () => stateChanged('background'));
+  await act(async () => finish(JSON.stringify(snapshot({ nativeBuild: '24' }))));
+  expect(share).not.toHaveBeenCalled();
+  await act(async () => stateChanged('active'));
+  await user.press(exportButton);
+  expect(native.getPreviousMonitoringSnapshot).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual(latestReport);
+});
+
+test('allows another export on foreground return even if a cancelled share never settles', async () => {
+  let finishShare!: (result: {
+    action: string;
+    activityType: string | undefined;
+  }) => void;
+  native.getPreviousMonitoringSnapshot.mockResolvedValue(JSON.stringify(snapshot()));
+  const share = jest
+    .spyOn(Share, 'share')
+    .mockImplementationOnce(() => new Promise(resolve => { finishShare = resolve; }))
+    .mockResolvedValue({ action: Share.dismissedAction, activityType: undefined });
+  const user = userEvent.setup();
+  await renderAsync(<MonitoringPanel />);
+  const exportButton = screen.getByRole('button', {
+    name: 'Exporter la session précédente',
+  });
+  await user.press(exportButton);
+  expect(exportButton).toBeDisabled();
+  await act(async () => stateChanged('inactive'));
+  await act(async () => stateChanged('active'));
+  expect(exportButton).toBeEnabled();
+  await user.press(exportButton);
+  expect(native.getPreviousMonitoringSnapshot).toHaveBeenCalledTimes(2);
+  expect(share).toHaveBeenCalledTimes(2);
+  await act(async () => finishShare({ action: Share.dismissedAction, activityType: undefined }));
+  expect(exportButton).toBeEnabled();
+});
+
+test('labels the voice stage separately from Core AI phase', async () => {
+  const report = snapshot();
+  native.getMonitoringSnapshot.mockResolvedValue(JSON.stringify({
+    ...report,
+    current: { ...report.current, voiceStage: 'pocket' },
+  }));
+  await renderAsync(<MonitoringPanel />);
+  expect(screen.getByText('État : Chargement')).toBeOnTheScreen();
+  expect(screen.getByText('Voix : Chargement de PocketTTS')).toBeOnTheScreen();
+  expect(screen.getByText(/indépendamment de cet écran/)).toBeOnTheScreen();
+  expect(screen.getByText(/peut précéder l’arrêt et manquer un pic/)).toBeOnTheScreen();
+});
+
+test('warns when native checkpoint storage is unavailable', async () => {
+  native.getMonitoringSnapshot.mockResolvedValue(JSON.stringify({
+    ...snapshot(),
+    persistence: { status: 'unavailable' },
+  }));
+  await renderAsync(<MonitoringPanel />);
+  expect(screen.getByRole('alert')).toHaveTextContent(/Sauvegarde locale indisponible\./);
+  expect(screen.getByRole('button', { name: 'Exporter la session précédente' })).toBeEnabled();
 });

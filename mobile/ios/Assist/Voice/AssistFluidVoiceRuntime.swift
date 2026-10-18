@@ -88,6 +88,22 @@ struct AssistFluidDecodeMailbox {
     mutating func complete() { inFlight = false }
     mutating func cancel() { pending = nil; inFlight = false }
 }
+
+/// The runtime owns the active producer. Retiring a previous response must not
+/// clear a later producer installed while cancellation awaits Core ML work.
+struct AssistFluidSpeechSessionOwner<Session: AnyObject & Sendable>: Sendable {
+    private(set) var current: Session?
+    mutating func install(_ session: Session) { current = session }
+    mutating func retire(_ expected: Session? = nil) -> Session? {
+        guard let expected else {
+            let value = current
+            current = nil
+            return value
+        }
+        if current === expected { current = nil }
+        return expected
+    }
+}
 // END PURE FLUID CAPTURE POLICY
 
 /// Only values cross from model actors to the main-owned audio coordinator.
@@ -115,9 +131,10 @@ actor AssistFluidVoiceRuntime: AssistFluidInputProcessor {
     private var identity = UUID()
     private var active = true
     private var finishing = false
-    private var speechSession: PocketTtsSession?
+    private var speechSessions = AssistFluidSpeechSessionOwner<PocketTtsSession>()
 
     init(configuration: AssistAdvancedVoiceConfiguration, monitoring: Bool,
+         progress: @escaping @MainActor @Sendable (AssistFluidLoadFailure.Stage, String?) -> Void,
          receive: @escaping @MainActor @Sendable (AssistFluidVoiceEvent) -> Void) async throws {
         self.receive = receive
         self.capture = AssistFluidCaptureWindow(monitoring: monitoring)
@@ -127,17 +144,27 @@ actor AssistFluidVoiceRuntime: AssistFluidInputProcessor {
         AppLogger.mirrorsToConsole = false
         var stage = AssistFluidLoadFailure.Stage.pocket
         do {
+            try Task.checkCancellation()
+            await progress(stage, nil)
+            try Task.checkCancellation()
             let pocket = PocketTtsManager(defaultVoice: AssistAdvancedVoiceConfiguration.presetVoice, language: .french24L,
                                         offlineDirectory: configuration.pocketDirectory, precision: .int8, placement: .gpu)
-            try await pocket.initialize()
+            try await pocket.initialize(progress: { attempt in
+                let retry = attempt.retry ? " · reprise CPU/GPU" : ""
+                await progress(.pocket, "\(attempt.component) · \(attempt.computeUnits)\(retry)")
+            })
             try Task.checkCancellation()
             self.pocket = pocket
             stage = .parakeet
+            await progress(stage, nil)
+            try Task.checkCancellation()
             let version: AsrModelVersion = configuration.variant == "redux" ? .redux : .ultra
             let models = try AsrModels.loadLocal(from: configuration.asrDirectory, version: version)
             try Task.checkCancellation()
             asr = AsrManager(models: models)
             stage = .silero
+            await progress(stage, nil)
+            try Task.checkCancellation()
             let config = MLModelConfiguration()
             config.computeUnits = .cpuOnly
             let vadModel = try await MLModel.load(contentsOf: configuration.vadModelURL, configuration: config)
@@ -181,7 +208,7 @@ actor AssistFluidVoiceRuntime: AssistFluidInputProcessor {
             guard active, identity == token, !Task.isCancelled else {
                 await session.cancel(); throw CancellationError()
             }
-            speechSession = session
+            speechSessions.install(session)
             return session
         } catch {
             if error is CancellationError || Task.isCancelled { throw CancellationError() }
@@ -189,9 +216,8 @@ actor AssistFluidVoiceRuntime: AssistFluidInputProcessor {
         }
     }
 
-    func cancelSpeech() async {
-        let session = speechSession
-        speechSession = nil
+    func cancelSpeech(_ expected: PocketTtsSession? = nil) async {
+        let session = speechSessions.retire(expected)
         await session?.cancel()
     }
 
