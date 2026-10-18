@@ -7,6 +7,16 @@ import { join, resolve } from 'path';
 const mobileRoot = resolve(__dirname, '..');
 const hook = JSON.parse(readFileSync(join(mobileRoot, 'package.json'), 'utf8'))
   .scripts['eas-build-pre-install'];
+
+test('native update runtimes match and isolate the new bridge from build 25', () => {
+  const config = require('../app.config');
+  const expoPlist = readFileSync(join(mobileRoot, 'ios/Assist/Supporting/Expo.plist'), 'utf8');
+  const strings = readFileSync(join(mobileRoot, 'android/app/src/main/res/values/strings.xml'), 'utf8');
+  expect(typeof config.runtimeVersion).toBe('string');
+  expect(config.runtimeVersion).not.toBe('1.0.0');
+  expect(expoPlist.match(/<key>EXUpdatesRuntimeVersion<\/key>\s*<string>([^<]+)<\/string>/)?.[1]).toBe(config.runtimeVersion);
+  expect(strings.match(/name="expo_runtime_version">([^<]+)<\/string>/)?.[1]).toBe(config.runtimeVersion);
+});
 let fixtureRoot;
 let logPath;
 

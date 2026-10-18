@@ -15,6 +15,9 @@
         height: 100%;
         margin: 0;
       }
+      :root {
+        --assist-scrollbar-thumb: #7c869a;
+      }
       body {
         overflow: hidden;
       }
@@ -27,11 +30,57 @@
       /* Match the native multiline field's intrinsic height in this preview. */
       textarea[aria-label='Message'] {
         field-sizing: content;
+        resize: none;
+      }
+      /* Match the native switch's hitSlop without enlarging its visible track. */
+      #root input[role='switch'] {
+        min-width: 44px;
+        min-height: 44px;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
       }
       * {
         box-sizing: border-box;
         scrollbar-width: thin;
-        scrollbar-color: #7c869a80 transparent;
+        scrollbar-color: var(--assist-scrollbar-thumb) transparent;
+      }
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--assist-scrollbar-thumb);
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover,
+      ::-webkit-scrollbar-thumb:active {
+        background: color-mix(
+          in srgb,
+          var(--assist-scrollbar-thumb),
+          #18202e 20%
+        );
+      }
+      #root
+        :is([role='button'], [role='radio'], input, textarea):focus-visible {
+        outline: 2px solid Highlight;
+        outline-offset: 3px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
+      @media (forced-colors: active) {
+        * {
+          scrollbar-color: auto;
+          forced-color-adjust: auto !important;
+        }
       }
     </style>
   </head>

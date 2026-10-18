@@ -1,6 +1,6 @@
 # Assist — iPhone interface directions
 
-**Current implementation:** see the [refinement from the shared reference](shared-reference-refinement.md), the [final reference image](references/assist-share-final.png) and the [verification record](verification.json). Captures for this revision are collected under `shared-reference/`. The [whole-system redesign](whole-system-redesign.md) is the previous iteration.
+**Current implementation:** see the [iPhone UI system refinement](iphone-ui-system-refinement.md), [DESIGN.md](../DESIGN.md) and [UX-CONTRACT.md](../UX-CONTRACT.md). Reference captures are collected under `iphone-ui-system/`; they predate the integrated native/voice release and do not prove its current device behavior. Stale generated verification reports from the earlier source revision are intentionally not included. Re-run `npm run check` and `npm run preview:build` from `mobile/` for source and preview-build validation; browser measurements require a separate fresh capture. The [shared-reference refinement](shared-reference-refinement.md), its [target image](references/assist-share-final.png) and the [whole-system redesign](whole-system-redesign.md) document preceding revisions.
 
 ## Archive of earlier directions and checks
 

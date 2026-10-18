@@ -12,10 +12,20 @@ voix pendant la lecture. Un essai utilisateur affiche toutefois une interruption
 audio avant la première transcription. Le message regroupe plusieurs causes :
 la raison exacte reçue sur cet iPhone n’est pas encore établie.
 
-Le **candidat build 18** corrige le traitement trop large des notifications de
-route et conserve l’état d’erreur lors d’un changement d’activité de l’app.
-L’archive, la livraison et les nouveaux essais physiques de ce candidat restent
-à confirmer. Il ne revendique pas la qualité ou la fluidité de ChatGPT.
+Le **build 18**, livré sur TestFlight interne, corrige les reconfigurations de
+route et l’état d’erreur. L’essai utilisateur suivant échoue au contrôle du graphe
+après `engine.start()`, avant la première transcription : « Le graphe audio avec
+annulation d’écho est inutilisable ». La capture ne révèle pas le prédicat fautif.
+
+Le **build 19**, livré sur TestFlight interne, configure explicitement la liaison mixeur → sortie au
+même format client que le micro et son tap, avec les vérifications strictes
+après démarrage. Les détails audio nomment la cause du refus et montrent aussi
+les formats complets du tap et du lecteur. Après installation, l’utilisateur
+confirme « Works perfectly » et fournit un rapport natif build 19 sous iOS 27.2.
+Ce retour devient la référence fonctionnelle sur appareil; les latences audio,
+l’efficacité de l’AEC et les autres routes restent à mesurer. Les résultats et
+leurs limites figurent dans le [rapport de qualification](voice-testflight-19.md#retour-utilisateur-et-mesures-sur-appareil).
+Aucune parité avec ChatGPT n’est revendiquée.
 
 Les builds 13 à 15 ont été livrés sur TestFlight. Ils utilisaient une dictée vers
 un brouillon, un envoi manuel, puis une lecture facultative; les versions 14 et
@@ -240,6 +250,47 @@ Ces garanties de code demandent des essais natifs : les tests JavaScript ne
 prouvent pas la libération effective du microphone, l’arrêt audible ou la
 transition correcte entre routes.
 
+## Formats du graphe — candidat 19
+
+Le chemin18 ne configurait explicitement que lecteur → mixeur en48kHz mono.
+La liaison mixeur → sortie restait automatique. Apple précise que cette liaison
+peut suivre le format de sortie au démarrage, tandis que VPIO exige le même
+format client entre la sortie du nœud micro et l’entrée du nœud de sortie.
+Le format du tap18 était relevé avant le démarrage, puis comparé après.
+
+Le candidat19 configure les deux côtés avec le même format client avant le tap
+et avant `prepare/start`. Le lecteur conserve son format canonique48kHz mono;
+le mixeur assure la conversion vers le format client choisi. Le contrôle du
+graphe reste strict, y compris l’égalité des formats I/O de VPIO. Le réarmement
+STT ne reconfigure pas un graphe en cours de lecture.
+
+Les diagnostics indiquent les prédicats refusés et les formats `in/tap/out/player`
+avec fréquence, canaux, type PCM et entrelacement. Ils restent bornés à8lignes
+et400caractères par ligne, sans identifiants ni noms de périphériques.
+
+Sources primaires : [exemple Apple de traitement vocal](https://developer.apple.com/documentation/avfaudio/using-voice-processing),
+[liaison du mixeur principal](https://developer.apple.com/documentation/avfaudio/avaudioengine/mainmixernode),
+[formats client/matériel de sortie](https://developer.apple.com/documentation/avfaudio/avaudiooutputnode).
+Le câblage est corrigé à partir de ces contrats; le prédicat réellement refusé
+sur l’iPhone du signalement18 reste à confirmer avec les détails audio.
+
+## Vérification du candidat 19 avant archive
+
+`npm run check` passe :522tests/22suites, TypeScript, ESLint et codegen.
+Les8contrôles statiques du contrat local et les2contrôles de démarrage passent.
+Six sources Swift6 strict arm64-iOS27.1 passent sur SDK26.2; le projet19 passe
+`plutil`. Le banc duplex passe24contrôles au premier essai, dont deux moteurs
+réels en rendu manuel hors ligne vérifiant le helper de câblage partagé et la
+conversion du lecteur48kHz mono vers des formats client44,1/48kHz mono.
+Le cas implicite stéréo/client mono est constaté avant la connexion explicite;
+la connexion corrigée et le signal converti sont vérifiés après.
+
+Le banc n’active ni microphone ni sortie matérielle ni VPIO réel, reconnaissance
+ou synthèse réelle. Les autres suites natives inchangées seront rejouées dans
+le pré-install EAS. Archive, acceptation Apple et essai iPhone restent des
+étapes distinctes. La cause exacte du signalement18 reste inconnue sans ses
+Détails audio; aucune disparition du problème sur appareil n’est encore prouvée.
+
 ## Validation du candidat 18 avant archive
 
 - `npm run check` : **522 tests JavaScript dans 22 suites**, TypeScript,
@@ -331,11 +382,26 @@ les échecs sur plusieurs essais. Sans instrumentation, noter **non mesuré**.
 Les seuils de fin de tour ci-dessus sont des réglages, pas des latences mesurées
 sur iPhone.
 
-## Pourquoi PocketTTS attend
+## PocketTTS et la pile avancée
 
-PocketTTS French 24L reste un candidat pour une étape ultérieure : il offre une
-session audio incrémentale, mais ni son accent québécois ni sa coexistence
-mémoire avec Gemma ne sont qualifiés pour cette app.
+L’utilisateur a maintenant demandé l’intégration de la pile complète. Le
+[parcours avancé](advanced-local-voice.md) ajoute le chargement strictement
+local, l’import vérifié, la référence consentie, Parakeet, Silero et le streaming
+Pocket dans le graphe VPIO. Apple reste sélectionné tant que les ressources et
+la référence à fournir ne sont pas prêtes. Les calculs suivants décrivent
+l’étude initiale du pack complet, pas la sélection réduite livrée par l’import.
+
+Le [comparatif des voix Apple fr-CA](voice-comparison.md) prépare la référence
+auditive avant ce prototype lourd : phrases identiques entières et segmentées,
+noms masqués, critères d’écoute et choix persistant pour le mode vocal. L’aperçu
+reste une lecture seule, avec un arrêt ciblé, sans capture micro.
+Il est livré dans le **build 20**, disponible dans TestFlight interne; les
+[vérifications et consignes d’écoute](voice-testflight-20.md) distinguent cette
+livraison de la qualification auditive sur appareil.
+
+PocketTTS French 24L offre une session audio incrémentale. Son accent québécois
+et sa coexistence mémoire avec Gemma restent à qualifier sur l’iPhone, même
+après compilation de l’intégration.
 
 À la révision de modèles
 [`91748676`](https://huggingface.co/FluidInference/pocket-tts-coreml/tree/91748676fe3c8b2eb3007b3125253bcd898202c3/v2.1/french_24l),
@@ -353,7 +419,7 @@ ressources. Les chiffres du petit pack anglais ne décrivent pas ce pack frança
 Son
 [annulation de session](https://github.com/FluidInference/FluidAudio/blob/2d6c42ca5f3accc0faf9fee9e0fff5b9b2cf6042/Sources/FluidAudio/TTS/PocketTTS/Pipeline/PocketTtsSession.swift#L34-L42)
 attend la fin de la tâche de génération; elle ne mesure pas l'arrêt audible d'un
-lecteur externe. Une intégration future devra qualifier stockage, mémoire avec
+lecteur externe. L’intégration avancée doit qualifier stockage, mémoire avec
 Gemma, écoute fr-CA, file audio et annulation sur l'iPhone réellement supporté
 avant de remplacer le premier parcours Apple.
 
@@ -373,3 +439,26 @@ Les notes fr-CA/en-US ont été écrites et relues exactement. Source livrée :
 `95f098219210e4a81bcbe0a65bce0d7d1731ad3a`. Les essais de parole superposée,
 d’écho, d’arrêt audible, de stabilité et de fonctionnement hors réseau restent
 à exécuter sur iPhone. Cette livraison ne constitue pas leur preuve.
+
+## Livraison du build18
+
+Le [build EAS18](https://expo.dev/accounts/ales27/projects/assist/builds/dadf65ba-ee1e-45a5-bf67-75623ec85b7c)
+est terminé; la soumission finale est FINISHED et Apple confirme VALID /
+IN_BETA_TESTING. Source livrée : `c1d866d5f189722b66e62f2c15d29c7704a258ff`.
+Les notes fr-CA/en-US ont été écrites et relues exactement. Une première
+tentative a été annulée avant archive pour renforcer la réentrance de l’arrêt;
+aucune IPA de cette tentative n’a été envoyée à Apple.
+
+Le correctif est reporté dans le workspace avec les changements indépendants
+préservés. Le démarrage, l’écho et l’interruption audible restent à confirmer
+sur l’iPhone avec les consignes de TestFlight.
+
+## Livraison du build19
+
+Le [build EAS19](https://expo.dev/accounts/ales27/projects/assist/builds/6058efa8-7261-4199-b2de-97277246fa3f)
+est terminé; la soumission est FINISHED et Apple confirme VALID /
+IN_BETA_TESTING. Source livrée : `a0b2b2ecb9462e4cac53607334cd70e7d1fa713f`.
+Les notes fr-CA/en-US sont écrites et relues exactement. Les vérifications
+hors ligne couvrent le câblage/conversion; le micro et l’écho sur l’iPhone
+restent à confirmer. Si le démarrage échoue, relever les deux dernières lignes
+`causes=` et `formats` dans Détails audio.

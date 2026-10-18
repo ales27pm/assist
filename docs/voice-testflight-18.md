@@ -58,3 +58,11 @@ Soumission de cette seule IPA finale à Apple en cours. Aucun artifact de la ten
 ## Soumission finale
 
 EAS submission `33a880fa-bcb3-4629-9245-c2576a2af894` confirme FINISHED à2026-10-17T02:30:39.688Z. La relation pointe exactement vers la tentative finale `dadf65ba-ee1e-45a5-bf67-75623ec85b7c`, build18. Traitement et disponibilité Apple encore à vérifier.
+
+## Livraison finale confirmée
+
+Apple confirme1.0.0 (18) VALID / IN_BETA_TESTING, non expiré, chiffrement nonexemptfalse. État externe READY_FOR_BETA_SUBMISSION; aucune soumission externe ou invitation lancée. Notes fr-CA et en-US écrites et relues exactement; preuves : `/tmp/assist-route18-asc-final.json` et `/tmp/assist-paid-submission18.json`.
+
+Le correctif14fichiers est fusionné dans le workspace original après vérification des hashes. Les modifications concurrentes de sélection du modèle et d’accessibilité sont conservées (en particulier ModelDirectoryBookmark, focus des écrans et annonces iOS). Le projet original est désormais au numéro18, avec ces changements indépendants toujours présents et non inclus dans l’IPA isolée. Branche/index originaux préservés; sauvegarde des14fichiers avant fusion dans `/tmp/assist-route18-original-backup`.
+
+Les161tests affectés et les8contrats statiques repassent après fusion. Le typecheck TypeScript repasse aussi. Le candidat livré reste propre au SHA `c1d866d5f189722b66e62f2c15d29c7704a258ff`. L’installation et le son réels restent à tester; aucune qualification acoustique n’est déduite des statuts Apple.

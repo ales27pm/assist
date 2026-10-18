@@ -13,6 +13,6 @@
     <key>EXUpdatesEnableBsdiffPatchSupport</key>
     <true/>
     <key>EXUpdatesRuntimeVersion</key>
-    <string>1.0.0</string>
+    <string>1.0.0-native26</string>
   </dict>
 </plist>

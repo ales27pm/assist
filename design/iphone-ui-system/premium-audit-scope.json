@@ -1,0 +1,15 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": [
+    "mobile"
+  ],
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": [
+    "Form",
+    "Select/Listbox",
+    "Scrollbar"
+  ],
+  "ownership": {
+    "Select/Listbox": "authored"
+  }
+}

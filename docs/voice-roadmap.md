@@ -5,11 +5,12 @@ une interruption naturelle, tout en gardant STT, LLM et TTS sur l’iPhone. Les
 expériences vocales de ChatGPT et Gemini servent de références perceptuelles;
 ce plan ne promet ni leur qualité ni leur fluidité sur le matériel local.
 
-**Référence actuelle : build 16, confirmé fonctionnel par l’utilisateur sur son
-iPhone.** Son mode vocal distinct enchaîne écoute, fin de tour automatique,
-envoi local, lecture progressive et tour suivant. Ce retour valide le parcours
-de l’étape 3 comme base de travail; il ne constitue pas une qualification
-formelle des latences, de l’accent, des permissions ou de toutes les routes.
+**Référence actuelle : build 19, confirmé fonctionnel par l’utilisateur sur son
+iPhone (« Works perfectly »), avec un rapport natif sous iOS 27.2.** Le build 16
+avait établi le mode vocal distinct : écoute, fin de tour automatique, envoi
+local, lecture progressive et tour suivant. Ce nouveau retour confirme le
+fonctionnement après le correctif audio; il ne mesure pas les latences vocales,
+l’efficacité de l’AEC, l’accent, les permissions ou toutes les routes.
 
 **Build 17 livré : interruption vocale pendant la lecture.** Le code maintient
 un STT Apple local avec AEC Apple VPIO pendant le TTS, puis promeut la même tâche
@@ -17,10 +18,15 @@ de reconnaissance lorsque l’utilisateur intervient. Après livraison TestFligh
 un essai utilisateur a affiché une interruption audio avant la première
 transcription; sa raison native exacte reste inconnue.
 
-**Candidat actuel : build 18, fiabilité des reconfigurations audio.** Il distingue
-les reconfigurations internes compatibles des changements réels de périphérique,
-vérifie la santé du graphe et conserve l’erreur dans le bon état d’interface.
-La qualification physique de l’interruption vocale reste ouverte.
+**Build 18 livré : fiabilité des reconfigurations audio.** L’essai physique
+suivant échoue au contrôle strict du graphe après démarrage, avant transcription.
+
+**Build 19 livré : format client commun au micro et à la sortie.**
+La liaison mixeur → sortie devient explicite et partage le format du tap micro.
+Les diagnostics nomment les conditions refusées. Le contrôle strict et VPIO
+restent actifs. Le [retour utilisateur et les mesures du modèle](voice-testflight-19.md#retour-utilisateur-et-mesures-sur-appareil)
+établissent une référence fonctionnelle. La latence d’arrêt audible et les faux
+déclenchements de l’interruption vocale restent à qualifier.
 
 ## Référence produit et limites
 
@@ -46,8 +52,13 @@ n’est revendiquée pour l’app locale.
 Le parcours clavier et l’envoi manuel restent disponibles. Les étapes 0 à 2
 expliquent les fondations de la référence actuelle; leurs objectifs de mesure
 restent ouverts lorsqu’aucun résultat physique n’est consigné. L’étape 3 possède
-le retour positif du build 16. L’étape 4 est livrée au build 17; le candidat 18
-traite la régression de route observée avant sa qualification sur appareil.
+le retour positif du build 16. L’étape 4 est livrée au build 17; les builds 18
+et 19 traitent les régressions audio observées, avec un retour positif au build 19.
+L’utilisateur choisit ensuite l’étape 5 : comparer les voix fr-CA avant
+d’intégrer un moteur plus lourd. Le délai entre fin de parole et premier son
+de réponse reste à mesurer pour ajuster la fin de tour sans couper les
+hésitations. Les 180–423 ms du rapport actuel mesurent le premier jeton LLM;
+une mesure STT, décision de fin de tour et TTS reste nécessaire.
 
 ### 0. Rendre la capture observable et qualifier les enchaînements
 
@@ -206,11 +217,23 @@ est déduit.
 
 **Tranche : écouter à l’aveugle les mêmes réponses, entières puis segmentées.**
 
-Établir d’abord une référence avec les voix Apple fr-CA installées. Comparer
-ensuite un prototype isolé de PocketTTS French 24L, avant de l’embarquer dans le
-parcours principal. Son nom et sa langue ne prouvent ni l’accent québécois ni le
-débit utilisable avec Gemma sur cet iPhone. Le
-[dossier local](local-voice.md#pourquoi-pockettts-attend) consigne les premières
+Le [comparatif Apple dans Réglages](voice-comparison.md) prépare cette référence :
+voix disponibles `fr-CA`, noms masqués, cinq phrases fixes et leurs segments,
+notes d’écoute partageables, puis choix local persistant pour les prochaines
+réponses. Il n’ouvre pas le microphone. Son implémentation ne constitue pas
+encore un résultat auditif ni une qualification hors réseau sur appareil.
+Le **build 20 est disponible dans TestFlight interne**;
+le [rapport de livraison](voice-testflight-20.md) consigne la source,
+les tests et les essais restant à faire. L’étape reste à qualifier à l’écoute.
+Les notes fr-CA et en-US ont été relues exactement après écriture.
+
+L’utilisateur a ensuite autorisé l’[intégration complète optionnelle](advanced-local-voice.md)
+de PocketTTS French24L, Parakeet Redux/Ultra, Silero et AEC VPIO. Les imports
+du pack et de la référence consentie précèdent son activation; les voix Apple
+restent disponibles. Le comparatif fournit la référence auditive. Le nom du
+modèle et sa langue ne prouvent ni l’accent québécois ni le débit utilisable
+avec Gemma sur cet iPhone. Le
+[dossier local](local-voice.md#pockettts-et-la-pile-avancée) consigne les premières
 contraintes du pack français; les chiffres d’un petit pack anglais ou d’un Mac
 ne servent pas de benchmark iPhone.
 
@@ -300,3 +323,18 @@ couvre 72 combinaisons d'état/thème/largeur. Clavier, Dynamic Type et VoiceOve
 restent à confirmer sur iPhone. Cette étape n'ajoute aucun moteur ou automatisme.
 Le dossier de recherche local fr-CA garde son rôle de trajectoire technique,
 avec les mesures et portes de qualification définies ci-dessus.
+
+## Livraison du correctif audio — build 18
+
+La build18 est VALID / IN_BETA_TESTING après archive et soumission finales
+réussies. Les notes de test bilingues sont relues. Les contrôles passent
+(522tests JavaScript,19contrôles duplex et contrôles natifs associés); cela ne
+confirme pas encore la disparition du problème sur l’iPhone du signalement17.
+La qualification physique de l’étape4 reste donc la prochaine porte.
+
+## Correctif de format livré — build19
+
+La build19 est VALID / IN_BETA_TESTING après archive et soumission réussies.
+Le format client commun est explicite avant démarrage et les causes de rejet
+sont détaillées. Les522tests JavaScript et24contrôles duplex passent, mais le
+parcours physique ayant échoué au build18 doit encore être rejoué sur iPhone.
