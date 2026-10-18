@@ -57,6 +57,44 @@ La réception iPhone reste distincte : choix d’outil réel par Gemma, permissi
 sélecteur/caméra, OCR, annulation, interruption vocale et mémoire ne sont pas
 prouvés par l’archive signée ou les tests synthétiques.
 
+## Livraison vérifiée — 18 octobre 2026
+
+- Source binaire : `145b5f51c11b88bef7fd58263cee8f9c4bcba16b`.
+- Build EAS unique : `5442da69-aae4-4ec2-8fdf-526d60dea57b`, `FINISHED`
+  le 18 octobre à 08:16:48 UTC; journal Xcode `ARCHIVE SUCCEEDED`.
+- [Archive EAS](https://expo.dev/accounts/ales27/projects/assist/builds/5442da69-aae4-4ec2-8fdf-526d60dea57b).
+- Vérification Mac de l’IPA et du dSYM : 44 contrôles positifs, aucune erreur;
+  signature stricte, identité, runtime/canal, neuf usages iOS, attributions,
+  ressources/confiance des packs vocaux et exemption de chiffrement vérifiés.
+- Le manifeste de confidentialité compilé est l’union exacte du candidat et
+  des dépendances embarquées, pas une copie brute du XML source. Les ajouts
+  proviennent d’ExpoFileSystem; tracking reste faux et collecte déclarée vide.
+  Une seconde lecture indépendante confirme cette agrégation.
+- Soumission exacte : `caa43bd7-44ad-488f-ab39-d7375d103b86`, `FINISHED`
+  à 08:24:53 UTC, sans nouvelle build ou groupe automatique.
+- Apple build : `c919f607-c014-461e-910d-e782167b80d9`; état `VALID`,
+  non expirée, TestFlight interne `IN_BETA_TESTING`, vérifié à 08:25:27 UTC.
+  L’état externe reste `READY_FOR_BETA_SUBMISSION` : aucune diffusion externe
+  ou publication App Store effectuée.
+- Notes `fr-CA` et `en-US` enregistrées puis relues à l’identique.
+- Contrôles locaux frais : 1 253 tests / 39 suites, TypeScript, ESLint et
+  Codegen réussis. Le runner iOS a également exécuté les contrôles des
+  13 schémas fermés, 38 cas de boucle d’outils et 43 cas de journal/permis.
+
+Identité des artefacts acceptés :
+
+```text
+IPA SHA-256      bb4397a3b7ea0fcdefec2082083a29592c1ce724825c7984583e36f5c7d87083
+Symboles SHA-256 4c742c50b2e0881bbbd3ab637b74f1d3cf30e4c0c8d549329d09eb569fcf88fa
+DWARF SHA-256    a8ef8e974ac39a66bb821d0bff4716b040c705c9bfee4828f3ffa652ab0a78b9
+UUID arm64      961E8544-FA9A-34EF-BEFF-E6C5EDD42094
+```
+
+IPA, symboles et preuves privées sont conservés hors Git dans
+`/home/ales27pm/.local/share/assist/releases/1.0.0-28-5442da69/`.
+Le checkout principal et ses modifications indépendantes restent inchangés.
+Aucun push/merge ni installation/qualification iPhone effectué.
+
 ## Notes TestFlight fr-CA
 
 Ajout des outils iOS dans la conversation, désactivés par défaut. Chaque accès et modification exige un aperçu et une confirmation tactile; les autorisations iOS restent séparées. Photo et caméra peuvent extraire du texte avec l’OCR Apple local; Gemma reçoit le texte reconnu, pas l’image. Tester calendrier, rappels avec échéance, refus de permission, double toucher, annulation et arrière-plan. Tester une photo tournée, une image sans texte et un document long. Vérifier les valeurs reconnues : l’OCR peut se tromper. Une action au résultat incertain ne doit pas être recréée automatiquement. Modèles et packs actuels inchangés. Fonctionnement et performances à qualifier sur iPhone.
