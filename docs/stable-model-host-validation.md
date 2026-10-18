@@ -3,8 +3,9 @@
 Branche isolée : `work/stable-model-host`, base `1129342d1c7bd95ba20d4f9a45da7587010a5467`.
 Cette page décrit les preuves préparatoires du lot build27/runtime
 `1.0.0-native27`, pas une installation ni un crash iPhone corrigé.
-Le [journal de tentative EAS27](voice-testflight-27.md) consigne séparément
-l’échec de compilation et sa correction locale, sans seconde build autorisée.
+Le [journal EAS27/TestFlight](voice-testflight-27.md) consigne séparément
+l’échec de compilation, sa correction et la livraison de la nouvelle tentative
+explicitement autorisée, sans les confondre avec une qualification iPhone.
 Les modifications non liées du checkout original sont conservées.
 
 ## Incident de référence
