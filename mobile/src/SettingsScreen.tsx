@@ -17,6 +17,7 @@ import { uiGrammar } from './uiGrammar';
 import { ScreenHeading, SettingsRow, SurfaceGroup } from './uiPrimitives';
 import { VoiceComparisonPanel } from './VoiceComparisonPanel';
 import { AdvancedVoicePanel } from './AdvancedVoicePanel';
+import { DeviceToolsPanel } from './DeviceToolsPanel';
 import { scheduleAccessibilityFocus } from './focusAccessibility';
 
 type Props = {
@@ -56,6 +57,15 @@ export function SettingsScreen({
   const { colors } = theme;
   const [comparingVoices, setComparingVoices] = useState(false);
   const [advancedVoice, setAdvancedVoice] = useState(false);
+  const [deviceTools, setDeviceTools] = useState(false);
+  const deviceToolsControl = useRef<React.ComponentRef<typeof View>>(null);
+  const wasDeviceTools = useRef(false);
+  useEffect(() => {
+    const restore = wasDeviceTools.current && !deviceTools;
+    wasDeviceTools.current = deviceTools;
+    if (restore)
+      return scheduleAccessibilityFocus(() => deviceToolsControl.current);
+  }, [deviceTools]);
   const advancedVoiceControl = useRef<React.ComponentRef<typeof View>>(null);
   const wasAdvancedVoice = useRef(false);
   useEffect(() => {
@@ -118,6 +128,10 @@ export function SettingsScreen({
     return <VoiceComparisonPanel onClose={() => setComparingVoices(false)} />;
   if (advancedVoice)
     return <AdvancedVoicePanel onClose={() => setAdvancedVoice(false)} />;
+  if (deviceTools)
+    return (
+      <DeviceToolsPanel onClose={() => setDeviceTools(false)} blocked={busy} />
+    );
 
   return (
     <View style={styles.screen}>
@@ -305,6 +319,15 @@ export function SettingsScreen({
           value="Modèles et voix intégrée"
           onPress={() => setAdvancedVoice(true)}
           controlRef={advancedVoiceControl}
+          disabled={busy}
+          stacked
+        />
+        <SettingsRow
+          label="Outils de l’appareil"
+          value="Tests manuels du PR 2"
+          detail="Autorisations et essais explicites, sans appel par Gemma."
+          onPress={() => setDeviceTools(true)}
+          controlRef={deviceToolsControl}
           disabled={busy}
           stacked
         />
