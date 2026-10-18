@@ -277,7 +277,7 @@ private actor AssistInferenceCoordinator {
     private var generationTask: Task<String, any Error>?
     private var repairTask: Task<String, any Error>?
     private var engine: (any InferenceEngine)?
-    private var tokenizer: (any Tokenizer)?
+    private var tokenizer: (any Tokenizers.Tokenizer)?
     private var stopTokens = Set<Int32>()
     private var capacity = 0
     private var modelName: String?
@@ -458,7 +458,7 @@ private actor AssistInferenceCoordinator {
     @concurrent
     private static func consumeGeneration(
         request: AssistGenerationRequest, prompt: [Int], budget: Int, capacity: Int,
-        modelName: String?, engine: any InferenceEngine, tokenizer: any Tokenizer,
+        modelName: String?, engine: any InferenceEngine, tokenizer: any Tokenizers.Tokenizer,
         stopTokens: Set<Int32>, started: ContinuousClock.Instant,
         monitor: AssistRuntimeMonitor,
         onProgress: @escaping @Sendable (String) -> Void

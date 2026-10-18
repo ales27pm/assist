@@ -22,6 +22,15 @@ test('native update runtimes match the current native build', () => {
   expect(strings.match(/name="expo_runtime_version">([^<]+)<\/string>/)?.[1]).toBe(config.runtimeVersion);
 });
 
+test('Core AI selects the Tokenizers protocol when FluidAudio is also imported', () => {
+  const bridge = readFileSync(join(mobileRoot, 'ios/Assist/Inference/AssistCoreAI.swift'), 'utf8');
+  // Both SDKs export Tokenizer. The model inference contract is the protocol,
+  // not FluidAudio's unrelated speech tokenizer class.
+  const tokenizerTypes = [...bridge.matchAll(/\bany\s+([\w.]*Tokenizer)\b/g)]
+    .map(match => match[1]);
+  expect(tokenizerTypes).toEqual(['Tokenizers.Tokenizer', 'Tokenizers.Tokenizer']);
+});
+
 test('iOS resolves Expo CLI through Expo when the CLI is nested', () => {
   const xcodeProject = readFileSync(join(mobileRoot, 'ios/Assist.xcodeproj/project.pbxproj'), 'utf8');
   expect(xcodeProject).toContain(

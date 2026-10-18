@@ -1,9 +1,11 @@
 # Lot local : hôte vocal stable et packs remplaçables
 
 Branche isolée : `work/stable-model-host`, base `1129342d1c7bd95ba20d4f9a45da7587010a5467`.
-Build 27 et runtime `1.0.0-native27` sont préparés dans les sources seulement.
-Ce document n’annonce ni une build EAS lancée, ni une installation, ni un crash
-iPhone corrigé. Les modifications non liées du checkout original sont conservées.
+Cette page décrit les preuves préparatoires du lot build27/runtime
+`1.0.0-native27`, pas une installation ni un crash iPhone corrigé.
+Le [journal de tentative EAS27](voice-testflight-27.md) consigne séparément
+l’échec de compilation et sa correction locale, sans seconde build autorisée.
+Les modifications non liées du checkout original sont conservées.
 
 ## Incident de référence
 
