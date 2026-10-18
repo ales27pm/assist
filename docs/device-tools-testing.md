@@ -120,3 +120,58 @@ L’utilisateur autorise ensuite le commit/push et la publication d’une OTA iO
 sur le canal `testflight`, compatible avec la build 27, sans nouvelle build EAS.
 Les résultats de publication sont ajoutés après observation ; cette
 autorisation seule ne démontre ni publication ni activation sur appareil.
+
+## Livraison OTA vérifiée
+
+Le commit `51146f2f978ed3ced32d5542f1477afcdabc7baa` est poussé sur
+`main` et `work/stable-model-host`. Le contrôle local complet a été rejoué avant
+publication : TypeScript, ESLint, 793 tests dans 33 suites et Codegen réussis.
+
+Une seule publication EAS Update est effectuée, **sans commande EAS Build**,
+avec `--platform ios --environment production --channel testflight` et
+`--skip-bundler` sur l’export audité conservé. Aucun bundle n’est régénéré
+pendant l’envoi. Le CLI termine avec succès et sa relecture confirme :
+
+| Champ | Valeur observée |
+| --- | --- |
+| Groupe OTA | `38a85ae5-2b19-4363-bc0d-acc38b9c8702` |
+| Update iOS | `01a14d66-12be-7cc7-8743-ac0691edc320` |
+| Publication UTC | 18 octobre 2026, 05:04:57.534 |
+| Canal / branche EAS | `testflight` / `testflight` |
+| Runtime | `1.0.0-native27` |
+| Commit source EAS | `51146f2f978ed3ced32d5542f1477afcdabc7baa` |
+
+Le 18 octobre 2026 à 05:07:31 UTC, une requête selon le protocole natif Expo
+reçoit **HTTP 200**, sélectionne cet update précis et fournit un bundle
+téléchargeable en **HTTP 200**, de **1 894 621 octets**. Son SHA-256 est celui
+de l’export audité indiqué plus haut ; le hash du manifeste concorde également.
+La même recherche sous runtime `1.0.0-native26` retourne HTTP 204 et ne reçoit
+pas cette OTA.
+
+Une première vérification naïve du bundle avait reçu HTTP 403 : elle omettait
+les en-têtes d’autorisation par asset fournis dans les extensions du manifeste.
+La vérification a été corrigée pour suivre le client Expo installé, qui utilise
+ces en-têtes. Aucun jeton n’est écrit dans ce document, et aucune republication
+n’a été effectuée pour ce diagnostic.
+
+Le bundle, le manifeste et les reçus privés sont conservés hors Git dans
+`~/.local/share/assist/releases/1.0.0-27-tools-51146f2f/`. Le checkout initial
+et ses modifications non liées sont conservés. Le run GitHub Actions
+`39099240089` n’a démarré aucun job : les annotations confirment le verrou de
+facturation du compte. Il ne s’agit pas d’une CI verte ; les contrôles locaux
+ci-dessus et la vérification du serveur sont des preuves distinctes.
+
+### Activation à confirmer sur l’iPhone
+
+La publication et la disponibilité serveur sont confirmées, **pas l’activation
+sur appareil**. Avec une connexion réseau, fermer complètement Assist puis
+le rouvrir pour laisser le téléchargement se terminer ; fermer et rouvrir
+ensuite pour charger l’OTA. Ce comportement correspond au téléchargement
+asynchrone au démarrage et au délai d’attente nul de la build 27
+([documentation Expo](https://docs.expo.dev/eas-update/download-updates/)).
+
+Vérifier **Réglages → Outils de l’appareil**, puis le repère **panneau v1**.
+Commencer par **Vérifier les autorisations**, sans lancer de création. La
+présence de ce panneau sur l’iPhone et les effets réels de chaque outil restent
+à observer. Le numéro TestFlight demeure **27** ; Gemma ne dispose toujours pas
+d’un routage automatique vers ces outils.
