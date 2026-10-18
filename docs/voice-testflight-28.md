@@ -19,6 +19,22 @@ Gemma et les packs vocaux restent des imports locaux; aucun poids, clé privée
 de pack, conversation ou fichier de l’iPhone n’est envoyé. Le modèle actuel,
 le contexte et le STT/TTS ne sont pas remplacés.
 
+## Préparation locale et normalisation
+
+Le premier lancement CLI s’est arrêté avant création d’une build : après la
+préparation des identifiants existants, la configuration native avait changé
+et le contrat Git propre a refusé de continuer. La liste EAS28 et l’API Apple28
+sont vides; aucun ID EAS28 n’a été créé par ce lancement.
+
+Cause vérifiée : les dépendances mobiles n’étaient plus résolues localement,
+donc EAS utilisait son ancien plugin de synchronisation au lieu de la CLI
+`expo-updates` du projet. Les dépendances épinglées existantes sont reliées dans
+un dossier ignoré, sans installation ni changement de lockfile. La CLI native
+du projet est de nouveau détectée. Sa sérialisation est appliquée puis figée :
+ordre XML et fin de fichier normalisés, runtime28 et support BSDiff conservés.
+Un contrôle de non-régression protège ce dernier réglage. Cette préparation
+ne constitue pas une seconde build distante.
+
 ## Contrôles de publication
 
 Avant création : vérifier qu’aucune build28 n’existe déjà, figer les sources,

@@ -32,6 +32,11 @@ test('Core AI selects the Tokenizers protocol when FluidAudio is also imported',
   expect(tokenizerTypes.every(type => type === 'Tokenizers.Tokenizer')).toBe(true);
 });
 
+test('native update patch support is preserved by release configuration normalization', () => {
+  const expoPlist = readFileSync(join(mobileRoot, 'ios/Assist/Supporting/Expo.plist'), 'utf8');
+  expect(expoPlist).toMatch(/<key>EXUpdatesEnableBsdiffPatchSupport<\/key>\s*<true\s*\/>/);
+});
+
 test('iOS resolves Expo CLI through Expo when the CLI is nested', () => {
   const xcodeProject = readFileSync(join(mobileRoot, 'ios/Assist.xcodeproj/project.pbxproj'), 'utf8');
   expect(xcodeProject).toContain(
