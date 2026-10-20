@@ -93,16 +93,27 @@ final class AssistCoreAI: NSObject {
         }
     }
 
-    @objc(generate:onProgress:completion:)
+    @MainActor @objc(generate:onProgress:completion:)
     func generate(
         _ requestJSON: String,
         onProgress: @escaping @Sendable (String) -> Void,
         completion: @escaping @Sendable (String?, NSError?) -> Void
     ) {
+        guard agentAdmission?.isFinished != false else { completion(nil, AssistInferenceError.busy as NSError); return }
         let coordinator = coordinator
+        // Reserve the same revocable operation identity as tool/research runs
+        // before the actor hop. cancel() may arrive before that hop is admitted.
+        let admission = AssistAgentAdmission()
+        agentAdmission = admission
         Task { @concurrent in
-            do { completion(try await coordinator.generate(requestJSON, onProgress: onProgress), nil) }
-            catch { completion(nil, error as NSError) }
+            do {
+                let result = try await coordinator.generate(requestJSON, admission: admission, onProgress: onProgress)
+                admission.finish()
+                completion(result, nil)
+            } catch {
+                admission.finish()
+                completion(nil, error as NSError)
+            }
         }
     }
 
@@ -156,6 +167,66 @@ final class AssistCoreAI: NSObject {
         }
     }
 
+    /// Additive v2 entrypoint. It shares the admission, broker and engine owner
+    /// with v1; capability negotiation never grants permission to execute.
+    @MainActor @objc(generateWithToolHost:gateway:onToolActivity:completion:)
+    func generateWithToolHost(
+        _ requestJSON: String, gateway: AssistDeviceCapabilities,
+        onToolActivity: @escaping @Sendable (String) -> Void,
+        completion: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        guard agentAdmission?.isFinished != false else { completion(nil, AssistInferenceError.busy as NSError); return }
+        if toolBroker == nil { toolBroker = AssistToolTransactionCoordinator(gateway: gateway) }
+        guard let broker = toolBroker else { completion(nil, AssistInferenceError.busy as NSError); return }
+        let coordinator = coordinator
+        let admission = AssistAgentAdmission()
+        agentAdmission = admission
+        Task { @concurrent in
+            do {
+                let result = try await coordinator.generateWithToolHost(
+                    requestJSON, broker: broker, admission: admission, onToolActivity: onToolActivity)
+                admission.finish()
+                completion(result, nil)
+            } catch {
+                admission.finish()
+                completion(nil, error as NSError)
+            }
+        }
+    }
+
+    @MainActor @objc(generateResearch:completion:)
+    func generateResearch(_ requestJSON: String,
+                          completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        guard agentAdmission?.isFinished != false else { completion(nil, AssistInferenceError.busy as NSError); return }
+        let coordinator = coordinator
+        let service = AssistPrivateService.shared
+        let admission = AssistAgentAdmission()
+        agentAdmission = admission
+        Task { @concurrent in
+            do {
+                let output = try await coordinator.generateResearch(requestJSON, service: service, admission: admission)
+                admission.finish(); completion(output, nil)
+            } catch {
+                admission.finish(); completion(nil, error as NSError)
+            }
+        }
+    }
+
+    @objc(researchCapabilities:)
+    func researchCapabilities(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        struct Capabilities: Encodable {
+            let schemaVersion = 1
+            let protocolVersion = 1
+            let profile = "research_v1"
+            let tools = ["web_search", "web_read"]
+            let maximumSearches = 1
+            let maximumPageReads = 4
+            let maximumDurationSeconds = 120
+        }
+        do { completion(try AssistJSON.encode(Capabilities()), nil) }
+        catch { completion(nil, error as NSError) }
+    }
+
     @MainActor @objc(confirmToolAction:confirmationToken:completion:)
     func confirmToolAction(
         _ transactionId: String, confirmationToken: String,
@@ -180,10 +251,16 @@ final class AssistCoreAI: NSObject {
         struct Capabilities: Encodable {
             let schemaVersion = 1
             let protocolVersion = 1
-            let tools = AssistToolName.allCases.map(\.rawValue)
+            let tools = AssistToolName.legacyCases.map(\.rawValue)
             let confirmation = "all_accesses"
         }
         do { completion(try AssistJSON.encode(Capabilities()), nil) }
+        catch { completion(nil, error as NSError) }
+    }
+
+    @objc(toolHostCapabilities:)
+    func toolHostCapabilities(_ completion: @escaping @Sendable (String?, NSError?) -> Void) {
+        do { completion(try AssistToolHost.capabilitiesJSON(), nil) }
         catch { completion(nil, error as NSError) }
     }
 
@@ -351,6 +428,7 @@ private struct AssistGenerationResult: Encodable, Sendable {
     let numericalDiagnostics: AssistNumericalTrace?
     var agentTrace: AssistAgentTrace? = nil
     var agentTools: Bool? = nil
+    var weather: [AssistToolValue]? = nil
 }
 
 private struct AssistDecodedGeneration: Sendable {
@@ -506,17 +584,18 @@ private actor AssistInferenceCoordinator {
         }
     }
 
-    func generate(_ json: String, onProgress: @escaping @Sendable (String) -> Void) async throws -> String {
+    func generate(_ json: String, admission: AssistAgentAdmission,
+                  onProgress: @escaping @Sendable (String) -> Void) async throws -> String {
+        try admission.check()
         guard !busy else { throw AssistInferenceError.busy }
         guard engine != nil, tokenizer != nil else { throw AssistInferenceError.notLoaded }
         do {
-            let request = try JSONDecoder().decode(AssistGenerationRequest.self, from: Data(json.utf8))
-            try request.validate()
+            let request = try AssistGenerationRequest.decodeJSON(json)
+            try admission.check()
             operationInFlight = true
             phase = .generating
             lastError = nil
-            // Capturing this actor inherits its executor; tokenizer access stays on it.
-            let task = Task { try await self.runGeneration(request, onProgress: onProgress) }
+            let task = Task { try await self.runGeneration(request, admission: admission, onProgress: onProgress) }
             generationTask = task
             let result = try await task.value
             // runGeneration's defer has restored the actual engine phase before this point.
@@ -536,6 +615,7 @@ private actor AssistInferenceCoordinator {
         onCalendarActivity: @escaping @Sendable (String) -> Void
     ) async throws -> String {
         try admission.check()
+        try AssistInferenceInputPolicy.validateJSON(json)
         guard !busy else { throw AssistInferenceError.busy }
         guard engine != nil, tokenizer != nil else { throw AssistInferenceError.notLoaded }
         let request = try AssistAgentRunController.request(from: json)
@@ -559,22 +639,167 @@ private actor AssistInferenceCoordinator {
         onToolActivity: @escaping @Sendable (String) -> Void
     ) async throws -> String {
         try admission.check()
+        try AssistInferenceInputPolicy.validateJSON(json)
         guard !busy else { throw AssistInferenceError.busy }
         guard engine != nil, tokenizer != nil else { throw AssistInferenceError.notLoaded }
         let request = try AssistDeviceToolRun.request(from: json)
+        return try await startDeviceToolGeneration(
+            request, allowedTools: Set(AssistToolName.legacyCases), broker: broker,
+            admission: admission, onToolActivity: onToolActivity)
+    }
+
+    func generateWithToolHost(
+        _ json: String, broker: AssistToolTransactionCoordinator, admission: AssistAgentAdmission,
+        onToolActivity: @escaping @Sendable (String) -> Void
+    ) async throws -> String {
+        try admission.check()
+        try AssistInferenceInputPolicy.validateJSON(json)
+        guard !busy else { throw AssistInferenceError.busy }
+        guard engine != nil, tokenizer != nil else { throw AssistInferenceError.notLoaded }
+        // A stale/unknown contract is rejected before model submission and
+        // before the shared operation latch is acquired. No v1 downgrade.
+        let selection = try AssistToolHost.selection(from: json)
+        return try await startDeviceToolGeneration(
+            selection.request, allowedTools: selection.allowedTools, broker: broker,
+            admission: admission, onToolActivity: onToolActivity)
+    }
+
+    func generateResearch(_ json: String, service: AssistPrivateService,
+                          admission: AssistAgentAdmission) async throws -> String {
+        try admission.check()
+        try AssistInferenceInputPolicy.validateJSON(json)
+        guard !busy else { throw AssistInferenceError.busy }
+        guard engine != nil, tokenizer != nil else { throw AssistInferenceError.notLoaded }
+        let request = try AssistResearchRun.request(from: json)
+        operationInFlight = true
+        phase = .generating
+        lastError = nil
+        let task = Task { try await self.runResearchGeneration(request, service: service, admission: admission) }
+        generationTask = task
+        return try await task.value
+    }
+
+    private func runResearchGeneration(_ request: AssistGenerationRequest, service: AssistPrivateService,
+                                       admission: AssistAgentAdmission) async throws -> String {
+        defer {
+            generationTask = nil
+            operationInFlight = false
+            phase = cancellationWaiters > 0 ? .cancelling : (engine == nil ? .failed : .ready)
+        }
+        guard let engine, let tokenizer, let agentChatTemplate else { throw AssistInferenceError.notLoaded }
+        let capacity = capacity
+        let modelName = modelName
+        let monitor = monitor
+        let stops = stopTokens.union([Int32(50)])
+        let deadline = ContinuousClock.now.advanced(by: .seconds(120))
+        var lease: UUID?
+        do {
+            try admission.check()
+            // Reuse the same canonical/token-ID qualification as native tools,
+            // but no private-device declaration enters the research prompt.
+            try await AssistInferencePreparation.perform(check: { try admission.check() }) {
+                try Self.validateAgentTokenizer(tokenizer, request: request, scope: .today(), chatTemplate: agentChatTemplate)
+            }
+            let ownedLease = try await service.beginResearch(requestId: request.requestId, admission: admission)
+            lease = ownedLease
+            let outcome = try await AssistResearchRun.run(request: request, deadline: deadline,
+                model: { messages, requestedBudget, calls in
+                    try Task.checkCancellation()
+                    try admission.check()
+                    try await service.checkResearch(ownedLease)
+                    let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
+                        let prompt = try tokenizer.applyChatTemplate(
+                            messages: messages, chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
+                            truncation: false, maxLength: nil, tools: AssistResearchAdapter.closedToolSchema(),
+                            additionalContext: AssistResearchAdapter.additionalContext)
+                        let rendered = tokenizer.decode(tokens: prompt, skipSpecialTokens: false)
+                        if calls.isEmpty { try AssistResearchAdapter.validateRenderedPlanningPrompt(rendered) }
+                        else { try AssistResearchAdapter.validateRenderedContinuationPrompt(rendered, calls: calls) }
+                        guard prompt.allSatisfy({ $0 >= 0 && $0 <= Int(Int32.max) }) else {
+                            throw AssistInferenceError.invalid("Jeton de recherche hors de la plage native.")
+                        }
+                        return prompt
+                    }
+                    let budget = try AssistInferencePolicy.outputBudget(promptTokens: prompt.count,
+                        capacity: capacity, requested: requestedBudget)
+                    let started = ContinuousClock.now
+                    let passId = String(request.requestId.prefix(100)) + ":research-\(calls.count)"
+                    await monitor.beginGeneration(requestId: passId, promptTokens: prompt.count,
+                                                  contextCapacity: capacity, elapsedMs: 0)
+                    let decoded: AssistDecodedGeneration
+                    do {
+                        decoded = try await Self.consumeGeneration(request: request, prompt: prompt, budget: budget,
+                            capacity: capacity, modelName: modelName, engine: engine, tokenizer: tokenizer,
+                            stopTokens: stops, started: started, monitor: monitor, onProgress: { _ in },
+                            emitPublicProgress: false, deadline: deadline, monitorRequestId: passId)
+                    } catch is CancellationError { throw CancellationError() }
+                    catch let policy as AssistInferenceError { throw policy }
+                    catch { throw AssistAgentEngineFailure(cause: error) }
+                    await monitor.endGeneration(requestId: passId, promptTokens: decoded.result.promptTokens,
+                        generatedTokens: decoded.result.generatedTokens, elapsedMs: decoded.result.elapsedMs,
+                        ttftMs: decoded.result.ttftMs, finishReason: decoded.result.finishReason)
+                    try admission.check()
+                    try await service.checkResearch(ownedLease)
+                    if decoded.result.finishReason == "cancelled" { throw CancellationError() }
+                    await monitor.transition(phase: "generating", code: "PHASE_CHANGED")
+                    return AssistAgentModelTurn(rawText: decoded.result.text,
+                        stoppedAtToolResponse: decoded.stoppedToken == 50,
+                        completed: decoded.result.finishReason == "eos", value: decoded.result)
+                }, perform: { call in
+                    try admission.check()
+                    return try await service.performResearch(call, lease: ownedLease)
+                }, isCancelled: { admission.isCancelled })
+            try admission.check()
+            try await service.checkResearch(ownedLease)
+            struct Output: Encodable {
+                let schemaVersion = 1
+                let requestId: String
+                let text: String
+                let sources: [AssistResearchSource]
+                let degraded: Bool
+            }
+            let output = try AssistJSON.encode(Output(requestId: request.requestId,
+                text: outcome.visibleText, sources: outcome.sources, degraded: outcome.degraded))
+            await service.endResearch(ownedLease, preserveSources: true)
+            await monitor.transition(phase: "ready", code: "PHASE_CHANGED")
+            try Task.checkCancellation()
+            try admission.check()
+            return output
+        } catch let failure as AssistAgentEngineFailure {
+            if let lease { await service.endResearch(lease, preserveSources: false) }
+            await service.discardResearchSources(requestId: request.requestId)
+            clearResidentIdentity()
+            lastError = failure.cause.localizedDescription
+            await monitor.setContextCapacity(nil)
+            await monitor.transition(phase: "failed", code: "GENERATION_FAILED", severity: "critical")
+            throw failure.cause
+        } catch {
+            if let lease { await service.endResearch(lease, preserveSources: false) }
+            await service.discardResearchSources(requestId: request.requestId)
+            await monitor.transition(phase: "ready", code: "GENERATION_REJECTED", severity: "warning")
+            throw error
+        }
+    }
+
+    private func startDeviceToolGeneration(
+        _ request: AssistGenerationRequest, allowedTools: Set<AssistToolName>,
+        broker: AssistToolTransactionCoordinator, admission: AssistAgentAdmission,
+        onToolActivity: @escaping @Sendable (String) -> Void
+    ) async throws -> String {
         operationInFlight = true
         phase = .generating
         lastError = nil
         let task = Task {
             try await self.runDeviceToolGeneration(
-                request, broker: broker, admission: admission, onToolActivity: onToolActivity)
+                request, allowedTools: allowedTools, broker: broker,
+                admission: admission, onToolActivity: onToolActivity)
         }
         generationTask = task
         return try await task.value
     }
 
     private func runDeviceToolGeneration(
-        _ request: AssistGenerationRequest, broker: AssistToolTransactionCoordinator,
+        _ request: AssistGenerationRequest, allowedTools: Set<AssistToolName>, broker: AssistToolTransactionCoordinator,
         admission: AssistAgentAdmission, onToolActivity: @escaping @Sendable (String) -> Void
     ) async throws -> String {
         defer {
@@ -593,20 +818,29 @@ private actor AssistInferenceCoordinator {
         let deadline = ContinuousClock.now.advanced(by: .seconds(180))
         do {
             try admission.check()
-            try Self.validateDeviceToolTokenizer(tokenizer, request: request, chatTemplate: agentChatTemplate)
+            try await AssistInferencePreparation.perform(check: { try admission.check() }) {
+                try Self.validateDeviceToolTokenizer(tokenizer, request: request, chatTemplate: agentChatTemplate,
+                                                     allowedTools: allowedTools)
+            }
             let outcome = try await AssistDeviceToolRun.run(
-                request: request, deadline: deadline, model: { messages, requestedBudget, calls in
+                request: request, deadline: deadline, allowedTools: allowedTools, model: { messages, requestedBudget, calls in
                     try Task.checkCancellation()
                     try admission.check()
-                    let prompt = try tokenizer.applyChatTemplate(
-                        messages: messages, chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
-                        truncation: false, maxLength: nil, tools: AssistDeviceToolAdapter.closedToolSchema(),
-                        additionalContext: AssistGemmaToolAdapter.additionalContext)
-                    let rendered = tokenizer.decode(tokens: prompt, skipSpecialTokens: false)
-                    if calls.isEmpty { try AssistDeviceToolAdapter.validateRenderedPlanningPrompt(rendered) }
-                    else { try AssistDeviceToolAdapter.validateRenderedContinuationPrompt(rendered, calls: calls) }
-                    guard prompt.allSatisfy({ $0 >= 0 && $0 <= Int(Int32.max) }) else {
-                        throw AssistInferenceError.invalid("Jeton des outils hors de la plage native.")
+                    let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
+                        let prompt = try tokenizer.applyChatTemplate(
+                            messages: messages, chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
+                            truncation: false, maxLength: nil, tools: AssistDeviceToolAdapter.closedToolSchema(allowedTools: allowedTools),
+                            additionalContext: AssistGemmaToolAdapter.additionalContext)
+                        let rendered = tokenizer.decode(tokens: prompt, skipSpecialTokens: false)
+                        if calls.isEmpty {
+                            try AssistDeviceToolAdapter.validateRenderedPlanningPrompt(rendered, allowedTools: allowedTools)
+                        } else {
+                            try AssistDeviceToolAdapter.validateRenderedContinuationPrompt(rendered, calls: calls, allowedTools: allowedTools)
+                        }
+                        guard prompt.allSatisfy({ $0 >= 0 && $0 <= Int(Int32.max) }) else {
+                            throw AssistInferenceError.invalid("Jeton des outils hors de la plage native.")
+                        }
+                        return prompt
                     }
                     let budget = try AssistInferencePolicy.outputBudget(
                         promptTokens: prompt.count, capacity: capacity, requested: requestedBudget)
@@ -638,6 +872,7 @@ private actor AssistInferenceCoordinator {
                 }, perform: { call in
                     try Task.checkCancellation()
                     try admission.check()
+                    guard allowedTools.contains(call.name) else { throw AssistToolContractError.invalidArguments }
                     do {
                         return try await broker.perform(call: call, requestId: request.requestId,
                                                         admission: admission, onActivity: onToolActivity)
@@ -658,7 +893,8 @@ private actor AssistInferenceCoordinator {
                 promptTokens: result.promptTokens, elapsedMs: result.elapsedMs, ttftMs: result.ttftMs,
                 finishReason: result.finishReason, requestedMaxTokens: result.requestedMaxTokens,
                 effectiveMaxTokens: result.effectiveMaxTokens, peakPhysicalFootprintBytes: result.peakPhysicalFootprintBytes,
-                numericalDiagnostics: nil, agentTools: true)
+                numericalDiagnostics: nil, agentTools: true,
+                weather: outcome.weather.isEmpty ? nil : outcome.weather)
             await monitor.transition(phase: "ready", code: "PHASE_CHANGED")
             return try AssistJSON.encode(result)
         } catch let failure as AssistAgentEngineFailure {
@@ -674,7 +910,8 @@ private actor AssistInferenceCoordinator {
     }
 
     private static func validateDeviceToolTokenizer(
-        _ tokenizer: any Tokenizers.Tokenizer, request: AssistGenerationRequest, chatTemplate: String
+        _ tokenizer: any Tokenizers.Tokenizer, request: AssistGenerationRequest, chatTemplate: String,
+        allowedTools: Set<AssistToolName>
     ) throws {
         // Same hash-bound canonical dialect as the existing read-only path.
         try validateAgentTokenizer(tokenizer, request: request, scope: .today(), chatTemplate: chatTemplate)
@@ -682,15 +919,18 @@ private actor AssistInferenceCoordinator {
         func render(_ messages: [[String: any Sendable]]) throws -> String {
             let tokens = try tokenizer.applyChatTemplate(
                 messages: messages, chatTemplate: .literal(chatTemplate), addGenerationPrompt: true,
-                truncation: false, maxLength: nil, tools: AssistDeviceToolAdapter.closedToolSchema(),
+                truncation: false, maxLength: nil, tools: AssistDeviceToolAdapter.closedToolSchema(allowedTools: allowedTools),
                 additionalContext: AssistGemmaToolAdapter.additionalContext)
             return tokenizer.decode(tokens: tokens, skipSpecialTokens: false)
         }
-        try AssistDeviceToolAdapter.validateRenderedPlanningPrompt(render(messages))
+        try AssistDeviceToolAdapter.validateRenderedPlanningPrompt(render(messages), allowedTools: allowedTools)
+        // The baseline probe still qualifies the canonical dialect; a recipe
+        // cannot silently add its probe capability to the selected tool set.
+        guard allowedTools.contains(.device_capabilities) else { return }
         let call = AssistDeviceToolCall(name: .device_capabilities, arguments: [:])
         let continuation = try AssistDeviceToolAdapter.continuationMessages(
             messages: messages, call: call, result: .object(["available": .bool(true)]))
-        try AssistDeviceToolAdapter.validateRenderedContinuationPrompt(render(continuation), calls: [call])
+        try AssistDeviceToolAdapter.validateRenderedContinuationPrompt(render(continuation), calls: [call], allowedTools: allowedTools)
     }
 
     private func runCalendarGeneration(
@@ -715,26 +955,31 @@ private actor AssistInferenceCoordinator {
         let deadline = ContinuousClock.now.advanced(by: .seconds(60))
         do {
             try admission.check()
-            try Self.validateAgentTokenizer(tokenizer, request: request, scope: scope, chatTemplate: agentChatTemplate)
+            try await AssistInferencePreparation.perform(check: { try admission.check() }) {
+                try Self.validateAgentTokenizer(tokenizer, request: request, scope: scope, chatTemplate: agentChatTemplate)
+            }
             let outcome = try await AssistAgentRunController.run(
                 request: request, scope: scope, deadline: deadline,
                 model: { messages, requestedBudget, planning in
                     try Task.checkCancellation()
                     try admission.check()
-                    let prompt = try tokenizer.applyChatTemplate(
-                        messages: messages, chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
-                        truncation: false, maxLength: nil,
-                        tools: AssistGemmaToolAdapter.closedToolSchema(scope: scope),
-                        additionalContext: AssistGemmaToolAdapter.additionalContext)
-                    let rendered = tokenizer.decode(tokens: prompt, skipSpecialTokens: false)
-                    if planning {
-                        try AssistGemmaToolAdapter.validateRenderedPlanningPrompt(rendered, scope: scope)
-                    } else {
-                        try AssistGemmaToolAdapter.validateRenderedContinuationPrompt(
-                            rendered, call: .init(startISO: scope.startISO, endISO: scope.endISO, limit: 5), scope: scope)
-                    }
-                    guard prompt.allSatisfy({ $0 >= 0 && $0 <= Int(Int32.max) }) else {
-                        throw AssistInferenceError.invalid("Jeton agent hors de la plage native.")
+                    let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
+                        let prompt = try tokenizer.applyChatTemplate(
+                            messages: messages, chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
+                            truncation: false, maxLength: nil,
+                            tools: AssistGemmaToolAdapter.closedToolSchema(scope: scope),
+                            additionalContext: AssistGemmaToolAdapter.additionalContext)
+                        let rendered = tokenizer.decode(tokens: prompt, skipSpecialTokens: false)
+                        if planning {
+                            try AssistGemmaToolAdapter.validateRenderedPlanningPrompt(rendered, scope: scope)
+                        } else {
+                            try AssistGemmaToolAdapter.validateRenderedContinuationPrompt(
+                                rendered, call: .init(startISO: scope.startISO, endISO: scope.endISO, limit: 5), scope: scope)
+                        }
+                        guard prompt.allSatisfy({ $0 >= 0 && $0 <= Int(Int32.max) }) else {
+                            throw AssistInferenceError.invalid("Jeton agent hors de la plage native.")
+                        }
+                        return prompt
                     }
                     if planning {
                         guard capacity - prompt.count >= AssistAgentRunController.planningTokenBudget
@@ -853,7 +1098,8 @@ private actor AssistInferenceCoordinator {
     }
 
     private func runGeneration(
-        _ request: AssistGenerationRequest, onProgress: @escaping @Sendable (String) -> Void
+        _ request: AssistGenerationRequest, admission: AssistAgentAdmission,
+        onProgress: @escaping @Sendable (String) -> Void
     ) async throws -> String {
         defer {
             generationTask = nil
@@ -863,7 +1109,9 @@ private actor AssistInferenceCoordinator {
         guard let engine, let tokenizer else { throw AssistInferenceError.notLoaded }
         let started = ContinuousClock().now
         let messages: [Tokenizers.Message] = request.messages.map { ["role": $0.role, "content": $0.content] }
-        let prompt = try tokenizer.applyChatTemplate(messages: messages)
+        let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
+            try tokenizer.applyChatTemplate(messages: messages)
+        }
         let budget = try AssistInferencePolicy.outputBudget(
             promptTokens: prompt.count, capacity: capacity, requested: request.maxTokens
         )

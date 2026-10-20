@@ -1,3 +1,5 @@
+import type { AppleForecast } from './applePlacesProtocol';
+
 export type Message = { role: 'user' | 'assistant'; content: string };
 export type Phase =
   | 'idle'
@@ -44,6 +46,7 @@ export type CalendarAgentTrace = {
   possiblyTruncated: boolean;
 };
 export type GenerationResult = Progress & {
+  weather?: AppleForecast[];
   finishReason: string;
   aneExecution: 'unverified';
   ttftMs?: number | null;

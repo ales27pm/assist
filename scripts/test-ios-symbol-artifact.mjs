@@ -6,8 +6,10 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rename,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
@@ -21,6 +23,26 @@ const packageSymbols = path.join(scriptsDirectory, 'package-ios-symbols.mjs');
 const verifySymbols = path.join(scriptsDirectory, 'verify-ios-symbol-artifact.mjs');
 const UUID = '4A12E79E-80DB-3AEF-85A4-0CF10D0705EF';
 const REVISION = '1129342d1c7bd95ba20d4f9a45da7587010a5467';
+const SHARE_UUID = '11111111-2222-3333-4444-555555555555';
+const WIDGET_UUID = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE';
+
+function fixtureProject({extensions = false, partial = false} = {}) {
+  const names = ['Assist', ...(extensions ? ['AssistShare', ...(partial ? [] : ['AssistWidget'])] : [])];
+  const objects = {PBXNativeTarget: [], XCConfigurationList: [], XCBuildConfiguration: []};
+  const identifier = index => `A${String(index).padStart(23, '0')}`;
+  for (const [index, name] of names.entries()) {
+    const target = identifier(index * 10 + 1);
+    const list = identifier(index * 10 + 2);
+    const config = identifier(index * 10 + 3);
+    const suffix = name === 'AssistShare' ? '.share' : name === 'AssistWidget' ? '.widget' : '';
+    objects.PBXNativeTarget.push(`${target} = {isa = PBXNativeTarget; name = ${name}; productType = "com.apple.product-type.${index === 0 ? 'application' : 'app-extension'}"; buildConfigurationList = ${list}; };`);
+    objects.XCConfigurationList.push(`${list} = {isa = XCConfigurationList; buildConfigurations = (${config},); };`);
+    objects.XCBuildConfiguration.push(`${config} = {isa = XCBuildConfiguration; name = Release; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist${suffix}; MARKETING_VERSION = 1.0.0; CURRENT_PROJECT_VERSION = ${extensions ? 29 : 27}; }; };`);
+  }
+  // Deliberately different project/global values must not pollute target identity.
+  objects.XCBuildConfiguration.push(`${identifier(99)} = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = unrelated.global.value; MARKETING_VERSION = 9.9.9; CURRENT_PROJECT_VERSION = 999; }; };`);
+  return `// !$*UTF8*$!\n{\narchiveVersion = 1;\nclasses = {};\nobjectVersion = 54;\nobjects = {\n${Object.entries(objects).map(([section, rows]) => `/* Begin ${section} section */\n${rows.join('\n')}\n/* End ${section} section */`).join('\n')}\n};\nrootObject = ${identifier(1)};\n}\n`;
+}
 
 function runNode(script, args, environment) {
   return spawnSync(process.execPath, [script, ...args], {
@@ -30,7 +52,7 @@ function runNode(script, args, environment) {
   });
 }
 
-async function makeFixture({includeDsym = true} = {}) {
+async function makeFixture({includeDsym = true, extensions = false, partial = false} = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'assist-symbol-fixture-'));
   const bin = path.join(root, 'bin');
   const iosRoot = path.join(root, 'ios');
@@ -39,21 +61,20 @@ async function makeFixture({includeDsym = true} = {}) {
   await mkdir(bin, {recursive: true});
   await writeFile(
     path.join(iosRoot, 'Assist', 'Supporting', 'Expo.plist'),
-    '<plist><dict><key>EXUpdatesRuntimeVersion</key><string>1.0.0-native27</string></dict></plist>\n',
+    `<plist><dict><key>EXUpdatesRuntimeVersion</key><string>1.0.0-native${extensions ? 29 : 27}</string></dict></plist>\n`,
   );
   await writeFile(
     path.join(iosRoot, 'Assist.xcodeproj', 'project.pbxproj'),
-    [
-      'PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist;',
-      'MARKETING_VERSION = 1.0.0;',
-      'CURRENT_PROJECT_VERSION = 27;',
-    ].join('\n'),
+    fixtureProject({extensions, partial}),
   );
   await writeFile(
     path.join(bin, 'dwarfdump'),
-    `#!/bin/sh\nprintf 'UUID: ${UUID} (arm64) %s\\n' "$2"\n`,
+    `#!${process.execPath}\nconst fs = require('node:fs'); const file = process.argv[3]; const data = fs.readFileSync(file, 'utf8'); const uuid = data.match(/[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}/)?.[0] ?? '${UUID}'; console.log('UUID: ' + uuid + ' (arm64) ' + file);\n`,
   );
   await chmod(path.join(bin, 'dwarfdump'), 0o755);
+  await writeFile(path.join(bin, 'plutil'), `#!${process.execPath}\nprocess.stdout.write(require('node:fs').readFileSync(process.argv.at(-1), 'utf8'));\n`);
+  await chmod(path.join(bin, 'plutil'), 0o755);
+  const products = path.join(iosRoot, 'build', 'Build', 'Products', 'Release-iphoneos');
   if (includeDsym) {
     const dwarf = path.join(
       iosRoot,
@@ -70,9 +91,24 @@ async function makeFixture({includeDsym = true} = {}) {
     await mkdir(path.dirname(dwarf), {recursive: true});
     await writeFile(dwarf, 'synthetic Assist DWARF data\n');
   }
+  if (extensions) {
+    const application = path.join(products, 'Assist.app');
+    for (const [name, suffix, uuid] of [['Assist', '', UUID], ['AssistShare', '.share', SHARE_UUID], ['AssistWidget', '.widget', WIDGET_UUID]]) {
+      const product = name === 'Assist' ? application : path.join(application, 'PlugIns', `${name}.appex`);
+      await mkdir(product, {recursive: true});
+      await writeFile(path.join(product, 'Info.plist'), JSON.stringify({CFBundleIdentifier: `org.27pm.assist${suffix}`, CFBundleShortVersionString: '1.0.0', CFBundleVersion: '29', CFBundleExecutable: name}));
+      await writeFile(path.join(product, name), `synthetic executable UUID ${uuid}\n`);
+      if (name !== 'Assist' && includeDsym) {
+        const dwarf = path.join(products, `${name}.appex.dSYM`, 'Contents', 'Resources', 'DWARF', name);
+        await mkdir(path.dirname(dwarf), {recursive: true});
+        await writeFile(dwarf, `synthetic symbols UUID ${uuid}\n`);
+      }
+    }
+  }
   return {
     artifact: path.join(root, 'artifacts', 'ios', 'assist-symbols.zip'),
     environment: {...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`},
+    products,
     root,
   };
 }
@@ -106,6 +142,7 @@ test('packages and verifies an arm64 dSYM with its build identity', async t => {
     sourceRevision: REVISION,
   });
   assert.deepEqual(manifest.dSYM.uuids, [{architecture: 'arm64', uuid: UUID}]);
+  assert.deepEqual(Object.keys(manifest), ['schemaVersion', 'build', 'dSYM']);
 
   const verified = runNode(verifySymbols, [fixture.artifact], fixture.environment);
   assert.equal(verified.status, 0, verified.stderr);
@@ -237,4 +274,208 @@ test('refuses a manifest with an abbreviated source revision', async t => {
   const verified = runNode(verifySymbols, [tampered], fixture.environment);
   assert.notEqual(verified.status, 0);
   assert.match(verified.stderr, /complete build identity/);
+});
+
+function packageFixture(fixture) {
+  return runNode(packageSymbols, ['--project-root', fixture.root, '--source-revision', REVISION], fixture.environment);
+}
+
+function readManifest(fixture) {
+  return JSON.parse(spawnSync('unzip', ['-p', fixture.artifact, 'symbol-identity.json'], {encoding: 'utf8'}).stdout);
+}
+
+async function tamperArtifact(fixture, transform) {
+  const expanded = path.join(fixture.root, 'tamper-expanded');
+  assert.equal(spawnSync('unzip', ['-qq', fixture.artifact, '-d', expanded]).status, 0);
+  const manifestPath = path.join(expanded, 'symbol-identity.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  await transform(manifest, expanded);
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  const artifact = path.join(fixture.root, 'tampered.zip');
+  assert.equal(spawnSync('zip', ['-q', '-y', '-r', artifact, ...await readdir(expanded)], {cwd: expanded}).status, 0);
+  return runNode(verifySymbols, [artifact], fixture.environment);
+}
+
+test('packages and verifies exactly three matching product symbol identities for native29', async t => {
+  const fixture = await makeFixture({extensions: true});
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  const packaged = packageFixture(fixture);
+  assert.equal(packaged.status, 0, packaged.stderr);
+  const manifest = readManifest(fixture);
+  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.build.buildNumber, '29');
+  assert.equal(manifest.build.runtimeVersion, '1.0.0-native29');
+  assert.deepEqual(manifest.extensions.map(extension => [extension.product, extension.bundleIdentifier, extension.dSYM.uuids]), [
+    ['AssistShare.appex', 'org.27pm.assist.share', [{architecture: 'arm64', uuid: SHARE_UUID}]],
+    ['AssistWidget.appex', 'org.27pm.assist.widget', [{architecture: 'arm64', uuid: WIDGET_UUID}]],
+  ]);
+  assert.ok(manifest.extensions.every(extension => /^[0-9a-f]{64}$/.test(extension.executableSHA256)));
+  const entries = spawnSync('unzip', ['-Z1', fixture.artifact], {encoding: 'utf8'}).stdout.trim().split('\n');
+  assert.deepEqual([...new Set(entries.map(entry => entry.split('/')[0]))].sort(), [
+    'Assist.app.dSYM', 'AssistShare.appex.dSYM', 'AssistWidget.appex.dSYM', 'symbol-identity.json',
+  ]);
+  assert.ok(entries.length < 32, 'the compressed artifact contains symbol bundles, not application/model payloads');
+  const verified = runNode(verifySymbols, [fixture.artifact], fixture.environment);
+  assert.equal(verified.status, 0, verified.stderr);
+  assert.match(verified.stdout, /Verified extension dSYM: AssistShare.appex.dSYM/);
+  assert.match(verified.stdout, /Verified extension dSYM: AssistWidget.appex.dSYM/);
+});
+
+test('packages matching products and symbols from an xcarchive layout', async t => {
+  const fixture = await makeFixture({extensions: true});
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  const archive = path.join(fixture.root, 'ios', 'build', 'Assist.xcarchive');
+  await mkdir(path.join(archive, 'dSYMs'), {recursive: true});
+  await mkdir(path.join(archive, 'Products', 'Applications'), {recursive: true});
+  for (const product of ['Assist.app.dSYM', 'AssistShare.appex.dSYM', 'AssistWidget.appex.dSYM']) {
+    await rename(path.join(fixture.products, product), path.join(archive, 'dSYMs', product));
+  }
+  await rename(path.join(fixture.products, 'Assist.app'), path.join(archive, 'Products', 'Applications', 'Assist.app'));
+  const packaged = packageFixture(fixture);
+  assert.equal(packaged.status, 0, packaged.stderr);
+  assert.equal(runNode(verifySymbols, [fixture.artifact], fixture.environment).status, 0);
+});
+
+for (const [label, relative, expected] of [
+  ['missing extension dSYM', 'AssistShare.appex.dSYM', /ENOENT/],
+  ['missing embedded extension', 'Assist.app/PlugIns/AssistWidget.appex', /extension products do not match/],
+  ['missing main app', 'Assist.app', /built Assist.app is required/],
+]) {
+  test(`refuses ${label} rather than silently emitting a partial symbol artifact`, async t => {
+    const fixture = await makeFixture({extensions: true});
+    t.after(() => rm(fixture.root, {force: true, recursive: true}));
+    await rm(path.join(fixture.products, relative), {recursive: true});
+    const packaged = packageFixture(fixture);
+    assert.notEqual(packaged.status, 0);
+    assert.match(packaged.stderr, expected);
+  });
+}
+
+for (const [label, relative] of [
+  ['main app', 'Assist.app/Assist'],
+  ['share extension', 'Assist.app/PlugIns/AssistShare.appex/AssistShare'],
+  ['widget extension', 'Assist.app/PlugIns/AssistWidget.appex/AssistWidget'],
+]) {
+  test(`rejects ${label} binary/dSYM UUID mismatch`, async t => {
+    const fixture = await makeFixture({extensions: true});
+    t.after(() => rm(fixture.root, {force: true, recursive: true}));
+    await writeFile(path.join(fixture.products, relative), 'mismatching UUID 99999999-9999-9999-9999-999999999999\n');
+    const packaged = packageFixture(fixture);
+    assert.notEqual(packaged.status, 0);
+    assert.match(packaged.stderr, /executable and dSYM UUIDs do not match/);
+  });
+}
+
+test('rejects an unexpected embedded extension product', async t => {
+  const fixture = await makeFixture({extensions: true});
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  await mkdir(path.join(fixture.products, 'Assist.app', 'PlugIns', 'Unknown.appex'));
+  const packaged = packageFixture(fixture);
+  assert.notEqual(packaged.status, 0);
+  assert.match(packaged.stderr, /extension products do not match/);
+});
+
+test('rejects a partial pair of source extension targets', async t => {
+  const fixture = await makeFixture({extensions: true, partial: true});
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  const packaged = packageFixture(fixture);
+  assert.notEqual(packaged.status, 0);
+  assert.match(packaged.stderr, /both AssistShare and AssistWidget native extension targets/);
+});
+
+for (const [label, field, value] of [
+  ['bundle', 'CFBundleIdentifier', 'org.27pm.other'],
+  ['version', 'CFBundleShortVersionString', '2.0.0'],
+  ['build', 'CFBundleVersion', '28'],
+  ['executable', 'CFBundleExecutable', '../Assist'],
+]) {
+  test(`rejects extension ${label} identity mismatch`, async t => {
+    const fixture = await makeFixture({extensions: true});
+    t.after(() => rm(fixture.root, {force: true, recursive: true}));
+    const infoPath = path.join(fixture.products, 'Assist.app', 'PlugIns', 'AssistShare.appex', 'Info.plist');
+    const info = JSON.parse(await readFile(infoPath, 'utf8'));
+    info[field] = value;
+    await writeFile(infoPath, JSON.stringify(info));
+    const packaged = packageFixture(fixture);
+    assert.notEqual(packaged.status, 0);
+    assert.match(packaged.stderr, /built AssistShare.appex identity does not match/);
+  });
+}
+
+test('rejects symlinks before copying any symbol payload', async t => {
+  const fixture = await makeFixture({extensions: true});
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  await symlink(path.join(fixture.root, 'ios', 'Assist', 'Supporting', 'Expo.plist'), path.join(fixture.products, 'AssistShare.appex.dSYM', 'external'));
+  const packaged = packageFixture(fixture);
+  assert.notEqual(packaged.status, 0);
+  assert.match(packaged.stderr, /must not contain symlinks/);
+});
+
+for (const [label, transform, expected] of [
+  ['partial extension manifest', manifest => manifest.extensions.pop(), /both known extensions/],
+  ['empty extension manifest', manifest => { manifest.extensions = []; }, /both known extensions/],
+  ['unknown extension identity', manifest => { manifest.extensions[0].product = 'Other.appex'; }, /unknown, duplicated/],
+  ['duplicate extension identity', manifest => { manifest.extensions[1] = manifest.extensions[0]; }, /unknown, duplicated/],
+  ['extension version drift', manifest => { manifest.extensions[0].buildNumber = '28'; }, /does not match/],
+  ['noncanonical DWARF path', manifest => { manifest.extensions[0].dSYM.dwarfPath = '../AssistShare'; }, /valid arm64 dSYM identity/],
+  ['extension hash corruption', manifest => { manifest.extensions[0].dSYM.sha256 = '0'.repeat(64); }, /SHA-256 does not match/],
+  ['extension UUID corruption', manifest => { manifest.extensions[0].dSYM.uuids[0].uuid = UUID; }, /UUID list does not match/],
+  ['missing extension declaration', manifest => { delete manifest.extensions; }, /unexpected ZIP entry/],
+]) {
+  test(`verifier refuses ${label}`, async t => {
+    const fixture = await makeFixture({extensions: true});
+    t.after(() => rm(fixture.root, {force: true, recursive: true}));
+    const packaged = packageFixture(fixture);
+    assert.equal(packaged.status, 0, packaged.stderr);
+    const verified = await tamperArtifact(fixture, transform);
+    assert.notEqual(verified.status, 0);
+    assert.match(verified.stderr, expected);
+  });
+}
+
+test('verifier rejects an extraneous root outside the declared symbol bundles', async t => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  assert.equal(packageFixture(fixture).status, 0);
+  const verified = await tamperArtifact(fixture, async (_, expanded) => writeFile(path.join(expanded, 'private-data.txt'), 'not symbols'));
+  assert.notEqual(verified.status, 0);
+  assert.match(verified.stderr, /unexpected ZIP entry/);
+});
+
+test('verifier rejects symlink entries before extraction', async t => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  assert.equal(packageFixture(fixture).status, 0);
+  const verified = await tamperArtifact(fixture, async (_, expanded) => symlink('/tmp/outside-symbols', path.join(expanded, 'Assist.app.dSYM', 'unsafe-link')));
+  assert.notEqual(verified.status, 0);
+  assert.match(verified.stderr, /symlink/);
+});
+
+test('packager bounds compressed output and preserves an existing artifact on failure', async t => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  await mkdir(path.dirname(fixture.artifact), {recursive: true});
+  await writeFile(fixture.artifact, 'keep previous verified artifact');
+  const zip = path.join(fixture.root, 'bin', 'zip');
+  await writeFile(zip, `#!${process.execPath}\nconst fs = require('node:fs'); fs.writeFileSync(process.argv[4], ''); fs.truncateSync(process.argv[4], 512 * 1024 * 1024 + 1);\n`);
+  await chmod(zip, 0o755);
+  const packaged = packageFixture(fixture);
+  assert.notEqual(packaged.status, 0);
+  assert.match(packaged.stderr, /compressed symbol artifact exceeds the size limit/);
+  assert.equal(await readFile(fixture.artifact, 'utf8'), 'keep previous verified artifact');
+});
+
+test('verifier bounds declared uncompressed ZIP sizes before extraction', async t => {
+  const fixture = await makeFixture();
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  assert.equal(packageFixture(fixture).status, 0);
+  const bytes = await readFile(fixture.artifact);
+  const signature = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+  const central = bytes.indexOf(signature);
+  assert.ok(central >= 0);
+  bytes.writeUInt32LE(2 * 1024 * 1024 * 1024, central + 24);
+  await writeFile(fixture.artifact, bytes);
+  const verified = runNode(verifySymbols, [fixture.artifact], fixture.environment);
+  assert.notEqual(verified.status, 0);
+  assert.match(verified.stderr, /uncompressed size limit/);
 });

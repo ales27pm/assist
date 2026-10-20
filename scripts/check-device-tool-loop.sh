@@ -17,7 +17,9 @@ swiftc -swift-version 6 -strict-concurrency=complete -warnings-as-errors -parse-
   mobile/ios/Assist/Inference/AssistGemmaToolAdapter.swift \
   mobile/ios/Assist/Inference/AssistAgentRun.swift \
   mobile/ios/Assist/Inference/AssistToolContracts.swift \
+  mobile/ios/Assist/Inference/AssistExtendedTools.swift \
   mobile/ios/Assist/Inference/AssistDeviceToolAdapter.swift \
   mobile/ios/Assist/Inference/AssistDeviceToolRun.swift \
+  mobile/ios/Assist/Inference/AssistToolHost.swift \
   scripts/check-device-tool-loop.swift -o "$ASSIST_TOOL_LOOP_CHECK_DIR/check-device-tool-loop"
 "$ASSIST_TOOL_LOOP_CHECK_DIR/check-device-tool-loop"

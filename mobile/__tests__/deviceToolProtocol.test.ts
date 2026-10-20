@@ -5,6 +5,7 @@ import {
   DeviceToolReceipt,
   DeviceToolTransaction,
   deviceToolNames,
+  legacyDeviceToolNames,
   deviceToolPublicAnswer,
   interruptDeviceToolActivity,
   parseDeviceToolActivity,
@@ -18,7 +19,7 @@ const capabilities = {
   schemaVersion: 1,
   protocolVersion: 1,
   confirmation: 'all_accesses',
-  tools: [...deviceToolNames],
+  tools: [...legacyDeviceToolNames],
 };
 function encode(value: unknown): string {
   return JSON.stringify(value) ?? 'undefined';
@@ -81,11 +82,12 @@ const generation = {
 
 describe('closed native handshake', () => {
   test('requires exactly the thirteen known tools and explicit consent protocol', () => {
-    expect(deviceToolNames).toHaveLength(13);
+    expect(deviceToolNames).toHaveLength(31);
+    expect(legacyDeviceToolNames).toHaveLength(13);
     expect(parseDeviceToolCapabilities(encode(capabilities))).toBe(true);
     expect(
       parseDeviceToolCapabilities(
-        encode({ ...capabilities, tools: [...deviceToolNames].reverse() }),
+        encode({ ...capabilities, tools: [...legacyDeviceToolNames].reverse() }),
       ),
     ).toBe(true);
   });
@@ -137,9 +139,10 @@ describe('strict native activity and receipt', () => {
       'calendar_create',
       'reminder_create',
       'notification_schedule',
+      'alarm_create', 'alarm_update', 'alarm_stop', 'alarm_cancel', 'document_index', 'document_unindex',
     ].includes(tool)
       ? 'write'
-      : ['photo_select', 'camera_capture', 'biometrics_authenticate'].includes(
+      : ['photo_select', 'camera_capture', 'biometrics_authenticate', 'text_translate', 'document_scan', 'document_export_pdf', 'document_preview', 'message_compose'].includes(
           tool,
         )
       ? 'interactive'
@@ -421,6 +424,17 @@ describe('immutable consent and interruption', () => {
       'Aucun nouvel essai automatique',
     );
   });
+  test.each(['document_scan', 'document_export_pdf', 'message_compose'] as const)(
+    'interruption preserves uncertainty after %s hands control to Apple', tool => {
+      const event = activity('executing', {tool, effect: 'interactive', receipt: undefined});
+      const stopped = interruptDeviceToolActivity(event);
+      expect(stopped.transaction.status).toBe('outcome_unknown');
+      expect(stopped.transaction.confirmationToken).toBeUndefined();
+      expect(stopped.transaction.receipt).toBeUndefined();
+      expect(interruptDeviceToolActivity(activity('awaiting_confirmation', {tool, effect: 'interactive'})).transaction.status).toBe('cancelled');
+      expect(deviceToolPublicAnswer('Message envoyé', [stopped])).toContain('Aucun nouvel essai automatique');
+    },
+  );
   test('stopping an unconfirmed proposal revokes its token without inventing an effect', () => {
     const stopped = interruptDeviceToolActivity(activity());
     expect(stopped.transaction.status).toBe('cancelled');
@@ -536,4 +550,49 @@ describe('confirmation, durable journal and final public result', () => {
       parseDeviceToolResult(encode({ ...generation, text: 'é'.repeat(4097) })),
     ).toThrow();
   });
+});
+
+const forecastEvidence = {
+  schemaVersion: 1,
+  requestId: 'operation-1',
+  coordinate: { latitude: 46.8139, longitude: -71.208 },
+  temperatureUnit: 'celsius',
+  retrievedAt: '2026-10-19T12:00:00Z',
+  attribution: {
+    serviceName: 'Apple Weather',
+    legalPageURL: 'https://weatherkit.apple.com/legal-attribution.html',
+    combinedMarkLightURL: 'https://weatherkit.apple.com/light.png',
+    combinedMarkDarkURL: 'https://weatherkit.apple.com/dark.png',
+    legalAttributionText: 'Apple Weather',
+  },
+  current: { date: '2026-10-19T12:00:00Z', condition: 'Clear', symbolName: 'sun.max', temperature: 10, apparentTemperature: 9, humidity: 0.5, windKilometersPerHour: 3 },
+  hourly: [], daily: [], forecastNotGuarantee: true,
+};
+
+test('a validated weather receipt binds its forecast to the native operation and survives final-only delivery', () => {
+  const event = activity('success', {
+    tool: 'weather_forecast', effect: 'read',
+    receipt: receipt({ tool: 'weather_forecast' }),
+    weather: forecastEvidence as DeviceToolTransaction['weather'],
+  });
+  expect(parseDeviceToolActivity(encode(event))).toEqual(event);
+  expect(parseDeviceToolResult(encode({ ...generation, weather: [forecastEvidence] })).weather).toEqual([forecastEvidence]);
+  expect(() => parseDeviceToolActivity(encode({ ...event, transaction: { ...event.transaction, weather: undefined } }))).toThrow();
+  expect(() => parseDeviceToolActivity(encode({ ...event, transaction: { ...event.transaction, weather: { ...forecastEvidence, requestId: 'another-operation' } } }))).toThrow();
+});
+
+test.each([
+  { ...forecastEvidence, coordinate: { latitude: 91, longitude: 0 } },
+  { ...forecastEvidence, temperatureUnit: 'kelvin' },
+  { ...forecastEvidence, forecastNotGuarantee: false },
+  { ...forecastEvidence, attribution: { ...forecastEvidence.attribution, combinedMarkLightURL: 'https://evil.example/apple.png' } },
+  { ...forecastEvidence, current: { ...forecastEvidence.current, humidity: 2 } },
+  { ...forecastEvidence, current: { ...forecastEvidence.current, condition: '<|tool_call>' } },
+  { ...forecastEvidence, extra: true },
+])('rejects malformed native weather evidence before it reaches cards or the presentation gate %#', weather => {
+  expect(() => parseDeviceToolResult(encode({ ...generation, weather: [weather] }))).toThrow();
+});
+test('rejects duplicate or oversized final weather receipt collections', () => {
+  expect(() => parseDeviceToolResult(encode({ ...generation, weather: [forecastEvidence, forecastEvidence] }))).toThrow();
+  expect(() => parseDeviceToolResult(encode({ ...generation, weather: Array(5).fill(forecastEvidence) }))).toThrow();
 });

@@ -34,6 +34,9 @@ jest.mock('../specs/NativeAssist', () => ({
     beginSpeech: jest.fn(),
     enqueueSpeech: jest.fn(),
     finishSpeech: jest.fn(),
+    getAdvancedVoiceState: jest.fn(),
+    importAdvancedVoicePack: jest.fn(),
+    setAdvancedVoiceBackend: jest.fn(),
   },
 }));
 const native = jest.mocked(NativeAssist!);
@@ -158,6 +161,31 @@ beforeEach(() => {
 afterEach(() => {
   jest.restoreAllMocks();
   jest.useRealTimers();
+});
+
+test('changing unavailable Apple recognition to a ready FluidAudio pack enables capture on returning to chat', async () => {
+  const advanced = (backend = 'apple', revision = 1) => JSON.stringify({
+    schemaVersion: 2, revision, selectedBackend: backend,
+    selectedVariant: 'redux', effectiveBackend: backend, ready: true,
+    resources: { pocket: true, redux: true, ultra: true, silero: true },
+    voice: 'estelle',
+  });
+  native.getVoiceStatus.mockResolvedValue(voiceState('idle', { recognitionAvailable: false }));
+  native.getAdvancedVoiceState.mockResolvedValue(advanced());
+  native.setAdvancedVoiceBackend.mockImplementation(async () => {
+    native.getVoiceStatus.mockResolvedValue(voiceState());
+    return advanced('fluid', 2);
+  });
+  await renderAsync(<AssistantScreen />);
+  expect(screen.getByRole('button', { name: 'Mode vocal' })).toBeDisabled();
+  await press('Réglages');
+  await press('Voix locale avancée');
+  await user.press(screen.getByRole('radio', { name: 'FluidAudio · Parakeet Redux' }));
+  await press('Retour aux réglages');
+  await press('Retour à la conversation');
+  expect(screen.getByRole('button', { name: 'Mode vocal' })).toBeEnabled();
+  await enter();
+  expect(native.startListening).toHaveBeenCalledTimes(1);
 });
 
 test('chat exposes a separate voice mode and preserves its keyboard draft through partial speech and exit', async () => {

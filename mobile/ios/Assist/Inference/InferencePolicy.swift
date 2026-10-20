@@ -17,6 +17,16 @@ enum AssistInferenceError: Error, LocalizedError {
 struct AssistMessage: Codable, Sendable {
     let role: String
     let content: String
+
+    init(role: String, content: String) { self.role = role; self.content = content }
+
+    private enum CodingKeys: String, CodingKey { case role, content }
+    init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        role = try fields.decode(String.self, forKey: .role)
+        content = try fields.decode(String.self, forKey: .content)
+        try AssistInferenceInputPolicy.validateMessage(self)
+    }
 }
 
 struct AssistGenerationRequest: Decodable, Sendable {
@@ -25,7 +35,40 @@ struct AssistGenerationRequest: Decodable, Sendable {
     let temperature: Double
     let maxTokens: Int?
 
+    init(requestId: String, messages: [AssistMessage], temperature: Double, maxTokens: Int?) {
+        self.requestId = requestId; self.messages = messages
+        self.temperature = temperature; self.maxTokens = maxTokens
+    }
+
+    private enum CodingKeys: String, CodingKey { case requestId, messages, temperature, maxTokens }
+    init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        requestId = try fields.decode(String.self, forKey: .requestId)
+        var entries = try fields.nestedUnkeyedContainer(forKey: .messages)
+        // JSONDecoder supplies an array count before decoding its messages.
+        // The incremental guard also bounds other Decoder implementations.
+        if let count = entries.count { try AssistInferenceInputPolicy.validateMessageCount(count) }
+        var decoded: [AssistMessage] = []
+        decoded.reserveCapacity(entries.count ?? 0)
+        while !entries.isAtEnd {
+            try AssistInferenceInputPolicy.validateMessageCount(decoded.count + 1)
+            decoded.append(try entries.decode(AssistMessage.self))
+        }
+        messages = decoded
+        temperature = try fields.decode(Double.self, forKey: .temperature)
+        maxTokens = try fields.decodeIfPresent(Int.self, forKey: .maxTokens)
+    }
+
+    static func decodeJSON(_ json: String) throws -> Self {
+        // Check the original UTF-8 view before allocating Data or decoding JSON.
+        try AssistInferenceInputPolicy.validateJSON(json)
+        let request = try JSONDecoder().decode(Self.self, from: Data(json.utf8))
+        try request.validate()
+        return request
+    }
+
     func validate() throws {
+        try AssistInferenceInputPolicy.validateMessages(messages)
         guard !requestId.isEmpty, requestId.utf8.count <= 128 else {
             throw AssistInferenceError.invalid("Identifiant de requête invalide.")
         }
@@ -40,6 +83,59 @@ struct AssistGenerationRequest: Decodable, Sendable {
         else {
             throw AssistInferenceError.invalid("Conversation invalide : messages user/assistant, terminés par user.")
         }
+    }
+}
+
+/// Resource admission is independent of the token budget: accepted text still
+/// uses the complete 32K export and the actual post-template token count.
+enum AssistInferenceInputPolicy {
+    static let maximumJSONBytes = 4 * 1_024 * 1_024
+    static let maximumMessages = 512
+    static let maximumMessageBytes = 1_024 * 1_024
+
+    static func validateJSON(_ json: String) throws {
+        guard json.utf8.count <= maximumJSONBytes else {
+            throw AssistInferenceError.invalid(
+                "La conversation dépasse 4 Mio de JSON UTF-8. Réduis le texte collé ou commence une nouvelle conversation ; aucun message n’a été tronqué.")
+        }
+    }
+
+    static func validateMessages(_ messages: [AssistMessage]) throws {
+        try validateMessageCount(messages.count)
+        for message in messages { try validateMessage(message) }
+    }
+
+    static func validateMessageCount(_ count: Int) throws {
+        guard count <= maximumMessages else {
+            throw AssistInferenceError.invalid(
+                "La conversation dépasse 512 messages. Commence une nouvelle conversation ; aucun message n’a été tronqué.")
+        }
+    }
+
+    static func validateMessage(_ message: AssistMessage) throws {
+        guard message.content.utf8.count <= maximumMessageBytes else {
+            throw AssistInferenceError.invalid(
+                "Un message dépasse 1 Mio de texte UTF-8. Réduis le texte collé ou partage-le en plusieurs demandes ; aucun message n’a été tronqué.")
+        }
+    }
+}
+
+/// Tokenizer is Sendable at the pinned package revision. Preparation suspends
+/// its owner while synchronous tokenization runs on the generic executor, so
+/// status/cancel can enter the owner. Cancellation drains this call before any
+/// engine submission; it cannot preempt the tokenizer's synchronous function.
+enum AssistInferencePreparation {
+    @concurrent
+    static func perform<Value: Sendable>(
+        check: @Sendable () throws -> Void,
+        _ prepare: @Sendable () throws -> Value
+    ) async throws -> Value {
+        try Task.checkCancellation()
+        try check()
+        let value = try prepare()
+        try Task.checkCancellation()
+        try check()
+        return value
     }
 }
 

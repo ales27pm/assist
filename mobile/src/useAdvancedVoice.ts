@@ -14,7 +14,7 @@ const unsupported =
   'La voix locale avancée nécessite une version compatible d’Assist sur iPhone.';
 
 /** Explicit Files imports only. This hook never captures, plays or downloads audio. */
-export function useAdvancedVoice() {
+export function useAdvancedVoice(onConfigurationChange?: () => void) {
   const supported = !!(
     NativeAssist &&
     typeof NativeAssist.getAdvancedVoiceState === 'function' &&
@@ -37,6 +37,8 @@ export function useAdvancedVoice() {
   const lifetime = useRef(0);
   const pending = useRef(false);
   const latest = useRef<AdvancedVoiceState | null>(null);
+  const configurationChanged = useRef(onConfigurationChange);
+  configurationChanged.current = onConfigurationChange;
   const invalidate = useCallback(() => {
     ++version.current;
     ++lifetime.current;
@@ -45,6 +47,7 @@ export function useAdvancedVoice() {
     if (latest.current && next.revision < latest.current.revision) return false;
     latest.current = next;
     setState(next);
+    configurationChanged.current?.();
     return true;
   }, []);
 

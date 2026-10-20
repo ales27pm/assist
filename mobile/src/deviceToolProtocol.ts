@@ -1,3 +1,5 @@
+import { extendedDeviceToolNames, extendedToolLabels, extendedToolEffect, interactiveMayCommit } from './nativeBundleTools';
+import { AppleForecast, appleCoordinate, parseAppleForecast } from './applePlacesProtocol';
 import {
   boundedIdentifier,
   GenerationResult,
@@ -18,7 +20,13 @@ export const deviceToolNames = [
   'biometrics_authenticate',
   'device_capabilities',
   'native_boundary',
+  'maps_search',
+  'maps_directions',
+  'weather_forecast',
+  ...extendedDeviceToolNames,
 ] as const;
+export const legacyDeviceToolNames = deviceToolNames.slice(0, 13);
+export const placesDeviceToolNames = deviceToolNames.slice(0, 16);
 export type DeviceToolName = (typeof deviceToolNames)[number];
 export type ToolPermission =
   | 'contacts'
@@ -36,6 +44,18 @@ export type DeviceToolReceipt = {
   completedAt: string;
   summary: ToolField[];
 };
+/** Recovery metadata only: an unknown journal entry is never executable. */
+export type UnknownToolOperationReceipt = {
+  operationId: string;
+  tool: null;
+  unknownToolName: string;
+  status: 'success' | 'outcome_unknown';
+  completedAt: string;
+  summary: ToolField[];
+};
+export type ToolOperationReceipt =
+  | DeviceToolReceipt
+  | UnknownToolOperationReceipt;
 export type DeviceToolTransaction = {
   id: string;
   revision: number;
@@ -54,6 +74,7 @@ export type DeviceToolTransaction = {
   confirmationToken?: string;
   capability?: ToolPermission;
   receipt?: DeviceToolReceipt;
+  weather?: AppleForecast;
 };
 export type DeviceToolActivity = {
   schemaVersion: 1;
@@ -62,6 +83,7 @@ export type DeviceToolActivity = {
 };
 
 export const deviceToolLabels: Record<DeviceToolName, string> = {
+  ...extendedToolLabels,
   contacts_search: 'Rechercher un contact',
   calendar_list: 'Consulter le calendrier',
   calendar_create: 'Créer un événement',
@@ -75,6 +97,9 @@ export const deviceToolLabels: Record<DeviceToolName, string> = {
   biometrics_authenticate: 'Demander une authentification',
   device_capabilities: 'Vérifier les accès iOS',
   native_boundary: 'Vérifier une capacité',
+  maps_search: 'Rechercher un lieu',
+  maps_directions: 'Estimer un trajet',
+  weather_forecast: 'Consulter la météo',
 };
 
 function object(value: unknown): Record<string, unknown> {
@@ -137,13 +162,14 @@ function decode(json: string) {
     throw new Error('Contrat outil trop volumineux.');
   return object(JSON.parse(json));
 }
-function receipt(value: unknown): value is DeviceToolReceipt {
+function receiptMetadata(value: unknown): boolean {
   const row = object(value);
   return (
     keys(row, ['operationId', 'tool', 'status', 'completedAt', 'summary']) &&
     boundedIdentifier(row.operationId) &&
-    tool(row.tool) &&
-    ['success', 'outcome_unknown'].includes(String(row.status)) &&
+    utf8Bytes(row.operationId) <= 128 &&
+    typeof row.status === 'string' &&
+    ['success', 'outcome_unknown'].includes(row.status) &&
     text(row.completedAt, 32) &&
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(
       row.completedAt,
@@ -154,6 +180,9 @@ function receipt(value: unknown): value is DeviceToolReceipt {
       row.completedAt.replace('.000Z', 'Z') &&
     fields(row.summary)
   );
+}
+function receipt(value: unknown): value is DeviceToolReceipt {
+  return receiptMetadata(value) && tool(object(value).tool);
 }
 export function parseDeviceToolCapabilities(json: string) {
   const value = decode(json);
@@ -168,9 +197,9 @@ export function parseDeviceToolCapabilities(json: string) {
     value.protocolVersion !== 1 ||
     value.confirmation !== 'all_accesses' ||
     !Array.isArray(value.tools) ||
-    value.tools.length !== deviceToolNames.length ||
-    new Set(value.tools).size !== deviceToolNames.length ||
-    !value.tools.every(tool)
+    value.tools.length !== legacyDeviceToolNames.length ||
+    new Set(value.tools).size !== legacyDeviceToolNames.length ||
+    !value.tools.every(name => legacyDeviceToolNames.includes(name))
   )
     throw new Error('Outils iOS incompatibles.');
   return true;
@@ -187,7 +216,7 @@ export function parseDeviceToolActivity(json: string): DeviceToolActivity {
     'outcome_unknown',
     'cancelled',
   ];
-  const expectedEffect = [
+  const expectedEffect = extendedToolEffect(String(row.tool)) ?? ([
     'calendar_create',
     'reminder_create',
     'notification_schedule',
@@ -197,7 +226,7 @@ export function parseDeviceToolActivity(json: string): DeviceToolActivity {
         String(row.tool),
       )
     ? 'interactive'
-    : 'read';
+    : 'read');
   if (
     !keys(event, ['schemaVersion', 'requestId', 'transaction']) ||
     event.schemaVersion !== 1 ||
@@ -205,7 +234,7 @@ export function parseDeviceToolActivity(json: string): DeviceToolActivity {
     !keys(
       row,
       ['id', 'revision', 'tool', 'effect', 'title', 'status', 'preview'],
-      ['confirmationToken', 'capability', 'receipt'],
+      ['confirmationToken', 'capability', 'receipt', 'weather'],
     ) ||
     !boundedIdentifier(row.id) ||
     !Number.isSafeInteger(row.revision) ||
@@ -254,6 +283,15 @@ export function parseDeviceToolActivity(json: string): DeviceToolActivity {
     (!row.receipt || (row.receipt as DeviceToolReceipt).status !== row.status)
   )
     throw new Error('Preuve outil absente.');
+  if (row.weather !== undefined) {
+    if (row.tool !== 'weather_forecast' || row.status !== 'success')
+      throw new Error('Preuve météo incohérente.');
+    const forecast = validatedForecast(row.weather);
+    if (forecast.requestId !== row.id)
+      throw new Error('Identité météo incohérente.');
+  }
+  if (row.tool === 'weather_forecast' && row.status === 'success' && !row.weather)
+    throw new Error('Preuve météo absente.');
   return event as DeviceToolActivity;
 }
 export function acceptDeviceToolActivity(
@@ -304,7 +342,7 @@ export function interruptDeviceToolActivity(
       ...transaction,
       confirmationToken: undefined,
       status:
-        transaction.effect === 'write' && transaction.status === 'executing'
+        (transaction.effect === 'write' || interactiveMayCommit(transaction.tool)) && transaction.status === 'executing'
           ? 'outcome_unknown'
           : 'cancelled',
     },
@@ -333,23 +371,78 @@ export function parseToolConfirmation(json: string) {
     throw new Error('Confirmation native invalide.');
   return value.accepted;
 }
-export function parseToolOperations(json: string): DeviceToolReceipt[] {
+export function parseToolOperations(json: string): ToolOperationReceipt[] {
   const value = decode(json);
   if (
     !keys(value, ['schemaVersion', 'operations']) ||
     value.schemaVersion !== 1 ||
     !Array.isArray(value.operations) ||
     value.operations.length > 100 ||
-    !value.operations.every(receipt) ||
+    !value.operations.every(
+      item =>
+        receiptMetadata(item) &&
+        typeof item.tool === 'string' &&
+        /^[a-z][a-z0-9_]{0,63}$/.test(item.tool),
+    ) ||
     new Set(value.operations.map(item => item.operationId)).size !==
       value.operations.length
   )
     throw new Error('Journal outil invalide.');
-  return value.operations as DeviceToolReceipt[];
+  return value.operations.map((item): ToolOperationReceipt => {
+    if (tool(item.tool)) return item as DeviceToolReceipt;
+    // Keep the native outcome and operation identity visible after rollback,
+    // but never trust a future tool's summary, label, schema or executor.
+    const uncertain = item.status === 'outcome_unknown';
+    return {
+      operationId: item.operationId,
+      tool: null,
+      unknownToolName: item.tool,
+      status: item.status,
+      completedAt: item.completedAt,
+      summary: [
+        {
+          label: uncertain ? 'Vérification requise' : 'Résultat archivé',
+          value: uncertain
+            ? 'Une opération d’une autre version reste incertaine. Vérifie dans l’app concernée. Aucun nouvel essai automatique.'
+            : 'Le journal conserve un résultat d’une autre version. Aucune action ni relance n’est disponible.',
+        },
+      ],
+    };
+  });
+}
+export function toolOperationLabel(operation: ToolOperationReceipt): string {
+  return operation.tool === null
+    ? 'Opération d’une autre version'
+    : deviceToolLabels[operation.tool];
+}
+function validatedForecast(value: unknown): AppleForecast {
+  const row = object(value);
+  const coordinate = appleCoordinate(row.coordinate);
+  if (!Array.isArray(row.hourly) || !Array.isArray(row.daily))
+    throw new Error('Preuve météo invalide.');
+  return parseAppleForecast(JSON.stringify(value), {
+    schemaVersion: 1,
+    requestId: row.requestId as string,
+    coordinate,
+    unit: row.temperatureUnit as 'celsius' | 'fahrenheit',
+    hourlyCount: row.hourly.length,
+    dailyCount: row.daily.length,
+  });
 }
 export function parseDeviceToolResult(json: string): GenerationResult {
+  if (typeof json !== 'string' || utf8Bytes(json) > 128 * 1024)
+    throw new Error('Réponse outil trop volumineuse.');
   const result = parseCalendarResult(json);
-  if (decode(json).agentTools !== true || utf8Bytes(result.text) > 8192)
+  const row = object(JSON.parse(json));
+  if (row.agentTools !== true || utf8Bytes(result.text) > 8192)
     throw new Error('Réponse outil invalide.');
+  if (row.weather !== undefined) {
+    if (!Array.isArray(row.weather) || row.weather.length > 4)
+      throw new Error('Preuves météo invalides.');
+    const weather = row.weather.map(validatedForecast);
+    if (new Set(weather.map(item => item.requestId)).size !== weather.length)
+      throw new Error('Preuves météo répétées.');
+    return { ...result, weather };
+  }
   return result;
 }

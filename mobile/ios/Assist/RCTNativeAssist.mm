@@ -35,6 +35,19 @@ static NSError *AssistError(NSString *code, NSString *message) {
                         userInfo:@{ @"code": code, NSLocalizedDescriptionKey: message }];
 }
 
+// Reject before capturing/copying the request for the asynchronous Swift hop.
+// lengthOfBytesUsingEncoding counts without materializing an NSData buffer.
+static BOOL AssistValidateGenerationJSON(NSString *requestJSON, RCTPromiseRejectBlock reject) {
+  const NSUInteger maximumBytes = 4 * 1024 * 1024;
+  if (requestJSON.length > maximumBytes ||
+      [requestJSON lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > maximumBytes) {
+    AssistReject(reject, AssistError(@"E_INPUT_LIMIT",
+      @"La conversation dépasse 4 Mio de JSON UTF-8. Réduis le texte collé ou commence une nouvelle conversation ; aucun message n’a été tronqué."));
+    return NO;
+  }
+  return YES;
+}
+
 // The resource location is fixed by the app; JavaScript cannot choose a path.
 // Presence is not a qualification claim: the engine still validates and loads
 // the complete export, tokenizer, and graph contract before becoming ready.
@@ -81,8 +94,10 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   NSUInteger _cancellationsInFlight;
   id _agentLifecycleObserver;
   id _agentBackgroundObserver;
+  id _intentDraftObserver;
   NSString *_calendarAgentOperation;
   NSString *_toolAgentOperation;
+  NSString *_researchAgentOperation;
 }
 
 + (NSString *)moduleName { return @"NativeAssist"; }
@@ -146,6 +161,128 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   }
   if (!_deviceCapabilities) { _deviceCapabilities = [AssistDeviceCapabilities new]; }
   return YES;
+}
+
+- (void)performWorkspace:(void (^)(AssistNativeServices *, AssistCompletion))operation
+                  resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    operation(AssistNativeServices.shared, AssistPromise(resolve, reject));
+  });
+}
+
+- (void)executeAlarms:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service executeAlarms:requestJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)cancelAlarms:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelAlarms:done]; } resolve:resolve reject:reject];
+}
+- (void)executeTranslation:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service executeTranslation:requestJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)cancelTranslation:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelTranslation:done]; } resolve:resolve reject:reject];
+}
+- (void)executeDocumentAction:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service executeDocumentAction:requestJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)cancelDocumentActions:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelDocumentActions:done]; } resolve:resolve reject:reject];
+}
+- (void)getPendingNativeIntent:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) {
+    if (!self->_intentDraftObserver) {
+      __weak RCTNativeAssist *weakSelf = self;
+      self->_intentDraftObserver = [NSNotificationCenter.defaultCenter addObserverForName:@"AssistIntentDraftChanged" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
+        RCTNativeAssist *strongSelf = weakSelf;
+        if (strongSelf && !strongSelf->_invalidated) {
+          [strongSelf emitOnNativeIntentChanged:@{ @"json": @"{\"schemaVersion\":1,\"changed\":true}" }];
+        }
+      }];
+    }
+    [service pendingNativeIntent:done];
+  } resolve:resolve reject:reject];
+}
+- (void)dismissNativeIntent:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service dismissNativeIntent:requestJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)getPrivateServiceStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service privateServiceStatus:done]; } resolve:resolve reject:reject];
+}
+- (void)presentPrivateServiceSetup:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service presentPrivateServiceSetup:done]; } resolve:resolve reject:reject];
+}
+- (void)disconnectPrivateService:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) {
+    [service disconnectPrivateService:^(NSString *json, NSError *error) {
+      if (self->_researchAgentOperation) {
+        [self cancelEngineWithCompletion:^(NSString *value, NSError *cancelError) { done(json, error ?: cancelError); }];
+      } else { done(json, error); }
+    }];
+  } resolve:resolve reject:reject];
+}
+- (void)searchPrivateService:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service searchPrivateService:requestJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)openPrivateSearchResult:(NSString *)requestId resultId:(NSString *)resultId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service openPrivateSearchResult:requestId resultId:resultId completion:done]; } resolve:resolve reject:reject];
+}
+- (void)getDocumentStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service documentStatus:done]; } resolve:resolve reject:reject];
+}
+- (void)getApplePlacesStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service applePlacesStatus:done]; } resolve:resolve reject:reject];
+}
+- (void)searchApplePlaces:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service searchApplePlaces:requestJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)getAppleDirections:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service appleDirections:requestJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)getAppleForecast:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service appleForecast:requestJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)openApplePlace:(NSString *)requestId resultId:(NSString *)resultId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service openApplePlace:requestId resultId:resultId completion:done]; } resolve:resolve reject:reject];
+}
+- (void)cancelApplePlaces:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelApplePlaces:done]; } resolve:resolve reject:reject];
+}
+- (void)renderWeatherAttribution:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service renderWeatherAttribution:requestJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)cancelWeatherAttribution:(NSString *)requestId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelWeatherAttribution:requestId completion:done]; } resolve:resolve reject:reject];
+}
+- (void)importDocument:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service importDocument:done]; } resolve:resolve reject:reject];
+}
+- (void)getDocumentInbox:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service documentInbox:done]; } resolve:resolve reject:reject];
+}
+- (void)readDocument:(NSString *)itemId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service readDocument:itemId completion:done]; } resolve:resolve reject:reject];
+}
+- (void)removeDocument:(NSString *)itemId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service removeDocument:itemId completion:done]; } resolve:resolve reject:reject];
+}
+- (void)exportDocumentText:(NSString *)payloadJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service exportDocumentText:payloadJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)getTaskCheckpoints:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service taskCheckpoints:done]; } resolve:resolve reject:reject];
+}
+- (void)updateTaskCheckpoint:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service updateTaskCheckpoint:requestJSON completion:done]; } resolve:resolve reject:reject];
+}
+- (void)cancelNativeWorkspace:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) {
+    [service cancelWorkspace:^(NSString *json, NSError *error) {
+      if (self->_researchAgentOperation) {
+        [self cancelEngineWithCompletion:^(NSString *value, NSError *cancelError) { done(json, error ?: cancelError); }];
+      } else { done(json, error); }
+    }];
+  } resolve:resolve reject:reject];
 }
 
 - (void)getDeviceCapabilityStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
@@ -695,6 +832,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)generate:(NSString *)requestJSON
          resolve:(RCTPromiseResolveBlock)resolve
           reject:(RCTPromiseRejectBlock)reject {
+  if (!AssistValidateGenerationJSON(requestJSON, reject)) { return; }
   dispatch_async(dispatch_get_main_queue(), ^{
     NSString *operation = [self beginOperation:reject];
     if (!operation) { return; }
@@ -728,6 +866,37 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   });
 }
 
+- (void)getToolHostCapabilities:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    [self->_engine toolHostCapabilities:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)getResearchCapabilities:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self prepare:reject]) { return; }
+    [self->_engine researchCapabilities:AssistPromise(resolve, reject)];
+  });
+}
+
+- (void)generateResearch:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  if (!AssistValidateGenerationJSON(requestJSON, reject)) { return; }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
+      AssistReject(reject, AssistError(@"E_CANCELLED", @"Reviens dans Assist pour lancer la recherche publique.")); return;
+    }
+    NSString *operation = [self beginOperation:reject];
+    if (!operation) { return; }
+    self->_researchAgentOperation = operation;
+    [self installAgentLifecycleObservers];
+    AssistCompletion completion = [self completionForOperation:operation resolve:resolve reject:reject cleanup:^(BOOL succeeded) {
+      if ([self->_researchAgentOperation isEqualToString:operation]) { self->_researchAgentOperation = nil; }
+    }];
+    [self->_engine generateResearch:requestJSON completion:[self refreshResidentStateOnFailure:completion]];
+  });
+}
+
 // These control-plane calls intentionally bypass beginOperation: confirmation
 // must reach the broker while that exact generation owns the engine busy latch.
 - (void)confirmToolAction:(NSString *)transactionId confirmationToken:(NSString *)confirmationToken
@@ -753,7 +922,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
       addObserverForName:UIApplicationWillResignActiveNotification object:nil
                    queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
       RCTNativeAssist *strongSelf = weakSelf;
-      if (!strongSelf || (!strongSelf->_calendarAgentOperation && !strongSelf->_toolAgentOperation)) { return; }
+      if (!strongSelf || (!strongSelf->_calendarAgentOperation && !strongSelf->_toolAgentOperation && !strongSelf->_researchAgentOperation)) { return; }
       // Only an interaction actually owned by the broker can survive transient
       // inactive state (picker/auth). Background never receives this exemption.
       if (strongSelf->_toolAgentOperation && strongSelf->_engine.allowsTransientToolInactivity) { return; }
@@ -765,7 +934,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
       addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil
                    queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
       RCTNativeAssist *strongSelf = weakSelf;
-      if (!strongSelf || (!strongSelf->_calendarAgentOperation && !strongSelf->_toolAgentOperation)) { return; }
+      if (!strongSelf || (!strongSelf->_calendarAgentOperation && !strongSelf->_toolAgentOperation && !strongSelf->_researchAgentOperation)) { return; }
       [strongSelf cancelEngineWithCompletion:^(NSString *value, NSError *error) {}];
     }];
   }
@@ -773,6 +942,19 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 
 - (void)generateWithTools:(NSString *)requestJSON
                  resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self generateDeviceToolRequest:requestJSON hostV2:NO resolve:resolve reject:reject];
+}
+
+- (void)generateWithToolHost:(NSString *)requestJSON
+                    resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  [self generateDeviceToolRequest:requestJSON hostV2:YES resolve:resolve reject:reject];
+}
+
+// Both protocols use the exact same lifecycle, operation identity and broker.
+// v2 selects a native-validated subset; it is not an alternate executor.
+- (void)generateDeviceToolRequest:(NSString *)requestJSON hostV2:(BOOL)hostV2
+                          resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  if (!AssistValidateGenerationJSON(requestJSON, reject)) { return; }
   dispatch_async(dispatch_get_main_queue(), ^{
     if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
       AssistReject(reject, AssistError(@"E_CANCELLED", @"Reviens dans Assist pour utiliser ses outils."));
@@ -788,7 +970,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
                                                      cleanup:^(BOOL succeeded) {
       if ([self->_toolAgentOperation isEqualToString:operation]) { self->_toolAgentOperation = nil; }
     }];
-    [self->_engine generateWithTools:requestJSON gateway:self->_deviceCapabilities onToolActivity:^(NSString *json) {
+    void (^activity)(NSString *) = ^(NSString *json) {
       dispatch_async(dispatch_get_main_queue(), ^{
         RCTNativeAssist *strongSelf = weakSelf;
         if (!strongSelf || strongSelf->_invalidated ||
@@ -796,7 +978,15 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
             ![strongSelf->_toolAgentOperation isEqualToString:operation]) { return; }
         [strongSelf emitOnToolActivity:@{ @"json": json }];
       });
-    } completion:[self refreshResidentStateOnFailure:completion]];
+    };
+    AssistCompletion finalCompletion = [self refreshResidentStateOnFailure:completion];
+    if (hostV2) {
+      [self->_engine generateWithToolHost:requestJSON gateway:self->_deviceCapabilities
+                         onToolActivity:activity completion:finalCompletion];
+    } else {
+      [self->_engine generateWithTools:requestJSON gateway:self->_deviceCapabilities
+                      onToolActivity:activity completion:finalCompletion];
+    }
   });
 }
 
@@ -806,6 +996,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)generateCalendarToday:(NSString *)requestJSON
                      resolve:(RCTPromiseResolveBlock)resolve
                       reject:(RCTPromiseRejectBlock)reject {
+  if (!AssistValidateGenerationJSON(requestJSON, reject)) { return; }
   dispatch_async(dispatch_get_main_queue(), ^{
     if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
       AssistReject(reject, AssistError(@"E_CANCELLED", @"Reviens dans Assist pour consulter le calendrier."));
@@ -841,6 +1032,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 }
 
 - (void)cancelEngineWithCompletion:(AssistCompletion)completion {
+  if (_researchAgentOperation) { [AssistNativeServices.shared cancelPending]; }
   _cancellationsInFlight += 1;
   __block BOOL settled = NO;
   [_engine cancel:^(NSString *result, NSError *error) {
@@ -902,6 +1094,11 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)invalidate {
   dispatch_async(dispatch_get_main_queue(), ^{
     self->_invalidated = YES;
+    [AssistNativeServices.shared cancelPending];
+    if (self->_intentDraftObserver) {
+      [NSNotificationCenter.defaultCenter removeObserver:self->_intentDraftObserver];
+      self->_intentDraftObserver = nil;
+    }
     if (self->_agentLifecycleObserver) {
       [NSNotificationCenter.defaultCenter removeObserver:self->_agentLifecycleObserver];
       self->_agentLifecycleObserver = nil;
@@ -928,6 +1125,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 }
 
 - (void)dealloc {
+  if (_intentDraftObserver) { [NSNotificationCenter.defaultCenter removeObserver:_intentDraftObserver]; }
   if (_agentLifecycleObserver) { [NSNotificationCenter.defaultCenter removeObserver:_agentLifecycleObserver]; }
   if (_agentBackgroundObserver) { [NSNotificationCenter.defaultCenter removeObserver:_agentBackgroundObserver]; }
 }

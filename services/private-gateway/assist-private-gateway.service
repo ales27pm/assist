@@ -1,0 +1,23 @@
+[Unit]
+Description=Assist private authenticated search gateway
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.local/share/assist/private-gateway/current/server.py
+Environment=ASSIST_GATEWAY_TOKENS_FILE=%h/.local/share/assist/private-gateway/tokens.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+MemoryMax=128M
+TasksMax=8
+Restart=on-failure
+RestartSec=5
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=default.target

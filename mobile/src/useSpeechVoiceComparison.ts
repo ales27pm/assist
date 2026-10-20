@@ -142,7 +142,7 @@ export function useSpeechVoiceComparison() {
         invalidatePending();
         setLoading(false);
         if (preview.current) stopPreview(preview.current);
-      }
+      } else refresh();
     });
     return () => {
       mounted.current = false;
@@ -288,10 +288,15 @@ export function useSpeechVoiceComparison() {
         return false;
       } finally {
         savingRef.current = false;
-        if (mounted.current) setSaving(false);
+        if (mounted.current) {
+          setSaving(false);
+          // The native write may have committed during an inactive interval.
+          // Read its authoritative state; never apply the expired ACK or replay audio.
+          if (foreground.current && activeLifetime !== lifetime.current) refresh();
+        }
       }
     },
-    [supported, stop, commitCatalog],
+    [supported, stop, commitCatalog, refresh],
   );
 
   return {

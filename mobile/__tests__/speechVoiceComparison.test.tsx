@@ -345,7 +345,7 @@ test('a catalog read issued before a choice cannot overwrite the confirmed choic
   expect(result.current.loading).toBe(false);
 });
 
-test('a save acknowledgement after leaving the foreground cannot change the displayed selection', async () => {
+test('returning active after a save reconciles the committed choice instead of applying the old acknowledgement', async () => {
   const saved = deferred<string>();
   native.getSpeechVoices.mockResolvedValueOnce(catalog('voice-a'));
   native.setSpeechVoice.mockReturnValueOnce(saved.promise);
@@ -354,15 +354,15 @@ test('a save acknowledgement after leaving the foreground cannot change the disp
   await act(async () => {
     choosing = result.current.chooseVoice('voice-b');
   });
+  native.getSpeechVoices.mockResolvedValueOnce(catalog('voice-b'));
   await act(async () => {
     changed('inactive');
     changed('active');
     saved.resolve(catalog('voice-b'));
     expect(await choosing).toBe(false);
   });
-  expect(result.current.catalog?.selectedVoiceId).toBe('voice-a');
+  expect(result.current.catalog?.selectedVoiceId).toBe('voice-b');
   expect(result.current.saving).toBe(false);
-  await act(async () => result.current.refresh());
   expect(native.getSpeechVoices).toHaveBeenCalledTimes(2);
 });
 

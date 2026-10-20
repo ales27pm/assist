@@ -27,9 +27,11 @@ struct DeviceToolLoopChecks {
         let deadline = ContinuousClock.now.advanced(by: .seconds(10))
         func run(_ probe: ToolLoopProbe, proposals: [String], boundary: Bool = true, complete: Bool = true,
                  admission: AssistAgentAdmission = AssistAgentAdmission(),
+                 selectedRequest: AssistGenerationRequest? = nil,
+                 allowedTools: Set<AssistToolName> = Set(AssistToolName.allCases),
                  perform: (@Sendable (AssistDeviceToolCall) async throws -> AssistToolValue)? = nil
         ) async throws -> AssistDeviceToolRunOutcome<Int> {
-            try await AssistDeviceToolRun.run(request: request, deadline: deadline,
+            try await AssistDeviceToolRun.run(request: selectedRequest ?? request, deadline: deadline, allowedTools: allowedTools,
                 model: { messages, budget, calls in
                     let index = await probe.next()
                     precondition(budget <= 1_024 && calls.count == index - 1)
@@ -54,6 +56,12 @@ struct DeviceToolLoopChecks {
         let success = try await run(four, proposals: Array(repeating: read, count: 4))
         try expect(await four.counts() == (5, 4) && success.value == 5, "four sequential reads and one final answer")
         try expect(success.visibleText == "Voici le résultat natif vérifié.", "only final validated prose exits")
+        let weatherProbe = ToolLoopProbe()
+        let weatherEvidence: AssistToolValue = .object(["requestId": .string("native-operation"), "forecastNotGuarantee": .bool(true)])
+        let weatherProposal = "<|tool_call>call:weather_forecast{latitude:46.8139,longitude:-71.208,unit:<|\"|>celsius<|\"|>,hourly_count:0,daily_count:0}<tool_call|>"
+        let weatherResult = try await run(weatherProbe, proposals: [weatherProposal], perform: { _ in weatherEvidence })
+        try expect(await weatherProbe.counts() == (2, 1) && weatherResult.weather == [weatherEvidence],
+                   "final tool result retains native weather evidence even without activity delivery")
         let fifth = ToolLoopProbe()
         try await rejects { _ = try await run(fifth, proposals: Array(repeating: read, count: 5)) }
         try expect(await fifth.counts() == (5, 4), "fifth proposal never reaches broker")
@@ -123,6 +131,27 @@ struct DeviceToolLoopChecks {
                 }, perform: { call in await expired.perform(call); return .object([:]) })
         }
         try expect(await expired.counts() == (0, 0), "already expired task cannot begin")
+
+        let hostSelection = try AssistToolHost.selection(from:
+            #"{"schemaVersion":1,"hostProtocolVersion":2,"catalogRevision":"device-v3-31","requiredTools":[{"id":"calendar_list","version":1}],"profile":"device_v1","requestId":"host-subset","messages":[{"role":"user","content":"Quels événements demain matin ?"}],"temperature":0,"maxTokens":256}"#)
+        let calendar = "<|tool_call>call:calendar_list{start_iso:<|\"|>2026-10-19T12:00:00Z<|\"|>,end_iso:<|\"|>2026-10-19T16:00:00Z<|\"|>,limit:5}<tool_call|>"
+        let subset = ToolLoopProbe()
+        let subsetOutcome = try await run(subset, proposals: [calendar], selectedRequest: hostSelection.request,
+            allowedTools: hostSelection.allowedTools, perform: { call in
+                guard call.name == .calendar_list else { throw AssistToolContractError.invalidArguments }
+                return .object(["events": .array([]), "possiblyTruncated": .bool(false)])
+            })
+        try expect(await subset.counts() == (2, 1) && subsetOutcome.visibleText == "Voici le résultat natif vérifié.",
+                   "selected calendar call/result roundtrip reaches one executor and one continuation")
+        let excluded = ToolLoopProbe()
+        try await rejects {
+            _ = try await run(excluded, proposals: [read], selectedRequest: hostSelection.request,
+                              allowedTools: hostSelection.allowedTools)
+        }
+        try expect(await excluded.counts() == (1, 0), "known but unselected call never reaches an executor")
+        let emptySelection = ToolLoopProbe()
+        try await rejects { _ = try await run(emptySelection, proposals: [], allowedTools: []) }
+        try expect(await emptySelection.counts() == (0, 0), "empty selection cannot start a model or executor")
 
         for json in [
             #"{"schemaVersion":1,"requestId":"x","messages":[{"role":"user","content":"x"}],"temperature":1}"#,

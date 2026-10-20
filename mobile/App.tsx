@@ -4,6 +4,7 @@ import {
   AppState,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -19,10 +20,15 @@ import NativeAssist from './specs/NativeAssist';
 import { InterfaceIcon } from './src/InterfaceIcon';
 import { ToolCallCard } from './src/ToolCallCard';
 import { DeviceToolCard } from './src/DeviceToolCard';
+import { WeatherForecastCard } from './src/WeatherForecastCard';
+import { WeatherPresentationGate } from './src/WeatherPresentationGate';
+import { ownsSystemInteraction } from './src/nativeBundleTools';
+import { NativeIntentBanner } from './src/NativeIntentBanner';
+import type { AppleForecast } from './src/applePlacesProtocol';
 import { DeviceToolDecisionSheet } from './src/DeviceToolDecisionSheet';
 import {
   DeviceToolActivity,
-  DeviceToolReceipt,
+  ToolOperationReceipt,
   acceptDeviceToolActivity,
   deviceToolPublicAnswer,
   interruptDeviceToolActivity,
@@ -32,6 +38,11 @@ import {
   parseToolConfirmation,
   parseToolOperations,
 } from './src/deviceToolProtocol';
+import {
+  createToolHostRequest,
+  negotiateToolHostCapabilities,
+  ToolHostSelection,
+} from './src/toolHostProtocol';
 import {
   CalendarToolTransaction,
   finishCalendarTransaction,
@@ -82,7 +93,13 @@ type DisplayMessage = Message & {
   displayOnly?: true;
   toolTransaction?: CalendarToolTransaction;
   deviceTool?: DeviceToolActivity;
+  weatherForecast?: AppleForecast;
+  weatherTask?: string;
+  weatherCancelled?: boolean;
 };
+type DeviceToolTransport =
+  | Readonly<{ kind: 'v1' }>
+  | Readonly<{ kind: 'v2'; selection: ToolHostSelection }>;
 
 /** Keep tool-derived answers visible, never promote them to trusted chat input. */
 function mergeDisplayedConversation(
@@ -151,6 +168,7 @@ export function AssistantScreen() {
     showExample: boolean;
   } | null>(null);
   const [tab, setTab] = useState<'chat' | 'settings' | 'model' | 'lab'>('chat');
+  const [workspaceRequest, setWorkspaceRequest] = useState(0);
   const [showBudget, setShowBudget] = useState(false);
   const [hasOpenedDiagnostics, setHasOpenedDiagnostics] = useState(false);
   const [modelOrigin, setModelOrigin] = useState<'chat' | 'settings'>('chat');
@@ -184,6 +202,27 @@ export function AssistantScreen() {
   const [probeReport, setProbeReport] = useState<PrimitiveReport | null>(null);
   const active = useRef<string | null>(null);
   const operation = useRef(false);
+  useEffect(() => {
+    let current = true;
+    const openInbox = (url: string | null | undefined) => {
+      // External links can navigate only. No tool, content or authorization
+      // comes from a URL; unknown paths/parameters are deliberately ignored.
+      if (current && url === 'assist://inbox' && !operation.current) {
+        setWorkspaceRequest(value => value + 1);
+        setTab('settings');
+      }
+    };
+    const subscription = Linking.addEventListener('url', event =>
+      openInbox(event.url),
+    );
+    Promise.resolve(Linking.getInitialURL())
+      .then(openInbox)
+      .catch(() => {});
+    return () => {
+      current = false;
+      subscription.remove();
+    };
+  }, []);
   const cancellationsInFlight = useRef(0);
   const mounted = useRef(true);
   const counter = useRef(0);
@@ -195,6 +234,7 @@ export function AssistantScreen() {
   const calendarEpoch = useRef(0);
   const calendarRequest = useRef<string | null>(null);
   const [toolsAvailable, setToolsAvailable] = useState(false);
+  const toolTransport = useRef<DeviceToolTransport | null>(null);
   const toolsReady = useRef(false);
   toolsReady.current = toolsAvailable;
   const [toolsEnabled, setToolsEnabled] = useState(false);
@@ -203,8 +243,11 @@ export function AssistantScreen() {
     null,
   );
   const [toolDecisionPending, setToolDecisionPending] = useState(false);
-  const [toolOperations, setToolOperations] = useState<DeviceToolReceipt[]>([]);
+  const [toolOperations, setToolOperations] = useState<ToolOperationReceipt[]>(
+    [],
+  );
   const toolRequest = useRef<{ id: string; epoch: number } | null>(null);
+  const weatherPresentation = useRef(new WeatherPresentationGate());
   const toolDecisionLock = useRef(false);
   const toolSheetDismissal = useRef<{
     id: string;
@@ -293,6 +336,8 @@ export function AssistantScreen() {
         if (
           !activity ||
           !receipt ||
+          receipt.tool === null ||
+          receipt.tool !== activity.transaction.tool ||
           (['success', 'outcome_unknown'].includes(
             activity.transaction.status,
           ) &&
@@ -364,11 +409,27 @@ export function AssistantScreen() {
     onEvent: event => controller.event(event),
   });
   const cancelVoice = voice.cancel;
+  const refreshVoiceCapabilities = voice.refreshCapabilities;
+  const previousVoiceTab = useRef(tab);
+  useEffect(() => {
+    const returning = previousVoiceTab.current !== tab && tab === 'chat';
+    previousVoiceTab.current = tab;
+    if (returning) refreshVoiceCapabilities();
+  }, [tab, refreshVoiceCapabilities]);
   const speakResponse = voice.speak;
   const cancelGeneration = useCallback(async () => {
     const requestId = active.current;
     const calendarId = calendarRequest.current;
     const deviceId = toolRequest.current?.id;
+    weatherPresentation.current.cancel();
+    if (deviceId) {
+      messagesRef.current = messagesRef.current.map(message =>
+        (message.deviceTool?.requestId ?? message.weatherTask) === deviceId
+          ? { ...message, weatherCancelled: true }
+          : message,
+      );
+      if (mounted.current) setMessages(messagesRef.current);
+    }
     toolSheetDismissal.current?.resolve(false);
     toolSheetDismissal.current = null;
     ownedToolInteraction.current = false;
@@ -507,23 +568,50 @@ export function AssistantScreen() {
     let current = true;
     if (
       Platform.OS === 'ios' &&
-      typeof NativeAssist?.getDeviceToolCapabilities === 'function' &&
-      typeof NativeAssist?.generateWithTools === 'function' &&
       typeof NativeAssist?.confirmToolAction === 'function' &&
       typeof NativeAssist?.onToolActivity === 'function' &&
       typeof NativeAssist?.getToolOperations === 'function'
     ) {
       Promise.resolve()
-        .then(() => NativeAssist!.getDeviceToolCapabilities())
-        .then(json => {
-          parseDeviceToolCapabilities(json);
+        .then(async (): Promise<DeviceToolTransport> => {
+          const advertisesV2 =
+            NativeAssist!.getToolHostCapabilities !== undefined ||
+            NativeAssist!.generateWithToolHost !== undefined;
+          if (advertisesV2) {
+            if (
+              typeof NativeAssist!.getToolHostCapabilities !== 'function' ||
+              typeof NativeAssist!.generateWithToolHost !== 'function'
+            )
+              throw new Error('Socle natif des outils incomplet.');
+            return Object.freeze({
+              kind: 'v2',
+              selection: negotiateToolHostCapabilities(
+                await NativeAssist!.getToolHostCapabilities(),
+              ),
+            });
+          }
+          // Native28 predates the additive v2 bridge. Never downgrade a host
+          // that advertises v2 but returns a malformed or incompatible contract.
+          if (
+            typeof NativeAssist!.getDeviceToolCapabilities !== 'function' ||
+            typeof NativeAssist!.generateWithTools !== 'function'
+          )
+            throw new Error('Outils iOS indisponibles.');
+          parseDeviceToolCapabilities(
+            await NativeAssist!.getDeviceToolCapabilities(),
+          );
+          return Object.freeze({ kind: 'v1' });
+        })
+        .then(transport => {
           if (current) {
+            toolTransport.current = transport;
             setToolsAvailable(true);
             refreshToolOperations();
           }
         })
         .catch(() => {
           if (current) {
+            toolTransport.current = null;
             setToolsAvailable(false);
             setToolsEnabled(false);
           }
@@ -546,6 +634,7 @@ export function AssistantScreen() {
 
   useEffect(() => {
     mounted.current = true;
+    const weatherGate = weatherPresentation.current;
     const version = statusVersion.current;
     NativeAssist?.getStatus()
       .then(value => {
@@ -624,6 +713,11 @@ export function AssistantScreen() {
             message.deviceTool?.transaction.id === activity.transaction.id,
         )?.deviceTool;
         if (!acceptDeviceToolActivity(previous, activity)) return;
+        if (activity.transaction.weather)
+          weatherPresentation.current.expect(
+            request.id,
+            activity.transaction.weather.requestId,
+          );
         if (previous)
           messagesRef.current = messagesRef.current.map(message =>
             message.deviceTool?.transaction.id === activity.transaction.id
@@ -642,7 +736,7 @@ export function AssistantScreen() {
           ];
         setMessages(messagesRef.current);
         ownedToolInteraction.current =
-          activity.transaction.effect === 'interactive' &&
+          (activity.transaction.effect === 'interactive' || ownsSystemInteraction(activity.transaction.tool)) &&
           activity.transaction.status === 'executing';
         if (
           ['awaiting_confirmation', 'awaiting_permission'].includes(
@@ -674,6 +768,7 @@ export function AssistantScreen() {
     });
     return () => {
       mounted.current = false;
+      weatherGate.cancel();
       toolSheetDismissal.current?.resolve(false);
       toolSheetDismissal.current = null;
       calendarEpoch.current += 1;
@@ -751,6 +846,8 @@ export function AssistantScreen() {
     calendarToday = false,
   ): Promise<(GenerationResult & { spoken: boolean }) | undefined> {
     const withDeviceTools = !calendarToday && toolsAvailable && toolsEnabled;
+    // Capture the negotiated immutable catalogue before any voice/engine await.
+    const transportForRun = withDeviceTools ? toolTransport.current : null;
     const nativeAgent = calendarToday || withDeviceTools;
     if (
       !text.trim() ||
@@ -759,7 +856,10 @@ export function AssistantScreen() {
       !isCurrent() ||
       (withDeviceTools &&
         (!foreground.current ||
-          typeof NativeAssist?.generateWithTools !== 'function')) ||
+          !transportForRun ||
+          (transportForRun.kind === 'v2'
+            ? typeof NativeAssist?.generateWithToolHost !== 'function'
+            : typeof NativeAssist?.generateWithTools !== 'function'))) ||
       (calendarToday &&
         (fromVoice ||
           !calendarAvailable ||
@@ -861,7 +961,7 @@ export function AssistantScreen() {
       setProgress(null);
       setReport(null);
       try {
-        const payload = JSON.stringify({
+        const request = {
           ...(nativeAgent ? { schemaVersion: 1 } : {}),
           requestId,
           messages: conversation,
@@ -869,32 +969,76 @@ export function AssistantScreen() {
             ? Math.min(maxTokens ?? 1024, 1024)
             : maxTokens,
           temperature: 0,
-        });
+        };
+        const payload = JSON.stringify(
+          withDeviceTools && transportForRun?.kind === 'v2'
+            ? createToolHostRequest(transportForRun.selection, {
+                requestId,
+                messages: conversation,
+                maxTokens: request.maxTokens ?? undefined,
+              })
+            : request,
+        );
         const json = withDeviceTools
-          ? await NativeAssist!.generateWithTools(payload)
+          ? transportForRun?.kind === 'v2'
+            ? await NativeAssist!.generateWithToolHost(payload)
+            : await NativeAssist!.generateWithTools(payload)
           : calendarToday
           ? await NativeAssist!.generateCalendarToday(payload)
           : await NativeAssist!.generate(payload);
         if (nativeAgent && !calendarCurrent()) return;
-        const parsedResult = withDeviceTools
+        const deviceResult = withDeviceTools
           ? parseDeviceToolResult(json)
-          : calendarToday
-          ? parseCalendarResult(json)
-          : parseResult(json);
+          : null;
+        const parsedResult =
+          deviceResult ??
+          (calendarToday ? parseCalendarResult(json) : parseResult(json));
         if (parsedResult.requestId !== requestId) {
           throw new Error('Identité de génération incohérente.');
         }
+        // Final native evidence is authoritative even if a progress event was
+        // lost. The model cannot make its own provider mark or weather card.
+        const forecasts = deviceResult?.weather ?? [];
+        if (forecasts.length) {
+          for (const forecast of forecasts) {
+            weatherPresentation.current.expect(requestId, forecast.requestId);
+            const hasCard = messagesRef.current.some(
+              message =>
+                message.deviceTool?.transaction.weather?.requestId ===
+                  forecast.requestId ||
+                message.weatherForecast?.requestId === forecast.requestId,
+            );
+            if (!hasCard)
+              messagesRef.current = [
+                ...messagesRef.current,
+                {
+                  role: 'assistant',
+                  content: '',
+                  displayOnly: true,
+                  weatherForecast: forecast,
+                  weatherTask: requestId,
+                },
+              ];
+          }
+          setMessages(messagesRef.current);
+        }
+        const attributionReady = await weatherPresentation.current.wait(
+          requestId,
+        );
+        if (nativeAgent && (!calendarCurrent() || !isCurrent())) return;
         const result = withDeviceTools
           ? {
               ...parsedResult,
-              text: deviceToolPublicAnswer(
-                parsedResult.text,
-                messagesRef.current.flatMap(message =>
-                  message.deviceTool?.requestId === requestId
-                    ? [message.deviceTool]
-                    : [],
-                ),
-              ),
+              text: !attributionReady
+                ? 'Les prévisions ont été obtenues, mais leur attribution n’a pas pu être affichée. Je ne les affiche ni ne les lis. Aucun nouvel essai automatique.'
+                : deviceToolPublicAnswer(
+                    parsedResult.text,
+                    messagesRef.current.flatMap(message =>
+                      message.deviceTool?.requestId === requestId
+                        ? [message.deviceTool]
+                        : [],
+                    ),
+                  ),
             }
           : parsedResult;
         if (calendarToday)
@@ -979,6 +1123,7 @@ export function AssistantScreen() {
           );
         }
       } finally {
+        weatherPresentation.current.cancel(requestId);
         if (toolRequest.current?.id === requestId) {
           await refreshToolOperations();
           settleDeviceToolRequest(requestId, true);
@@ -1386,6 +1531,29 @@ export function AssistantScreen() {
     setTab('lab');
   }
 
+  const weatherMessages = messages.filter(
+    message =>
+      message.deviceTool?.transaction.weather || message.weatherForecast,
+  );
+  const latestWeatherMessage = weatherMessages.at(-1);
+  const weatherTask =
+    toolRequest.current?.id ??
+    latestWeatherMessage?.deviceTool?.requestId ??
+    latestWeatherMessage?.weatherTask;
+  const voiceWeatherMessages = weatherMessages
+    .filter(
+      message =>
+        (message.deviceTool?.requestId ?? message.weatherTask) === weatherTask,
+    )
+    .slice(-4);
+  const nativeIntentBanner = <NativeIntentBanner key="native-intent" blocked={busy} toolsAvailable={toolsAvailable} onDraft={(text, needsTools) => {
+    controller.pause();
+    setSpeechMode(false);
+    setTab('chat');
+    setPrompt(previous => previous.trim() ? `${previous}\n\n${text}` : text);
+    if (needsTools) setToolsEnabled(true);
+    setShowExample(false);
+  }} />;
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle={theme.isDark ? 'light-content' : 'dark-content'} />
@@ -1528,6 +1696,41 @@ export function AssistantScreen() {
                 voice.status.monitoring === true
               }
               readResponses={readResponses}
+              networkToolsEnabled={
+                toolsEnabled && toolTransport.current?.kind === 'v2' &&
+                toolTransport.current.selection.requiredTools.some(tool =>
+                  ['maps_search', 'maps_directions', 'weather_forecast'].includes(tool.id),
+                )
+              }
+              toolEvidence={[nativeIntentBanner, ...voiceWeatherMessages.map(message =>
+                message.deviceTool ? (
+                  <DeviceToolCard
+                    key={message.deviceTool.transaction.id}
+                    transaction={message.deviceTool.transaction}
+                    weatherBlocked={message.weatherCancelled}
+                    onWeatherReady={status =>
+                      weatherPresentation.current.update(
+                        message.deviceTool!.requestId,
+                        message.deviceTool!.transaction.weather!.requestId,
+                        status,
+                      )
+                    }
+                  />
+                ) : (
+                  <WeatherForecastCard
+                    key={message.weatherForecast!.requestId}
+                    forecast={message.weatherForecast!}
+                    blocked={message.weatherCancelled}
+                    onReady={status =>
+                      weatherPresentation.current.update(
+                        message.weatherTask!,
+                        message.weatherForecast!.requestId,
+                        status,
+                      )
+                    }
+                  />
+                ),
+              )]}
               onPause={() => {
                 controller.pause();
               }}
@@ -1557,6 +1760,7 @@ export function AssistantScreen() {
                   }
                 }}
               >
+                {nativeIntentBanner}
                 {!messages.length &&
                   !progress &&
                   !pendingUserText &&
@@ -1582,6 +1786,14 @@ export function AssistantScreen() {
                     <DeviceToolCard
                       key={message.deviceTool.transaction.id}
                       transaction={message.deviceTool.transaction}
+                      weatherBlocked={message.weatherCancelled}
+                      onWeatherReady={status =>
+                        weatherPresentation.current.update(
+                          message.deviceTool!.requestId,
+                          message.deviceTool!.transaction.weather!.requestId,
+                          status,
+                        )
+                      }
                       onReview={
                         message.deviceTool.requestId ===
                           toolRequest.current?.id ||
@@ -1590,6 +1802,19 @@ export function AssistantScreen() {
                             'awaiting_permission')
                           ? () => setToolDecision(message.deviceTool!)
                           : undefined
+                      }
+                    />
+                  ) : message.weatherForecast ? (
+                    <WeatherForecastCard
+                      key={message.weatherForecast.requestId}
+                      forecast={message.weatherForecast}
+                      blocked={message.weatherCancelled}
+                      onReady={status =>
+                        weatherPresentation.current.update(
+                          message.weatherTask!,
+                          message.weatherForecast!.requestId,
+                          status,
+                        )
                       }
                     />
                   ) : message.toolTransaction ? (
@@ -1702,7 +1927,7 @@ export function AssistantScreen() {
                   <Pressable
                     accessibilityRole="switch"
                     accessibilityLabel="Outils iOS dans la conversation"
-                    accessibilityHint="Chaque accès et chaque modification demandera un accord tactile. Aucun accès privé sur une transcription partielle."
+                    accessibilityHint="Chaque accès et chaque modification demandera un accord tactile. Cartes et météo transmettent les lieux choisis à Apple. Aucun accès privé sur une transcription partielle."
                     accessibilityState={{
                       checked: toolsEnabled,
                       disabled: !toolsAvailable || busy || voice.captureBusy,
@@ -1848,7 +2073,9 @@ export function AssistantScreen() {
                   {preferences.error}
                 </Text>
               )}
+              {nativeIntentBanner}
               <SettingsScreen
+                workspaceRequest={workspaceRequest}
                 headingRef={settingsHeading}
                 modelStatus={
                   !NativeAssist
@@ -1865,6 +2092,7 @@ export function AssistantScreen() {
                 readResponses={readResponses}
                 onReadResponsesChange={changeSpokenReplies}
                 voiceAvailable={voice.status?.synthesisAvailable ?? false}
+                onVoiceConfigurationChange={refreshVoiceCapabilities}
                 responseOpen={showBudget}
                 onToggleResponse={() => setShowBudget(value => !value)}
                 onBudgetChange={setBudget}
@@ -1880,6 +2108,7 @@ export function AssistantScreen() {
               contentContainerStyle={styles.content}
               keyboardShouldPersistTaps="handled"
             >
+              {nativeIntentBanner}
               <ModelWorkspace
                 headingRef={modelHeading}
                 engine={engine}
@@ -1969,7 +2198,8 @@ export function AssistantScreen() {
                 contentContainerStyle={styles.content}
                 keyboardShouldPersistTaps="handled"
               >
-                <DiagnosticsWorkspace
+                {nativeIntentBanner}
+              <DiagnosticsWorkspace
                   headingRef={diagnosticsHeading}
                   active={tab === 'lab'}
                   selected={selected}

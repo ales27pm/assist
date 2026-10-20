@@ -43,6 +43,8 @@ export type VoiceConversationScreenProps = {
   onClose: () => void;
   onSettings: () => void;
   headingRef?: React.Ref<React.ComponentRef<typeof Text>>;
+  toolEvidence?: React.ReactNode;
+  networkToolsEnabled?: boolean;
 };
 
 const states: Record<
@@ -101,6 +103,8 @@ export function VoiceConversationScreen({
   onClose,
   onSettings,
   headingRef,
+  toolEvidence,
+  networkToolsEnabled = false,
 }: VoiceConversationScreenProps) {
   const { theme } = useAppearance();
   const { colors } = theme;
@@ -211,7 +215,11 @@ export function VoiceConversationScreen({
         </View>
         <ScreenHeading
           title="Mode vocal"
-          description="On reste sur cet appareil."
+          description={
+            networkToolsEnabled
+              ? 'Voix et modèle locaux. Les outils Apple en ligne demandent ton accord.'
+              : 'On reste sur cet appareil.'
+          }
           headingRef={headingRef}
         />
       </View>
@@ -305,6 +313,7 @@ export function VoiceConversationScreen({
             {error}
           </Text>
         )}
+        {toolEvidence}
 
         {!!error && !!audioDiagnostics?.length && (
           <Disclosure

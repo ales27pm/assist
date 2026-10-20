@@ -4,6 +4,11 @@ import Foundation
 struct AssistDeviceToolRunOutcome<Value: Sendable>: Sendable {
     let value: Value
     let visibleText: String
+    let weather: [AssistToolValue]
+
+    init(value: Value, visibleText: String, weather: [AssistToolValue] = []) {
+        self.value = value; self.visibleText = visibleText; self.weather = weather
+    }
 }
 
 /// The production loop owns one isolated request, not conversation history.
@@ -35,6 +40,7 @@ enum AssistDeviceToolRun {
 
     static func run<Value: Sendable>(
         request: AssistGenerationRequest, deadline: ContinuousClock.Instant,
+        allowedTools: Set<AssistToolName> = Set(AssistToolName.allCases),
         model: @escaping @Sendable ([[String: any Sendable]], Int, [AssistDeviceToolCall]) async throws -> AssistAgentModelTurn<Value>,
         perform: @escaping @Sendable (AssistDeviceToolCall) async throws -> AssistToolValue,
         isCancelled: @escaping @Sendable () -> Bool = { false }
@@ -44,7 +50,7 @@ enum AssistDeviceToolRun {
         // native work actually returns; it does not claim a hard OS deadline.
         try await withThrowingTaskGroup(of: AssistDeviceToolRunOutcome<Value>.self) { group in
             group.addTask {
-                try await runLoop(request: request, deadline: deadline, model: model,
+                try await runLoop(request: request, deadline: deadline, allowedTools: allowedTools, model: model,
                                   perform: perform, isCancelled: isCancelled)
             }
             group.addTask {
@@ -59,6 +65,7 @@ enum AssistDeviceToolRun {
 
     private static func runLoop<Value: Sendable>(
         request: AssistGenerationRequest, deadline: ContinuousClock.Instant,
+        allowedTools: Set<AssistToolName> = Set(AssistToolName.allCases),
         model: @Sendable ([[String: any Sendable]], Int, [AssistDeviceToolCall]) async throws -> AssistAgentModelTurn<Value>,
         perform: @Sendable (AssistDeviceToolCall) async throws -> AssistToolValue,
         isCancelled: @Sendable () -> Bool
@@ -71,9 +78,11 @@ enum AssistDeviceToolRun {
             }
         }
         try checkActive()
+        guard !allowedTools.isEmpty else { throw AssistToolContractError.invalidArguments }
         var messages = try AssistDeviceToolAdapter.planningMessages(request: request)
         var calls: [AssistDeviceToolCall] = []
         var writes = 0
+        var weather: [AssistToolValue] = []
         while true {
             try checkActive()
             let turn = try await model(messages, min(request.maxTokens ?? outputTokenBudget, outputTokenBudget), calls)
@@ -81,9 +90,10 @@ enum AssistDeviceToolRun {
             guard turn.completed else {
                 throw AssistInferenceError.invalid("La proposition des outils est incomplète. Aucun nouvel accès exécuté.")
             }
-            switch try AssistDeviceToolAdapter.parse(raw: turn.rawText, stoppedAtToolResponse: turn.stoppedAtToolResponse) {
+            switch try AssistDeviceToolAdapter.parse(raw: turn.rawText, stoppedAtToolResponse: turn.stoppedAtToolResponse,
+                                                    allowedTools: allowedTools) {
             case .answer(let text):
-                return AssistDeviceToolRunOutcome(value: turn.value, visibleText: text)
+                return AssistDeviceToolRunOutcome(value: turn.value, visibleText: text, weather: weather)
             case .call(let call):
                 guard calls.count < maximumToolCalls else {
                     throw AssistInferenceError.invalid("La limite de quatre accès natifs est atteinte. Aucun nouvel accès exécuté.")
@@ -95,20 +105,27 @@ enum AssistDeviceToolRun {
                     writes += 1
                 }
                 try checkActive()
+                guard allowedTools.contains(call.name) else { throw AssistToolContractError.invalidArguments }
                 let result = try await perform(call)
                 try checkActive()
                 if let status = result.objectDictionary?["status"]?.stringValue {
                     switch status {
                     case "permission_required":
                         return AssistDeviceToolRunOutcome(value: turn.value, visibleText:
-                            "Cette action nécessite une autorisation iOS. Accorde-la explicitement dans les Outils de l’appareil, puis formule une nouvelle demande si tu le souhaites. Aucun nouvel accès automatique.")
+                            "Cette action nécessite une autorisation iOS. Accorde-la explicitement dans les Outils de l’appareil, puis formule une nouvelle demande si tu le souhaites. Aucun nouvel accès automatique.", weather: weather)
                     case "outcome_unknown":
                         return AssistDeviceToolRunOutcome(value: turn.value, visibleText:
-                            "L’action a peut-être eu lieu. Vérifie son état dans l’application concernée avant toute nouvelle tentative. Aucun nouvel essai automatique.")
+                            "L’action a peut-être eu lieu. Vérifie son état dans l’application concernée avant toute nouvelle tentative. Aucun nouvel essai automatique.", weather: weather)
                     default:
                         // Reserved native status values are never model data.
                         throw AssistInferenceError.invalid("L’outil n’a pas confirmé son résultat. Aucun nouvel essai automatique.")
                     }
+                }
+                if call.name == .weather_forecast {
+                    // A final native receipt survives a lost activity event.
+                    // The broker has bound/validated this full forecast to its
+                    // operation; model prose never manufactures attribution.
+                    weather.append(result)
                 }
                 messages = try AssistDeviceToolAdapter.continuationMessages(messages: messages, call: call, result: result)
                 calls.append(call)

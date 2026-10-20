@@ -16,6 +16,8 @@ enum AssistToolTransactionError: Error, LocalizedError, Sendable {
     case outcomeUnknown
     case executionFailed
     case invalidNativeResult
+    case rejectedBeforeSubmission
+    case cancelledBeforeSubmission
 
     var errorDescription: String? {
         switch self {
@@ -28,11 +30,13 @@ enum AssistToolTransactionError: Error, LocalizedError, Sendable {
         case .outcomeUnknown: "L’opération a peut-être été effectuée. Vérifie-la manuellement avant de recommencer."
         case .executionFailed: "L’action native n’a pas pu être confirmée en toute sécurité."
         case .invalidNativeResult: "Le résultat natif ne respecte pas le contrat attendu."
+        case .rejectedBeforeSubmission: "L’action a été refusée avant toute modification. Vérifie l’autorisation et les données, puis décide d’une nouvelle demande."
+        case .cancelledBeforeSubmission: "Le service natif a confirmé l’annulation sans modification."
         }
     }
 }
 
-private struct AssistToolPreviewField: Encodable, Equatable, Sendable {
+struct AssistToolPreviewField: Encodable, Equatable, Sendable {
     let label: String
     let value: String
 }
@@ -73,6 +77,7 @@ private struct AssistToolActivityEnvelope: Encodable, Sendable {
         let confirmationToken: String?
         let capability: String?
         let receipt: AssistToolReceipt?
+        let weather: AssistToolValue?
     }
 }
 
@@ -98,12 +103,13 @@ private final class AssistToolCallbackGate {
     private var continuation: CheckedContinuation<String, Error>?
     private var finished = false
 
-    func install(_ continuation: CheckedContinuation<String, Error>) {
+    func install(_ continuation: CheckedContinuation<String, Error>) -> Bool {
         guard !finished else {
             continuation.resume(throwing: AssistToolTransactionError.cancelled)
-            return
+            return false
         }
         self.continuation = continuation
+        return true
     }
 
     func succeed(_ value: String) { resolve(.success(value)) }
@@ -195,7 +201,13 @@ final class AssistToolOperationJournal {
             completedAt: nil
         ))
         if operations.count > Self.maximumOperations {
-            operations.removeFirst(operations.count - Self.maximumOperations)
+            // Never erase unresolved submissions to make space for new work.
+            // Successful metadata can expire; uncertain outcomes require review.
+            guard let disposable = operations.firstIndex(where: { $0.state == .success }) else {
+                operations = previous
+                throw AssistToolTransactionError.journalUnavailable
+            }
+            operations.remove(at: disposable)
         }
         do {
             try persist()
@@ -214,6 +226,19 @@ final class AssistToolOperationJournal {
         operations[index].state = .success
         operations[index].completedAt = Self.timestamp()
         try persist()
+    }
+
+    /// Cancellation may clear the pending continuation after confirm() has
+    /// journaled admission. Inspect durable ownership instead of that UI state.
+    func hasSubmission(operationId: UUID) -> Bool {
+        operations.contains { $0.operationId == operationId.uuidString }
+    }
+
+    /// Only a validated executor receipt proving no native submission may use this.
+    func completeSafeRejection(operationId: UUID) throws {
+        let previous = operations
+        operations.removeAll { $0.operationId == operationId.uuidString }
+        do { try persist() } catch { operations = previous; throw error }
     }
 
     func markOutcomeUnknown(operationId: UUID) throws {
@@ -283,17 +308,21 @@ final class AssistToolTransactionCoordinator {
     }
 
     private let gateway: AssistDeviceCapabilities
+    private let applePlaces: AssistApplePlaces
     private let foreground: @MainActor () -> Bool
     private let journal: AssistToolOperationJournal?
     private var journalUnavailable = false
     private var pending: Pending?
     private var activeToolInteraction = false
+    private var activeApplePlaces = false
+    private var activeExtended = false
     private var activeCallbackGate: AssistToolCallbackGate?
     private(set) var allowsTransientInactivity = false
 
-    init(gateway: AssistDeviceCapabilities, journalURL: URL? = nil,
+    init(gateway: AssistDeviceCapabilities, journalURL: URL? = nil, applePlaces: AssistApplePlaces? = nil,
          foreground: @escaping @MainActor () -> Bool = { AssistToolTransactionCoordinator.defaultForeground }) {
         self.gateway = gateway
+        self.applePlaces = applePlaces ?? .shared
         self.foreground = foreground
         do {
             let resolvedURL: URL
@@ -394,13 +423,16 @@ final class AssistToolTransactionCoordinator {
             preview: preview, token: token, capability: current.capability, receipt: nil, revision: 1, to: onActivity
         )
 
+        let needsDurableReceipt = Self.requiresDurableReceipt(normalized.name)
         var writeSubmitted = false
+        var nativeHandedOff = false
         do {
             try await waitForConfirmation(id: id)
+            try Task.checkCancellation()
             guard let accepted = pending, accepted.id == id, accepted.confirmationAccepted else {
                 throw AssistToolTransactionError.confirmationUnavailable
             }
-            writeSubmitted = normalized.name.effect == .write
+            writeSubmitted = needsDurableReceipt
             // The token has served its sole purpose. It can no longer be used
             // after execution begins, even if the callback returns late.
             pending = nil
@@ -412,7 +444,9 @@ final class AssistToolTransactionCoordinator {
                 requestId: requestId, id: id, call: normalized, status: .executing,
                 preview: preview, token: nil, capability: Self.capability(for: normalized.name), receipt: nil, revision: 2, to: onActivity
             )
-            let result = try await execute(normalized, id: id, destination: destination)
+            let result = try await execute(normalized, id: id, destination: destination) {
+                nativeHandedOff = true
+            }
             try Task.checkCancellation()
             try admission.check()
 
@@ -427,12 +461,26 @@ final class AssistToolTransactionCoordinator {
             let receipt = Self.receipt(id: id, call: normalized, status: "success")
             Self.emit(
                 requestId: requestId, id: id, call: normalized, status: .success,
-                preview: preview, token: nil, capability: Self.capability(for: normalized.name), receipt: receipt, revision: 3, to: onActivity
+                preview: preview, token: nil, capability: Self.capability(for: normalized.name), receipt: receipt,
+                weather: normalized.name == .weather_forecast ? result : nil, revision: 3, to: onActivity
             )
             return result
         } catch {
+            // confirm() journals before waking this task. A simultaneous
+            // cancellation may remove pending before the local flag is set.
+            if needsDurableReceipt, journal?.hasSubmission(operationId: id) == true { writeSubmitted = true }
             if pending?.id == id { clearPending(id: id, error: error) }
             allowsTransientInactivity = false
+            let provenSafe: Bool
+            switch error {
+            case AssistToolTransactionError.rejectedBeforeSubmission, AssistToolTransactionError.cancelledBeforeSubmission:
+                provenSafe = true
+            default: provenSafe = !nativeHandedOff
+            }
+            if provenSafe, writeSubmitted {
+                do { try journal?.completeSafeRejection(operationId: id); writeSubmitted = false }
+                catch { /* Preserve uncertainty if the safe rejection cannot be persisted. */ }
+            }
             if writeSubmitted {
                 try? journal?.markOutcomeUnknown(operationId: id)
                 let receipt = Self.receipt(id: id, call: normalized, status: "outcome_unknown")
@@ -472,7 +520,7 @@ final class AssistToolTransactionCoordinator {
             return false
         }
 
-        if current.call.name.effect == .write {
+        if Self.requiresDurableReceipt(current.call.name) {
             guard let journal, !journalUnavailable else {
                 throw AssistToolTransactionError.journalUnavailable
             }
@@ -495,6 +543,8 @@ final class AssistToolTransactionCoordinator {
     /// submitted in the durable write journal.
     func cancelPending() {
         guard var current = pending else {
+            if activeExtended, activeCallbackGate?.cancel() == true { AssistCapabilityActions.cancel() }
+            if activeApplePlaces, activeCallbackGate?.cancel() == true { applePlaces.cancel() }
             if activeToolInteraction {
                 if activeCallbackGate?.cancel() == true {
                     gateway.cancelToolInteraction()
@@ -559,9 +609,10 @@ final class AssistToolTransactionCoordinator {
     }
 
     private func execute(
-        _ call: AssistDeviceToolCall, id: UUID, destination: AssistDeviceCalendarDestination?
+        _ call: AssistDeviceToolCall, id: UUID, destination: AssistDeviceCalendarDestination?,
+        onHandoff: @MainActor () -> Void
     ) async throws -> AssistToolValue {
-        let interaction = call.name == .photo_select || call.name == .camera_capture || call.name == .biometrics_authenticate
+        let interaction = call.name == .photo_select || call.name == .camera_capture || call.name == .biometrics_authenticate || (call.name.isExtended && call.name.effect != .read)
         if interaction {
             activeToolInteraction = true
             allowsTransientInactivity = true
@@ -576,6 +627,34 @@ final class AssistToolTransactionCoordinator {
 
         let raw: String
         switch call.name {
+        case .alarm_list, .alarm_create, .alarm_update, .alarm_stop, .alarm_cancel, .translation_languages, .text_translate, .document_scan, .document_export_pdf, .document_preview, .document_read, .document_search, .document_index, .document_unindex, .message_compose:
+            activeExtended = true
+            defer { activeExtended = false }
+            raw = try await invoke(onCancel: { AssistCapabilityActions.cancel() },
+                                   classifyError: { AssistCapabilityActions.callbackFailure($0, call: call) },
+                                   onHandoff: onHandoff) { completion in
+                AssistCapabilityActions.execute(call, operationId: id, completion: completion)
+            }
+        case .maps_search, .maps_directions, .weather_forecast:
+            // No Apple framework request exists before the broker consumes the
+            // one-shot token. Both exact locations and the provider are previewed.
+            let payload = try AssistApplePlacesPolicy.toolRequest(call, operationId: id)
+            activeApplePlaces = true
+            defer { activeApplePlaces = false }
+            raw = try await invoke(onCancel: { self.applePlaces.cancel() }) { completion in
+                let callback: AssistApplePlaces.Completion = { result in
+                    switch result {
+                    case .success(let json): completion(json, nil)
+                    case .failure(let error): completion(nil, error as NSError)
+                    }
+                }
+                switch call.name {
+                case .maps_search: self.applePlaces.searchPlaces(payload, completion: callback)
+                case .maps_directions: self.applePlaces.directions(payload, completion: callback)
+                case .weather_forecast: self.applePlaces.forecast(payload, completion: callback)
+                default: completion(nil, AssistApplePlacesPolicy.failure(.invalid))
+                }
+            }
         case .contacts_search:
             raw = try await invoke { completion in
                 self.gateway.searchContacts(call.arguments["query"]!.stringValue!,
@@ -590,7 +669,7 @@ final class AssistToolTransactionCoordinator {
         case .calendar_create:
             guard let destination else { throw AssistToolTransactionError.invalidNativeResult }
             let payload = try Self.legacyPayload(for: call, destination: destination, operationId: id)
-            raw = try await invoke { completion in self.gateway.createCalendarEvent(payload, completion: completion) }
+            raw = try await invoke(onHandoff: onHandoff) { completion in self.gateway.createCalendarEvent(payload, completion: completion) }
         case .reminders_list:
             raw = try await invoke { completion in
                 self.gateway.listReminders(call.arguments["include_completed"]!.boolValue!,
@@ -601,7 +680,7 @@ final class AssistToolTransactionCoordinator {
         case .reminder_create:
             guard let destination else { throw AssistToolTransactionError.invalidNativeResult }
             let payload = try Self.legacyPayload(for: call, destination: destination, operationId: id)
-            raw = try await invoke { completion in self.gateway.createReminder(payload, completion: completion) }
+            raw = try await invoke(onHandoff: onHandoff) { completion in self.gateway.createReminder(payload, completion: completion) }
         case .location_current:
             raw = try await invoke { completion in self.gateway.currentLocation(completion) }
         case .photo_select:
@@ -618,7 +697,7 @@ final class AssistToolTransactionCoordinator {
                 throw AssistToolTransactionError.invalidNativeResult
             }
             let payload = try Self.legacyPayload(for: call, destination: nil, operationId: id)
-            raw = try await invoke { completion in self.gateway.scheduleLocalNotification(payload, completion: completion) }
+            raw = try await invoke(onHandoff: onHandoff) { completion in self.gateway.scheduleLocalNotification(payload, completion: completion) }
         case .biometrics_status:
             raw = try await invoke { completion in self.gateway.biometricStatus(completion) }
         case .biometrics_authenticate:
@@ -638,6 +717,8 @@ final class AssistToolTransactionCoordinator {
 
     private func invoke(
         onCancel: @escaping @MainActor @Sendable () -> Void = {},
+        classifyError: @escaping @MainActor @Sendable (NSError) -> AssistToolTransactionError = { _ in .executionFailed },
+        onHandoff: @MainActor () -> Void = {},
         _ operation: (@escaping AssistDeviceCapabilities.Completion) -> Void
     ) async throws -> String {
         try Task.checkCancellation()
@@ -646,9 +727,14 @@ final class AssistToolTransactionCoordinator {
         defer { if activeCallbackGate === gate { activeCallbackGate = nil } }
         let output = try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
-                gate.install(continuation)
+                guard gate.install(continuation) else { return }
+                guard !Task.isCancelled else { gate.cancel(); return }
+                // No await separates this marker from the concrete executor.
+                // A validated native reply may later prove a safe cancellation;
+                // absent such a reply, every durable handoff remains uncertain.
+                onHandoff()
                 operation { value, error in
-                    if error != nil { gate.fail(AssistToolTransactionError.executionFailed) }
+                    if let error { gate.fail(classifyError(error)) }
                     else if let value { gate.succeed(value) }
                     else { gate.fail(AssistToolTransactionError.invalidNativeResult) }
                 }
@@ -717,6 +803,10 @@ final class AssistToolTransactionCoordinator {
     private static func project(
         call: AssistDeviceToolCall, raw: String, operationId: UUID, destination: AssistDeviceCalendarDestination?
     ) throws -> AssistToolValue {
+        if call.name.isExtended { return try AssistCapabilityActions.project(raw, call: call, operationId: operationId) }
+        if call.name.execution == "apple_network" {
+            return try AssistApplePlacesPolicy.toolResult(raw, call: call, operationId: operationId)
+        }
         guard raw.utf8.count <= maximumGatewayJSONBytes,
               let data = raw.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
@@ -724,6 +814,10 @@ final class AssistToolTransactionCoordinator {
             throw AssistToolTransactionError.invalidNativeResult
         }
         switch call.name {
+        case .alarm_list, .alarm_create, .alarm_update, .alarm_stop, .alarm_cancel, .translation_languages, .text_translate, .document_scan, .document_export_pdf, .document_preview, .document_read, .document_search, .document_index, .document_unindex, .message_compose:
+            throw AssistToolTransactionError.invalidNativeResult
+        case .maps_search, .maps_directions, .weather_forecast:
+            throw AssistToolTransactionError.invalidNativeResult // handled by the closed Apple validator above
         case .contacts_search:
             guard let source = dictionary["contacts"] as? [[String: Any]] else {
                 throw AssistToolTransactionError.invalidNativeResult
@@ -907,7 +1001,7 @@ final class AssistToolTransactionCoordinator {
         case .camera_capture: "camera"
         case .notification_schedule: "notifications"
         case .biometrics_authenticate: "biometrics"
-        case .photo_select, .biometrics_status, .device_capabilities, .native_boundary: nil
+        case .photo_select, .biometrics_status, .device_capabilities, .native_boundary, .maps_search, .maps_directions, .weather_forecast, .alarm_list, .alarm_create, .alarm_update, .alarm_stop, .alarm_cancel, .translation_languages, .text_translate, .document_scan, .document_export_pdf, .document_preview, .document_read, .document_search, .document_index, .document_unindex, .message_compose: nil
         }
     }
 
@@ -931,8 +1025,35 @@ final class AssistToolTransactionCoordinator {
             guard let value = call.arguments[key]?.stringValue, !value.isEmpty else { return nil }
             return AssistToolPreviewField(label: label, value: value)
         }
+        func coordinate(_ latitude: String, _ longitude: String) throws -> String {
+            guard case .number(let lat) = call.arguments[latitude], case .number(let lon) = call.arguments[longitude] else {
+                throw AssistToolTransactionError.invalidNativeResult
+            }
+            return "\(lat), \(lon)"
+        }
+        if call.name.isExtended {
+            return AssistCapabilityActions.preview(call)
+        }
         let fields: [AssistToolPreviewField?]
         switch call.name {
+        case .alarm_list, .alarm_create, .alarm_update, .alarm_stop, .alarm_cancel, .translation_languages, .text_translate, .document_scan, .document_export_pdf, .document_preview, .document_read, .document_search, .document_index, .document_unindex, .message_compose:
+            return AssistCapabilityActions.preview(call)
+        case .maps_search:
+            fields = [.init(label: "Envoi à", value: "Apple Maps, service en ligne"),
+                      .init(label: "Recherche transmise", value: try value("query")),
+                      .init(label: "Résultats max.", value: String(call.arguments["limit"]!.integerValue!))]
+        case .maps_directions:
+            fields = [.init(label: "Envoi à", value: "Apple Maps, service en ligne"),
+                      .init(label: "Départ transmis", value: try coordinate("origin_latitude", "origin_longitude")),
+                      .init(label: "Arrivée transmise", value: try coordinate("destination_latitude", "destination_longitude")),
+                      .init(label: "Transport", value: try value("transport")),
+                      .init(label: "Résultat", value: "Estimation seulement; aucune navigation démarrée")]
+        case .weather_forecast:
+            fields = [.init(label: "Envoi à", value: "Apple Weather, service en ligne"),
+                      .init(label: "Lieu transmis", value: try coordinate("latitude", "longitude")),
+                      .init(label: "Unité", value: try value("unit")),
+                      .init(label: "Heures max.", value: String(call.arguments["hourly_count"]!.integerValue!)),
+                      .init(label: "Jours max.", value: String(call.arguments["daily_count"]!.integerValue!))]
         case .contacts_search:
             fields = [.init(label: "Recherche", value: try value("query")), .init(label: "Résultats max.", value: String(call.arguments["limit"]!.integerValue!))]
         case .calendar_list:
@@ -977,7 +1098,7 @@ final class AssistToolTransactionCoordinator {
     private static func emit(
         requestId: String, id: UUID, call: AssistDeviceToolCall, status: AssistToolTransactionStatus,
         preview: [AssistToolPreviewField], token: UUID?, capability: String?, receipt: AssistToolReceipt?,
-        revision: Int, to onActivity: @Sendable (String) -> Void
+        weather: AssistToolValue? = nil, revision: Int, to onActivity: @Sendable (String) -> Void
     ) {
         let envelope = AssistToolActivityEnvelope(
             requestId: requestId,
@@ -985,7 +1106,7 @@ final class AssistToolTransactionCoordinator {
                 id: id.uuidString, revision: revision, tool: call.name.rawValue, effect: call.name.effect.rawValue,
                 title: title(for: call.name), status: status.rawValue, preview: Array(preview.prefix(10)),
                 confirmationToken: status == .awaitingConfirmation ? token?.uuidString : nil,
-                capability: capability, receipt: receipt
+                capability: capability, receipt: receipt, weather: weather
             )
         )
         guard let data = try? JSONEncoder().encode(envelope), let json = String(data: data, encoding: .utf8) else { return }
@@ -994,6 +1115,8 @@ final class AssistToolTransactionCoordinator {
 
     private static func title(for name: AssistToolName) -> String {
         switch name {
+        case .alarm_list, .alarm_create, .alarm_update, .alarm_stop, .alarm_cancel, .translation_languages, .text_translate, .document_scan, .document_export_pdf, .document_preview, .document_read, .document_search, .document_index, .document_unindex, .message_compose:
+            AssistExtendedToolsPolicy.title(name)
         case .contacts_search: "Rechercher des contacts"
         case .calendar_list: "Consulter le calendrier"
         case .calendar_create: "Créer un événement"
@@ -1007,6 +1130,9 @@ final class AssistToolTransactionCoordinator {
         case .biometrics_authenticate: "Confirmer par biométrie"
         case .device_capabilities: "Consulter les capacités de l’appareil"
         case .native_boundary: "Vérifier une limite native"
+        case .maps_search: "Rechercher un lieu"
+        case .maps_directions: "Estimer un trajet"
+        case .weather_forecast: "Consulter la météo"
         }
     }
 
@@ -1016,8 +1142,14 @@ final class AssistToolTransactionCoordinator {
         if error is CancellationError { return true }
         guard let transaction = error as? AssistToolTransactionError else { return false }
         switch transaction {
-        case .cancelled, .confirmationExpired: return true
+        case .cancelled, .cancelledBeforeSubmission, .confirmationExpired: return true
         default: return false
         }
+    }
+
+    /// These tools expose interactive Apple UI but can create durable effects.
+    /// Their public effect remains interactive; it is not a retry guarantee.
+    private static func requiresDurableReceipt(_ name: AssistToolName) -> Bool {
+        name.effect == .write || [.message_compose, .document_scan, .document_export_pdf].contains(name)
     }
 }

@@ -1,5 +1,9 @@
 # État de vérification — 15 octobre 2026
 
+Ce document conserve les preuves historiques. Pour le candidat non livré et
+l’audit de dépendances du 19 octobre, voir la
+[stabilisation native29](native29-stabilization-2026-10-19.md).
+
 Le build de diagnostic **1.0.0 (4)** est désormais signé et disponible en test
 interne TestFlight (`VALID`, `IN_BETA_TESTING`). Il ajoute les
 [observations numériques bornées](gemma-numeric-fidelity.md#diagnostic-de-lécart-restant)

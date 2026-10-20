@@ -31,6 +31,7 @@ function controller(extra: Partial<VoiceController> = {}): VoiceController {
     error: '',
     diagnostics: null,
     audioDiagnostics: [],
+    refreshCapabilities: jest.fn(async () => {}),
     captureBusy: false,
     startListening: jest.fn(async () => true),
     finishListening: jest.fn(async () => true),

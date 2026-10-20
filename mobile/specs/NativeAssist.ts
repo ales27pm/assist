@@ -11,6 +11,40 @@ export type CalendarActivityEvent = {
 
 /** Native owns model paths, lifecycle, cancellation, and local inference. */
 export interface Spec extends TurboModule {
+  /** Foreground user controls; secrets are entered/stored only by native UI. */
+  executeAlarms(requestJSON: string): Promise<string>;
+  cancelAlarms(): Promise<string>;
+  executeTranslation(requestJSON: string): Promise<string>;
+  cancelTranslation(): Promise<string>;
+  executeDocumentAction(requestJSON: string): Promise<string>;
+  cancelDocumentActions(): Promise<string>;
+  getPendingNativeIntent(): Promise<string>;
+  dismissNativeIntent(id: string): Promise<string>;
+  getPrivateServiceStatus(): Promise<string>;
+  presentPrivateServiceSetup(): Promise<string>;
+  disconnectPrivateService(): Promise<string>;
+  searchPrivateService(requestJSON: string): Promise<string>;
+  /** Isolated public-web profile; never receives device data or chat history. */
+  getResearchCapabilities(): Promise<string>;
+  generateResearch(requestJSON: string): Promise<string>;
+  getApplePlacesStatus(): Promise<string>;
+  searchApplePlaces(requestJSON: string): Promise<string>;
+  getAppleDirections(requestJSON: string): Promise<string>;
+  getAppleForecast(requestJSON: string): Promise<string>;
+  openApplePlace(requestId: string, resultId: string): Promise<string>;
+  cancelApplePlaces(): Promise<string>;
+  renderWeatherAttribution(requestJSON: string): Promise<string>;
+  cancelWeatherAttribution(requestId: string): Promise<string>;
+  openPrivateSearchResult(requestId: string, resultId: string): Promise<string>;
+  getDocumentStatus(): Promise<string>;
+  importDocument(): Promise<string>;
+  getDocumentInbox(): Promise<string>;
+  readDocument(itemId: string): Promise<string>;
+  removeDocument(itemId: string): Promise<string>;
+  exportDocumentText(payloadJSON: string): Promise<string>;
+  getTaskCheckpoints(): Promise<string>;
+  updateTaskCheckpoint(requestJSON: string): Promise<string>;
+  cancelNativeWorkspace(): Promise<string>;
   /** Read-only iOS consent and platform-boundary snapshot; never prompts. */
   getDeviceCapabilityStatus(): Promise<string>;
   /** Requests exactly one user-invoked native capability. */
@@ -71,6 +105,10 @@ export interface Spec extends TurboModule {
   generateCalendarToday(requestJSON: string): Promise<string>;
   /** Closed native tool registry; advertises support without reading data. */
   getDeviceToolCapabilities(): Promise<string>;
+  /** Versioned compiled primitives; availability never grants permission. */
+  getToolHostCapabilities(): Promise<string>;
+  /** Negotiated device profile, using the same native owner and confirmations. */
+  generateWithToolHost(requestJSON: string): Promise<string>;
   /** Fresh opted-in turn. Every native access still requires confirmation. */
   generateWithTools(requestJSON: string): Promise<string>;
   confirmToolAction(
@@ -96,6 +134,8 @@ export interface Spec extends TurboModule {
   /** Native-only task metadata JSON; never a model transcript or calendar rows. */
   readonly onCalendarActivity: CodegenTypes.EventEmitter<CalendarActivityEvent>;
   readonly onToolActivity: CodegenTypes.EventEmitter<ProgressEvent>;
+  /** Signal only; no shortcut text, document IDs, or consent is emitted. */
+  readonly onNativeIntentChanged: CodegenTypes.EventEmitter<ProgressEvent>;
 }
 
 // Android is a future backend, not a simulated Core AI implementation.

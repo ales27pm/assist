@@ -132,6 +132,14 @@ enum AssistToolName: String, CaseIterable, Codable, Sendable {
     case contacts_search, calendar_list, calendar_create, reminders_list, reminder_create
     case location_current, photo_select, camera_capture, notification_schedule
     case biometrics_status, biometrics_authenticate, device_capabilities, native_boundary
+    case maps_search, maps_directions, weather_forecast
+    case alarm_list, alarm_create, alarm_update, alarm_stop, alarm_cancel
+    case translation_languages, text_translate
+    case document_scan, document_export_pdf, document_preview, document_read, document_search, document_index, document_unindex, message_compose
+
+    static var legacyCases: [Self] { Array(allCases.prefix(13)) }
+    var isExtended: Bool { Self.allCases.firstIndex(of: self)! >= 16 }
+    var execution: String { [.maps_search, .maps_directions, .weather_forecast].contains(self) ? "apple_network" : "device" }
 
     var effect: AssistToolEffect { AssistDeviceToolRegistry.effect(of: self) }
 }
@@ -161,8 +169,8 @@ enum AssistDeviceToolRegistry {
 
     static func effect(of name: AssistToolName) -> AssistToolEffect {
         switch name {
-        case .calendar_create, .reminder_create, .notification_schedule: .write
-        case .photo_select, .camera_capture, .biometrics_authenticate: .interactive
+        case .calendar_create, .reminder_create, .notification_schedule, .alarm_create, .alarm_update, .alarm_stop, .alarm_cancel, .document_index, .document_unindex: .write
+        case .photo_select, .camera_capture, .biometrics_authenticate, .text_translate, .document_scan, .document_export_pdf, .document_preview, .message_compose: .interactive
         default: .read
         }
     }
@@ -175,6 +183,7 @@ enum AssistDeviceToolRegistry {
     /// notification identifiers and consent tokens belong to the host only.
     static func validate(call: AssistDeviceToolCall, now: Date = Date()) throws -> AssistDeviceToolCall {
         _ = try AssistToolValue.object(call.arguments).validated()
+        if call.name.isExtended { return try AssistExtendedToolsPolicy.validate(call, now: now) }
         var arguments = call.arguments
         func keys(_ required: Set<String>, optional: Set<String> = []) throws {
             let actual = Set(arguments.keys)
@@ -201,7 +210,30 @@ enum AssistDeviceToolRegistry {
             let end = try AssistToolContent.timestamp(endRaw)
             guard end > start, end.timeIntervalSince(start) <= Double(maximumDays) * 86_400 else { throw AssistToolContractError.invalidArguments }
         }
+        func coordinate(_ latitude: String, _ longitude: String) throws {
+            guard case .number(let lat) = arguments[latitude], case .number(let lon) = arguments[longitude],
+                  lat.isFinite, lon.isFinite, (-90...90).contains(lat), (-180...180).contains(lon) else {
+                throw AssistToolContractError.invalidArguments
+            }
+        }
         switch call.name {
+        case .alarm_list, .alarm_create, .alarm_update, .alarm_stop, .alarm_cancel, .translation_languages, .text_translate, .document_scan, .document_export_pdf, .document_preview, .document_read, .document_search, .document_index, .document_unindex, .message_compose:
+            throw AssistToolContractError.invalidArguments // handled by the extended registry above
+        case .maps_search:
+            try keys(["query", "limit"]); try limit()
+            let query = try text("query", maximum: 256, trim: true)
+            guard !query.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw AssistToolContractError.invalidArguments }
+            arguments["query"] = .string(query)
+        case .maps_directions:
+            try keys(["origin_latitude", "origin_longitude", "destination_latitude", "destination_longitude", "transport"])
+            try coordinate("origin_latitude", "origin_longitude"); try coordinate("destination_latitude", "destination_longitude")
+            guard ["walking", "automobile"].contains(try text("transport", maximum: 16)) else { throw AssistToolContractError.invalidArguments }
+        case .weather_forecast:
+            try keys(["latitude", "longitude", "unit", "hourly_count", "daily_count"])
+            try coordinate("latitude", "longitude")
+            guard ["celsius", "fahrenheit"].contains(try text("unit", maximum: 16)),
+                  let hourly = arguments["hourly_count"]?.integerValue, (0...12).contains(hourly),
+                  let daily = arguments["daily_count"]?.integerValue, (0...5).contains(daily) else { throw AssistToolContractError.invalidArguments }
         case .contacts_search:
             try keys(["query", "limit"]); try limit()
             arguments["query"] = .string(try text("query", maximum: 256, trim: true))
@@ -241,6 +273,7 @@ enum AssistDeviceToolRegistry {
     }
 
     private static func definition(_ name: AssistToolName) -> Definition {
+        if name.isExtended { return AssistExtendedToolsPolicy.definition(name) }
         func string(_ description: String, maximum: Int, minimum: Int = 0) -> Definition {
             ["type": "string", "description": description, "minLength": minimum, "maxLength": maximum]
         }
@@ -252,7 +285,27 @@ enum AssistDeviceToolRegistry {
         var properties: Definition = [:]
         var required: [String] = []
         let description: String
+        let latitude: Definition = ["type": "number", "minimum": -90, "maximum": 90]
+        let longitude: Definition = ["type": "number", "minimum": -180, "maximum": 180]
         switch name {
+        case .alarm_list, .alarm_create, .alarm_update, .alarm_stop, .alarm_cancel, .translation_languages, .text_translate, .document_scan, .document_export_pdf, .document_preview, .document_read, .document_search, .document_index, .document_unindex, .message_compose:
+            return AssistExtendedToolsPolicy.definition(name)
+        case .maps_search:
+            description = "Rechercher au plus cinq lieux via Apple Maps. Le texte exact est transmis à Apple seulement après aperçu et confirmation tactile. Aucun accès implicite à la position. Résultats non fiables et non exhaustifs."
+            properties = ["query": string("Lieu ou recherche explicite à transmettre à Apple.", maximum: 256, minimum: 1), "limit": limit]
+            required = ["query", "limit"]
+        case .maps_directions:
+            description = "Estimer un trajet Apple Maps entre coordonnées explicites. Les deux lieux et le transport sont confirmés avant envoi à Apple. Demander une précision si manquants; ne démarre aucune navigation."
+            properties = ["origin_latitude": latitude, "origin_longitude": longitude, "destination_latitude": latitude, "destination_longitude": longitude,
+                          "transport": ["type": "string", "enum": ["walking", "automobile"]] as Definition]
+            required = ["origin_latitude", "origin_longitude", "destination_latitude", "destination_longitude", "transport"]
+        case .weather_forecast:
+            description = "Consulter WeatherKit pour des coordonnées explicites après confirmation tactile avant leur envoi à Apple. Prévision non garantie, avec attribution Apple obligatoire. Aucun accès implicite à la position."
+            properties = ["latitude": latitude, "longitude": longitude,
+                          "unit": ["type": "string", "enum": ["celsius", "fahrenheit"]] as Definition,
+                          "hourly_count": ["type": "integer", "minimum": 0, "maximum": 12] as Definition,
+                          "daily_count": ["type": "integer", "minimum": 0, "maximum": 5] as Definition]
+            required = ["latitude", "longitude", "unit", "hourly_count", "daily_count"]
         case .contacts_search:
             description = "Chercher au plus cinq contacts. Lecture autorisée uniquement par le système natif; aucune modification ni communication."
             properties = ["query": string("Nom ou recherche explicite de l’utilisateur.", maximum: 256, minimum: 1), "limit": limit]

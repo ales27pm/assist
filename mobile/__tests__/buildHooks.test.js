@@ -15,7 +15,7 @@ test('native update runtimes match the current native build', () => {
   const strings = readFileSync(join(mobileRoot, 'android/app/src/main/res/values/strings.xml'), 'utf8');
   const xcodeProject = readFileSync(join(mobileRoot, 'ios/Assist.xcodeproj/project.pbxproj'), 'utf8');
   const buildNumbers = [...xcodeProject.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map(match => match[1]);
-  expect([...new Set(buildNumbers)]).toEqual(['28']);
+  expect([...new Set(buildNumbers)]).toEqual(['29']);
   expect(typeof config.runtimeVersion).toBe('string');
   expect(config.runtimeVersion).toBe(`1.0.0-native${buildNumbers[0]}`);
   expect(expoPlist.match(/<key>EXUpdatesRuntimeVersion<\/key>\s*<string>([^<]+)<\/string>/)?.[1]).toBe(config.runtimeVersion);
@@ -74,12 +74,24 @@ if [ "$1" = '../scripts/check-speech-voices.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" 
 if [ "$1" = '../scripts/check-fluid-voice.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'fluid-voice' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-advanced-voice-files.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'advanced-voice-files' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-fluid-sdk.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'fluid-sdk' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-inference-admission.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'inference-admission' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-agent-calendar.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'agent-calendar' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-gemma-tools.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'gemma-tools' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-agent-loop.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'agent-loop' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-device-tools.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'device-tools' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-device-tool-host.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'device-tool-host' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-device-tool-loop.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'device-tool-loop' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-tool-transactions.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'tool-transactions' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-private-service.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'private-service' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-shared-inbox.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'shared-inbox' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-task-checkpoints.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'task-checkpoints' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-alarms.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'alarms' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-translation.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'translation' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-document-actions.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'document-actions' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-native-workspace.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'native-workspace' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-research-loop.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'research-loop' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-apple-places.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'apple-places' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-weather-attribution.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'weather-attribution' ]; then exit 1; fi
 [ "$ASSIST_HOOK_TEST_FAIL" != '${command}' ]
 `,
       { mode: 0o755 },
@@ -109,7 +121,7 @@ test('Android preinstall succeeds without invoking any iOS prerequisites', () =>
 
 test('iOS preinstall verifies launch, voice and closed device-tool agent contracts in order', () => {
   runHook('ios');
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8').trim().split('\n')).toEqual(['python3', 'node', ...Array(27).fill('bash')]);
 });
 
 test('iOS preinstall propagates a failed prerequisite and stops subsequent checks', () => {
@@ -161,9 +173,9 @@ test('iOS preinstall propagates fluid-sdk failure', () => {
   expect(readFileSync(logPath, 'utf8')).toBe('python3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
 });
 
-test.each(['agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-loop', 'tool-transactions'])('iOS preinstall blocks on %s failure', failure => {
+test.each(['inference-admission', 'agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-host', 'device-tool-loop', 'tool-transactions', 'private-service', 'shared-inbox', 'task-checkpoints', 'alarms', 'translation', 'document-actions', 'native-workspace', 'research-loop', 'apple-places', 'weather-attribution'])('iOS preinstall blocks on %s failure', failure => {
   expect(() => runHook('ios', failure)).toThrow();
   expect(readFileSync(logPath, 'utf8').split('\n').filter(Boolean).length).toBe(
-    12 + ['agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-loop', 'tool-transactions'].indexOf(failure),
+    12 + ['inference-admission', 'agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-host', 'device-tool-loop', 'tool-transactions', 'private-service', 'shared-inbox', 'task-checkpoints', 'alarms', 'translation', 'document-actions', 'native-workspace', 'research-loop', 'apple-places', 'weather-attribution'].indexOf(failure),
   );
 });

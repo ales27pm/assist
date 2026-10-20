@@ -1,3 +1,4 @@
+import {extendedToolEffect} from '../src/nativeBundleTools';
 import React from 'react';
 import { Pressable, Text } from 'react-native';
 import { renderAsync, screen, userEvent } from '@testing-library/react-native';
@@ -27,7 +28,7 @@ function transaction(
   extra: Partial<DeviceToolTransaction> = {},
 ): DeviceToolTransaction {
   const selectedTool = extra.tool ?? 'calendar_create';
-  const effect = [
+  const effect = extendedToolEffect(selectedTool) ?? ([
     'calendar_create',
     'reminder_create',
     'notification_schedule',
@@ -37,7 +38,7 @@ function transaction(
         selectedTool,
       )
     ? 'interactive'
-    : 'read';
+    : 'read');
   return {
     id: 'private-operation-id',
     revision: 1,
@@ -152,6 +153,19 @@ test.each(['read', 'write', 'interactive'] as const)(
     expect(
       screen.queryByText(/accès à tout|contrôle complet/i),
     ).not.toBeOnTheScreen();
+  },
+);
+
+test.each(['maps_search', 'maps_directions', 'weather_forecast'] as const)(
+  '%s states that Apple network services are used, not an offline read',
+  async tool => {
+    await renderAsync(
+      <DeviceToolCard transaction={transaction('executing', { tool })} />,
+    );
+    expect(
+      screen.getByText('Lecture · service Apple en ligne'),
+    ).toBeOnTheScreen();
+    expect(screen.queryByText(/sur cet appareil/)).not.toBeOnTheScreen();
   },
 );
 

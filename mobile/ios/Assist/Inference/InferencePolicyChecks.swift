@@ -69,6 +69,57 @@ struct InferencePolicyChecks {
         ))
         try request.validate()
         try expect(request.maxTokens == nil, "JSON null preserved as remaining context")
+        let bounded = try AssistGenerationRequest.decodeJSON(
+            #"{"requestId":"bounded","messages":[{"role":"user","content":"Bonjour"}],"temperature":0}"#)
+        try expect(bounded.messages[0].content == "Bonjour", "bounded JSON preserves complete text")
+        try AssistInferenceInputPolicy.validateJSON(String(repeating: "x", count: 4 * 1_024 * 1_024))
+        checks += 1
+        do {
+            // Invalid JSON as well: the byte rejection must precede JSONDecoder.
+            _ = try AssistGenerationRequest.decodeJSON(String(repeating: "x", count: 4 * 1_024 * 1_024 + 1))
+            throw AssistInferenceError.invalid("FAIL: oversized JSON accepted")
+        } catch let failure as AssistInferenceError {
+            try expect(failure.localizedDescription.contains("4 Mio"), "oversized JSON rejected before decode")
+        }
+        try reject("UTF-8 limit, not character count") {
+            try AssistInferenceInputPolicy.validateJSON(String(repeating: "é", count: 2 * 1_024 * 1_024 + 1))
+        }
+        try AssistGenerationRequest(
+            requestId: "boundary", messages: Array(repeating: .init(role: "user", content: "x"), count: 512),
+            temperature: 0, maxTokens: nil).validate()
+        checks += 1
+        try reject("513 messages before template/tokenizer") {
+            try AssistGenerationRequest(
+                requestId: "too-many", messages: Array(repeating: .init(role: "user", content: "x"), count: 513),
+                temperature: 0, maxTokens: nil).validate()
+        }
+        do {
+            // These entries cannot decode as messages: count admission wins
+            // before attempting to materialize the oversized message array.
+            let entries = Array(repeating: "null", count: 513).joined(separator: ",")
+            _ = try AssistGenerationRequest.decodeJSON(
+                "{\"requestId\":\"decode-limit\",\"messages\":[\(entries)],\"temperature\":0}")
+            throw AssistInferenceError.invalid("FAIL: oversized message array decoded")
+        } catch let failure as AssistInferenceError {
+            try expect(failure.localizedDescription.contains("512 messages"), "message count checked before decoding entries")
+        }
+        try AssistGenerationRequest(
+            requestId: "one-MiB", messages: [.init(role: "user", content: String(repeating: "x", count: 1_024 * 1_024))],
+            temperature: 0, maxTokens: nil).validate()
+        checks += 1
+        try reject("message above one MiB before template/tokenizer") {
+            try AssistGenerationRequest(
+                requestId: "too-large", messages: [.init(role: "user", content: String(repeating: "é", count: 512 * 1_024 + 1))],
+                temperature: 0, maxTokens: nil).validate()
+        }
+        do {
+            let content = String(repeating: "x", count: 1_024 * 1_024 + 1)
+            _ = try AssistGenerationRequest.decodeJSON(
+                "{\"requestId\":\"decode-limit\",\"messages\":[{\"role\":\"user\",\"content\":\"\(content)\"}],\"temperature\":0}")
+            throw AssistInferenceError.invalid("FAIL: oversized message decoded")
+        } catch let failure as AssistInferenceError {
+            try expect(failure.localizedDescription.contains("1 Mio"), "per-message bytes checked during decoding")
+        }
         var zeroBudgetMessage = ""
         do {
             try AssistGenerationRequest(

@@ -76,6 +76,17 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+test('an older capability read cannot overwrite the capabilities refreshed after a backend change', async () => {
+  const old = deferred<string>();
+  native.getVoiceStatus.mockReturnValueOnce(old.promise);
+  const { result } = await renderHookAsync(() => useLocalVoice({ enabled: false, onTranscript: () => undefined }));
+  await act(async () => result.current.refreshCapabilities());
+  expect(result.current.status?.recognitionAvailable).toBe(true);
+  await act(async () => old.resolve(JSON.stringify({ ...JSON.parse(status()), recognitionAvailable: false })));
+  expect(result.current.status?.recognitionAvailable).toBe(true);
+  expect(native.startListening).not.toHaveBeenCalled();
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   Object.defineProperty(AppState, 'currentState', {

@@ -16,6 +16,7 @@ trap 'rm -rf "$ASSIST_DEVICE_TOOLS_CHECK_DIR"' EXIT
   mobile/ios/Assist/Inference/AssistAgentCalendar.swift \
   mobile/ios/Assist/Inference/AssistGemmaToolAdapter.swift \
   mobile/ios/Assist/Inference/AssistToolContracts.swift \
+  mobile/ios/Assist/Inference/AssistExtendedTools.swift \
   mobile/ios/Assist/Inference/AssistDeviceToolAdapter.swift \
   scripts/check-device-tools.swift -o "$ASSIST_DEVICE_TOOLS_CHECK_DIR/check-device-tools"
 "$ASSIST_DEVICE_TOOLS_CHECK_DIR/check-device-tools"
@@ -40,11 +41,13 @@ def reject(message):
 environment.globals["raise_exception"] = reject
 template = environment.from_string(template_text)
 compatible = environment.from_string(re.sub(r"\{\s+(?=\{[%{]-)", "{{ '{' }}", template_text))
-def render(messages, selected=template):
-    return selected.render(messages=messages, tools=fixture["tools"], add_generation_prompt=True,
+def render(messages, selected=template, tools=None):
+    return selected.render(messages=messages, tools=fixture["tools"] if tools is None else tools, add_generation_prompt=True,
                            bos_token=fixture["bosToken"], eos_token=fixture["eosToken"], **fixture["additionalContext"])
 golden = {"planning": render(fixture["planningMessages"]), "continuation": render(fixture["continuationMessages"]),
-          "multi": render(fixture["multiMessages"])}
+          "multi": render(fixture["multiMessages"]),
+          "subsetPlanning": render(fixture["planningMessages"], tools=fixture["subsetTools"]),
+          "subsetContinuation": render(fixture["continuationMessages"], tools=fixture["subsetTools"])}
 for name, field in [("planning", "planningMessages"), ("continuation", "continuationMessages"), ("multi", "multiMessages")]:
     assert render(fixture[field], compatible) == golden[name]
     for tool in fixture["tools"]:
@@ -63,8 +66,13 @@ for name in fixture["multiNames"]:
     offset = multi.index("<tool_response|>", response) + len("<tool_response|>")
 assert offset == len(multi)
 assert "limit:5.0" not in multi
+for name, field in [("subsetPlanning", "planningMessages"), ("subsetContinuation", "continuationMessages")]:
+    assert render(fixture[field], compatible, tools=fixture["subsetTools"]) == golden[name]
+    assert golden[name].count("<|tool>declaration:") == 1
+    assert golden[name].count("declaration:calendar_list{") == 1
+    assert "declaration:device_capabilities{" not in golden[name]
 golden_path.write_text(json.dumps(golden, ensure_ascii=False, sort_keys=True))
-print("PASS: independent pinned canonical Jinja rendering; 13 declarations; chronological four-call same-turn continuation; no floating limits")
+print("PASS: independent pinned canonical Jinja rendering; complete and calendar-only declarations; chronological four-call same-turn continuation; no floating limits")
 PY
   "$ASSIST_DEVICE_TOOLS_CHECK_DIR/check-device-tools" --golden-json "$ASSIST_DEVICE_TOOLS_CHECK_DIR/golden.json"
 fi

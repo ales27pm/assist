@@ -4,6 +4,8 @@ import { useAppearance } from './appearance';
 import { DeviceToolTransaction, deviceToolLabels } from './deviceToolProtocol';
 import { ActionButton, Disclosure } from './uiPrimitives';
 import { uiGrammar } from './uiGrammar';
+import { WeatherForecastCard } from './WeatherForecastCard';
+import { WeatherPresentationStatus } from './WeatherPresentationGate';
 
 const labels: Record<DeviceToolTransaction['status'], string> = {
   awaiting_confirmation: 'Ton accord est requis',
@@ -17,9 +19,13 @@ const labels: Record<DeviceToolTransaction['status'], string> = {
 export function DeviceToolCard({
   transaction,
   onReview,
+  onWeatherReady,
+  weatherBlocked,
 }: {
   transaction: DeviceToolTransaction;
   onReview?: () => void;
+  onWeatherReady?: (status: WeatherPresentationStatus) => void;
+  weatherBlocked?: boolean;
 }) {
   const {
     theme: { colors },
@@ -41,7 +47,12 @@ export function DeviceToolCard({
           : transaction.effect === 'interactive'
           ? 'Interaction iOS'
           : 'Lecture'}{' '}
-        · sur cet appareil
+        ·{' '}
+        {['maps_search', 'maps_directions', 'weather_forecast'].includes(
+          transaction.tool,
+        )
+          ? 'service Apple en ligne'
+          : 'sur cet appareil'}
       </Text>
       <Text role="heading" style={[styles.title, { color: colors.text }]}>
         {deviceToolLabels[transaction.tool]}
@@ -61,6 +72,13 @@ export function DeviceToolCard({
           L’action a peut-être eu lieu. Vérifie dans l’app concernée avant toute
           nouvelle création. Aucun nouvel essai automatique.
         </Text>
+      )}
+      {transaction.weather && transaction.status === 'success' && (
+        <WeatherForecastCard
+          forecast={transaction.weather}
+          blocked={weatherBlocked}
+          onReady={onWeatherReady}
+        />
       )}
       {transaction.receipt?.summary.map((field, index) => (
         <Text key={index} style={[styles.body, { color: colors.text }]}>

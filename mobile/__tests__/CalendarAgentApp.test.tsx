@@ -9,7 +9,9 @@ import {
 } from '@testing-library/react-native';
 import { AssistantScreen } from '../App';
 import NativeAssist from '../specs/NativeAssist';
-import { deviceToolNames } from '../src/deviceToolProtocol';
+import { legacyDeviceToolNames } from '../src/deviceToolProtocol';
+import {extendedDeviceToolNames, extendedToolEffects} from '../src/nativeBundleTools';
+const legacyToolNames = legacyDeviceToolNames;
 
 jest.mock(
   'react-native-safe-area-context',
@@ -42,6 +44,8 @@ jest.mock('../specs/NativeAssist', () => ({
     finishSpeech: jest.fn(),
     requestDeviceCapability: jest.fn(),
     listCalendarEvents: jest.fn(),
+    renderWeatherAttribution: jest.fn(),
+    cancelWeatherAttribution: jest.fn(),
   },
 }));
 
@@ -117,6 +121,9 @@ async function emitActivity(
 beforeEach(() => {
   jest.useFakeTimers();
   jest.clearAllMocks();
+  // Native28 does not export either additive Tool Host v2 method.
+  Reflect.deleteProperty(native, 'getToolHostCapabilities');
+  Reflect.deleteProperty(native, 'generateWithToolHost');
   for (const method of Object.values(native)) method.mockReset();
   jest.replaceProperty(Platform, 'OS', 'ios');
   Object.defineProperty(AppState, 'currentState', {
@@ -699,7 +706,7 @@ async function openToolsChat() {
     JSON.stringify({
       schemaVersion: 1,
       protocolVersion: 1,
-      tools: deviceToolNames,
+      tools: legacyToolNames,
       confirmation: 'all_accesses',
     }),
   );
@@ -716,16 +723,245 @@ async function sendToolTask(
 ) {
   await user.type(screen.getByLabelText('Message'), text);
   await user.press(screen.getByRole('button', { name: 'Envoyer' }));
-  return JSON.parse(native.generateWithTools.mock.calls[0][0])
-    .requestId as string;
+  const generate =
+    typeof native.generateWithToolHost === 'function'
+      ? native.generateWithToolHost
+      : native.generateWithTools;
+  return JSON.parse(generate.mock.calls[0][0]).requestId as string;
 }
+
+function toolHostCapabilities() {
+  return {
+    schemaVersion: 1,
+    hostProtocolVersions: [2],
+    policyVersion: 1,
+    catalogRevision: 'device-v1-13',
+    confirmation: 'all_accesses',
+    tools: legacyToolNames.map(id => ({
+      id,
+      version: 1,
+      effect: [
+        'calendar_create',
+        'reminder_create',
+        'notification_schedule',
+      ].includes(id)
+        ? 'write'
+        : [
+            'photo_select',
+            'camera_capture',
+            'biometrics_authenticate',
+          ].includes(id)
+        ? 'interactive'
+        : 'read',
+      execution: 'device',
+      availability: 'available',
+    })),
+  };
+}
+function exposeToolHost(value: unknown = toolHostCapabilities()) {
+  const capabilities = jest.fn().mockResolvedValue(JSON.stringify(value));
+  const generate = jest.fn(async (json: string) =>
+    toolsResult(JSON.parse(json).requestId),
+  );
+  Object.defineProperties(native, {
+    getToolHostCapabilities: { value: capabilities, configurable: true },
+    generateWithToolHost: { value: generate, configurable: true },
+  });
+  return { capabilities, generate };
+}
+
+const forecastEvidence = {
+  schemaVersion: 1, requestId: 'f8603f53-79d0-483e-96d2-7ec5ef1170f7',
+  coordinate: { latitude: 46.8, longitude: -71.2 }, temperatureUnit: 'celsius',
+  retrievedAt: '2026-10-19T12:00:00Z',
+  current: { date: '2026-10-19T11:00:00Z', condition: 'clear', symbolName: 'sun.max', temperature: 7.5, apparentTemperature: 6, humidity: 0.5, windKilometersPerHour: 10 },
+  hourly: [], daily: [], forecastNotGuarantee: true,
+  attribution: {
+    serviceName: 'Apple Weather', legalAttributionText: 'Attribution Apple originale.',
+    legalPageURL: 'https://weatherkit.apple.com/legal-attribution.html',
+    combinedMarkLightURL: 'https://weatherkit.apple.com/assets/branding/en/Apple_Weather_blk_en_3X_090122.png',
+    combinedMarkDarkURL: 'https://weatherkit.apple.com/assets/branding/en/Apple_Weather_wht_en_3X_090122.png',
+  },
+};
+function exposeAppleToolHost() {
+  const old = toolHostCapabilities();
+  return exposeToolHost({ ...old, catalogRevision: 'device-v2-16', tools: [...old.tools,
+    ...['maps_search', 'maps_directions', 'weather_forecast'].map(id => ({ id, version: 1, effect: 'read', execution: 'apple_network', availability: 'available' })),
+  ] });
+}
+test('native29 negotiates its 31 compiled contracts while keeping every action in the existing agent bridge', async () => {
+  const old = toolHostCapabilities();
+  const host = exposeToolHost({...old, catalogRevision: 'device-v3-31', tools: [
+    ...old.tools,
+    ...['maps_search', 'maps_directions', 'weather_forecast'].map(id => ({id, version: 1, effect: 'read', execution: 'apple_network', availability: 'available'})),
+    ...extendedDeviceToolNames.map(id => ({id, version: 1, effect: extendedToolEffects[id], execution: 'device', availability: 'available'})),
+  ]});
+  host.generate.mockImplementation(async json => toolsResult(JSON.parse(json).requestId));
+  const user = await openToolsChat();
+  await sendToolTask(user, 'Prépare un minuteur de cinq minutes.');
+  const sent = JSON.parse(host.generate.mock.calls[0][0]);
+  expect(sent.catalogRevision).toBe('device-v3-31');
+  expect(sent.requiredTools).toHaveLength(31);
+  expect(sent.requiredTools).toEqual(expect.arrayContaining([
+    {id: 'alarm_create', version: 1}, {id: 'text_translate', version: 1},
+    {id: 'document_scan', version: 1}, {id: 'message_compose', version: 1},
+  ]));
+  expect(native.generateWithTools).not.toHaveBeenCalled();
+  expect(native.confirmToolAction).not.toHaveBeenCalled();
+});
+function mockWeatherMark() {
+  native.renderWeatherAttribution.mockImplementation(async json => {
+    const request = JSON.parse(json);
+    return JSON.stringify({ schemaVersion: 1, requestId: request.requestId, sourceURL: request.markURL,
+      pngDataURI: 'data:image/png;base64,iVBORw0KGgo' + 'A'.repeat(32), width: 231, height: 42, rendered: true });
+  });
+  native.cancelWeatherAttribution.mockResolvedValue('{"schemaVersion":1,"cancelled":true}');
+}
+test('a final native weather receipt survives a lost activity event and gates the answer on attribution', async () => {
+  mockWeatherMark();
+  const host = exposeAppleToolHost();
+  host.generate.mockImplementation(async json => JSON.stringify({ ...JSON.parse(toolsResult(JSON.parse(json).requestId, 'Réponse météo vérifiée.')), weather: [forecastEvidence] }));
+  const user = await openToolsChat();
+  await sendToolTask(user, 'Quelle météo à Québec ?');
+  const mark = await screen.findByLabelText('Marque officielle Apple Weather');
+  expect(screen.queryByText('Réponse météo vérifiée.')).not.toBeOnTheScreen();
+  expect(native.speak).not.toHaveBeenCalled();
+  await act(async () => fireEvent(mark, 'load'));
+  expect(await screen.findByText('Réponse météo vérifiée.')).toBeOnTheScreen();
+  expect(screen.getByText('Attribution Apple originale.')).toBeOnTheScreen();
+  expect(native.renderWeatherAttribution).toHaveBeenCalledTimes(1);
+});
+test('an unavailable official mark prevents weather prose from being exposed as a successful answer', async () => {
+  native.renderWeatherAttribution.mockRejectedValue(new Error('Image unavailable'));
+  native.cancelWeatherAttribution.mockResolvedValue('{}');
+  const host = exposeAppleToolHost();
+  host.generate.mockImplementation(async json => JSON.stringify({ ...JSON.parse(toolsResult(JSON.parse(json).requestId, 'PRIVATE_WEATHER_VALUES')), weather: [forecastEvidence] }));
+  const user = await openToolsChat();
+  await sendToolTask(user, 'Quelle météo à Québec ?');
+  expect(await screen.findByText(/Les prévisions ont été obtenues, mais leur attribution/)).toBeOnTheScreen();
+  expect(screen.queryByText('PRIVATE_WEATHER_VALUES')).not.toBeOnTheScreen();
+  expect(screen.queryByText(/7.5 °C/)).not.toBeOnTheScreen();
+  expect(native.speak).not.toHaveBeenCalled();
+  expect(host.generate).toHaveBeenCalledTimes(1);
+});
+test('cancellation during mark loading rejects the late image and final weather answer', async () => {
+  mockWeatherMark();
+  const host = exposeAppleToolHost();
+  host.generate.mockImplementation(async json => JSON.stringify({ ...JSON.parse(toolsResult(JSON.parse(json).requestId, 'LATE_WEATHER_ANSWER')), weather: [forecastEvidence] }));
+  const user = await openToolsChat();
+  await sendToolTask(user, 'Quelle météo à Québec ?');
+  const mark = await screen.findByLabelText('Marque officielle Apple Weather');
+  await user.press(screen.getByRole('button', { name: 'Annuler la génération' }));
+  await act(async () => fireEvent(mark, 'load'));
+  expect(screen.queryByText('LATE_WEATHER_ANSWER')).not.toBeOnTheScreen();
+  expect(screen.queryByText(/7.5 °C/)).not.toBeOnTheScreen();
+  expect(native.cancel).toHaveBeenCalledTimes(1);
+  expect(host.generate).toHaveBeenCalledTimes(1);
+});
+
+test('Tool Host v2 is preferred while native28 keeps the legacy fallback', async () => {
+  const host = exposeToolHost();
+  const user = await openToolsChat();
+  const requestId = await sendToolTask(user);
+  expect(host.capabilities).toHaveBeenCalledTimes(1);
+  expect(native.getDeviceToolCapabilities).not.toHaveBeenCalled();
+  expect(native.generateWithTools).not.toHaveBeenCalled();
+  expect(JSON.parse(host.generate.mock.calls[0][0])).toEqual({
+    schemaVersion: 1,
+    hostProtocolVersion: 2,
+    catalogRevision: 'device-v1-13',
+    requiredTools: legacyToolNames.map(id => ({ id, version: 1 })),
+    profile: 'device_v1',
+    requestId,
+    messages: [{ role: 'user', content: 'Qu’ai-je demain matin ?' }],
+    maxTokens: expect.any(Number),
+    temperature: 0,
+  });
+  expect(screen.getByText('Lecture terminée.')).toBeOnTheScreen();
+});
+
+test.each([
+  'malformed',
+  'missing-tool',
+  'incompatible-effect',
+  'partial-bridge',
+  'missing-v2-capabilities',
+  'rejected',
+])('an advertised %s v2 host never downgrades to v1', async mode => {
+  const value = toolHostCapabilities();
+  if (mode === 'missing-tool') value.tools.shift();
+  if (mode === 'incompatible-effect') value.tools[0].effect = 'write';
+  const host = exposeToolHost(mode === 'malformed' ? {} : value);
+  if (mode === 'partial-bridge')
+    Reflect.deleteProperty(native, 'generateWithToolHost');
+  if (mode === 'missing-v2-capabilities')
+    Reflect.deleteProperty(native, 'getToolHostCapabilities');
+  if (mode === 'rejected')
+    host.capabilities.mockRejectedValue(new Error('Bridge failed'));
+  native.getDeviceToolCapabilities.mockResolvedValue(
+    JSON.stringify({
+      schemaVersion: 1,
+      protocolVersion: 1,
+      confirmation: 'all_accesses',
+      tools: legacyToolNames,
+    }),
+  );
+  const user = await openChat();
+  const toggle = screen.getByRole('switch', { name: toolsSwitch });
+  expect(toggle).toBeDisabled();
+  await user.press(toggle);
+  expect(native.getDeviceToolCapabilities).not.toHaveBeenCalled();
+  expect(native.generateWithTools).not.toHaveBeenCalled();
+  expect(host.generate).not.toHaveBeenCalled();
+});
+
+test('v2 freezes the negotiated known selection and reuses native confirmation and stop', async () => {
+  const value = toolHostCapabilities();
+  const host = exposeToolHost({
+    ...value,
+    tools: [
+      ...value.tools,
+      {
+        id: 'future_native_tool',
+        version: 2,
+        effect: 'read',
+        execution: 'device',
+        availability: 'available',
+      },
+    ],
+  });
+  const pending = deferred<string>();
+  host.generate.mockReturnValue(pending.promise);
+  const user = await openToolsChat();
+  const requestId = await sendToolTask(user);
+  await emitDeviceActivity(requestId, 'awaiting_confirmation');
+  expect(native.confirmToolAction).not.toHaveBeenCalled();
+  await user.press(
+    screen.getByRole('button', { name: 'Autoriser cette lecture' }),
+  );
+  expect(native.confirmToolAction).toHaveBeenCalledTimes(1);
+  expect(native.confirmToolAction).toHaveBeenCalledWith(
+    'native-operation-1',
+    'native-confirmation-token',
+  );
+  expect(JSON.parse(host.generate.mock.calls[0][0]).requiredTools).toEqual(
+    legacyToolNames.map(id => ({ id, version: 1 })),
+  );
+  await user.press(
+    screen.getByRole('button', { name: 'Annuler la génération' }),
+  );
+  expect(native.cancel).toHaveBeenCalledTimes(1);
+  await act(async () => pending.resolve(toolsResult(requestId)));
+  expect(native.generateWithTools).not.toHaveBeenCalled();
+  expect(native.listCalendarEvents).not.toHaveBeenCalled();
+});
 
 test('the generic catalogue is opt-in and ordinary chat never reads private data', async () => {
   native.getDeviceToolCapabilities.mockResolvedValue(
     JSON.stringify({
       schemaVersion: 1,
       protocolVersion: 1,
-      tools: deviceToolNames,
+      tools: legacyToolNames,
       confirmation: 'all_accesses',
     }),
   );

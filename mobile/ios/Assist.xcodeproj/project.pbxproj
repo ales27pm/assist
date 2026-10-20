@@ -7,6 +7,53 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A57700000000000000000001 = {isa = PBXBuildFile; fileRef = A57800000000000000000001; };
+		A57700000000000000000002 = {isa = PBXBuildFile; fileRef = A57800000000000000000002; };
+		A57700000000000000000003 = {isa = PBXBuildFile; fileRef = A57800000000000000000003; };
+		A57700000000000000000004 = {isa = PBXBuildFile; fileRef = A57800000000000000000004; };
+		A57700000000000000000005 = {isa = PBXBuildFile; fileRef = A57800000000000000000005; };
+		A5770000000000000000000E = {isa = PBXBuildFile; fileRef = A57800000000000000000005; };
+		A57700000000000000000006 = {isa = PBXBuildFile; fileRef = A57800000000000000000006; };
+		A57700000000000000000007 = {isa = PBXBuildFile; fileRef = A57800000000000000000007; };
+		A57700000000000000000008 = {isa = PBXBuildFile; fileRef = A57800000000000000000008; };
+		A57700000000000000000009 = {isa = PBXBuildFile; fileRef = A57800000000000000000009; };
+		A5770000000000000000000A = {isa = PBXBuildFile; fileRef = A5780000000000000000000A; };
+		A5770000000000000000000B = {isa = PBXBuildFile; fileRef = A5780000000000000000000B; };
+		A5770000000000000000000C = {isa = PBXBuildFile; fileRef = A5780000000000000000000C; };
+		A5770000000000000000000D = {isa = PBXBuildFile; fileRef = A5780000000000000000000D; };
+		A57700000000000000000065 = {isa = PBXBuildFile; fileRef = A57800000000000000000065; };
+		A57700000000000000000066 = {isa = PBXBuildFile; fileRef = A57800000000000000000066; };
+		A57700000000000000000067 = {isa = PBXBuildFile; fileRef = A57800000000000000000067; };
+		A57700000000000000000068 = {isa = PBXBuildFile; fileRef = A57800000000000000000068; };
+		A57700000000000000000069 = {isa = PBXBuildFile; fileRef = A57800000000000000000069; };
+		A5770000000000000000006A = {isa = PBXBuildFile; fileRef = A5780000000000000000006A; };
+		A5770000000000000000006B = {isa = PBXBuildFile; fileRef = A5780000000000000000006B; };
+		A5770000000000000000006C = {isa = PBXBuildFile; fileRef = A5780000000000000000006C; };
+		A5770000000000000000006D = {isa = PBXBuildFile; fileRef = A5780000000000000000006D; };
+		A57600000000000000000001 = {isa = PBXBuildFile; fileRef = A57600000000000000000011; };
+		A57600000000000000000002 = {isa = PBXBuildFile; fileRef = A57600000000000000000012; };
+		A57500000000000000000001 = {isa = PBXBuildFile; fileRef = A57500000000000000000011; };
+		A57500000000000000000002 = {isa = PBXBuildFile; fileRef = A57500000000000000000012; };
+		A57500000000000000000003 = {isa = PBXBuildFile; fileRef = A57500000000000000000013; };
+		A57500000000000000000004 = {isa = PBXBuildFile; fileRef = A57500000000000000000014; };
+		A57500000000000000000005 = {isa = PBXBuildFile; fileRef = A57500000000000000000015; };
+		A57500000000000000000006 = {isa = PBXBuildFile; fileRef = A57500000000000000000016; };
+		A57500000000000000000007 = {isa = PBXBuildFile; fileRef = A57500000000000000000017; };
+		A57400000000000000000001 /* AssistPrivateServicePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57400000000000000000021; };
+		A57400000000000000000002 /* AssistPrivateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57400000000000000000022; };
+		A57400000000000000000003 /* AssistNativeServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57400000000000000000023; };
+		A57400000000000000000004 /* AssistTaskCheckpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57400000000000000000024; };
+		A57400000000000000000005 /* AssistDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57400000000000000000025; };
+		A57400000000000000000006 /* AssistSharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57400000000000000000026; };
+		A57400000000000000000007 /* AssistSharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57400000000000000000026; };
+		A57400000000000000000008 /* AssistSharedInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57400000000000000000026; };
+		A57400000000000000000009 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57400000000000000000027; };
+		A5740000000000000000000A /* AssistWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57400000000000000000028; };
+		A5740000000000000000000B /* AssistShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A57400000000000000000029; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A5740000000000000000000C /* AssistWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A5740000000000000000002A; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A5740000000000000000000D /* Share privacy in Resources */ = {isa = PBXBuildFile; fileRef = A5740000000000000000002B; };
+		A5740000000000000000000E /* Widget privacy in Resources */ = {isa = PBXBuildFile; fileRef = A5740000000000000000002C; };
+		A57300000000000000000001 /* AssistToolHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57300000000000000000011 /* AssistToolHost.swift */; };
 		A57200000000000000000001 /* AssistToolContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57200000000000000000011 /* AssistToolContracts.swift */; };
 		A57200000000000000000002 /* AssistDeviceToolAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57200000000000000000012 /* AssistDeviceToolAdapter.swift */; };
 		A57200000000000000000003 /* AssistToolTransactions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57200000000000000000013 /* AssistToolTransactions.swift */; };
@@ -51,7 +98,60 @@
 		A57000000000000000000001 /* AssistDeviceCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57000000000000000000011 /* AssistDeviceCapabilities.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		A57400000000000000000031 = {isa = PBXContainerItemProxy; containerPortal = 83CBB9F71A601CBA00E9B192; proxyType = 1; remoteGlobalIDString = A57400000000000000000041; remoteInfo = AssistShare; };
+		A57400000000000000000032 = {isa = PBXContainerItemProxy; containerPortal = 83CBB9F71A601CBA00E9B192; proxyType = 1; remoteGlobalIDString = A57400000000000000000042; remoteInfo = AssistWidget; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A57400000000000000000033 /* Embed App Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (A5740000000000000000000B, A5740000000000000000000C, ); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		A57800000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistExtendedTools.swift; sourceTree = "<group>"; };
+		A57800000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistCapabilityActions.swift; sourceTree = "<group>"; };
+		A57800000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistAlarmPolicy.swift; sourceTree = "<group>"; };
+		A57800000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistAlarms.swift; sourceTree = "<group>"; };
+		A57800000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Shared/AssistAlarmAttributes.swift; sourceTree = "<group>"; };
+		A57800000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistTranslationPolicy.swift; sourceTree = "<group>"; };
+		A57800000000000000000007 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistTranslation.swift; sourceTree = "<group>"; };
+		A57800000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistDocumentActionsPolicy.swift; sourceTree = "<group>"; };
+		A57800000000000000000009 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistDocumentActions.swift; sourceTree = "<group>"; };
+		A5780000000000000000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistDocumentSpotlight.swift; sourceTree = "<group>"; };
+		A5780000000000000000000B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistIntentInbox.swift; sourceTree = "<group>"; };
+		A5780000000000000000000C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistAppIntents.swift; sourceTree = "<group>"; };
+		A5780000000000000000000D = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistWidget/AssistAlarmLiveActivity.swift; sourceTree = "<group>"; };
+		A57800000000000000000065 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AlarmKit.framework; path = System/Library/Frameworks/AlarmKit.framework; sourceTree = SDKROOT; };
+		A57800000000000000000066 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ActivityKit.framework; path = System/Library/Frameworks/ActivityKit.framework; sourceTree = SDKROOT; };
+		A57800000000000000000067 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Translation.framework; path = System/Library/Frameworks/Translation.framework; sourceTree = SDKROOT; };
+		A57800000000000000000068 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NaturalLanguage.framework; path = System/Library/Frameworks/NaturalLanguage.framework; sourceTree = SDKROOT; };
+		A57800000000000000000069 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VisionKit.framework; path = System/Library/Frameworks/VisionKit.framework; sourceTree = SDKROOT; };
+		A5780000000000000000006A = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuickLook.framework; path = System/Library/Frameworks/QuickLook.framework; sourceTree = SDKROOT; };
+		A5780000000000000000006B = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MessageUI.framework; path = System/Library/Frameworks/MessageUI.framework; sourceTree = SDKROOT; };
+		A5780000000000000000006C = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreSpotlight.framework; path = System/Library/Frameworks/CoreSpotlight.framework; sourceTree = SDKROOT; };
+		A5780000000000000000006D = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
+		A57600000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistWeatherAttribution.swift; sourceTree = "<group>"; };
+		A57600000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistWeatherAttributionPolicy.swift; sourceTree = "<group>"; };
+		A57500000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistResearchAdapter.swift; sourceTree = "<group>"; };
+		A57500000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistResearchRun.swift; sourceTree = "<group>"; };
+		A57500000000000000000013 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistApplePlacesPolicy.swift; sourceTree = "<group>"; };
+		A57500000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistApplePlaces.swift; sourceTree = "<group>"; };
+		A57500000000000000000015 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MapKit.framework; path = System/Library/Frameworks/MapKit.framework; sourceTree = SDKROOT; };
+		A57500000000000000000016 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WeatherKit.framework; path = System/Library/Frameworks/WeatherKit.framework; sourceTree = SDKROOT; };
+		A57500000000000000000017 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreLocation.framework; path = System/Library/Frameworks/CoreLocation.framework; sourceTree = SDKROOT; };
+		A57400000000000000000021 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistPrivateServicePolicy.swift; sourceTree = "<group>"; };
+		A57400000000000000000022 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistPrivateService.swift; sourceTree = "<group>"; };
+		A57400000000000000000023 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistNativeServices.swift; sourceTree = "<group>"; };
+		A57400000000000000000024 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistTaskCheckpoint.swift; sourceTree = "<group>"; };
+		A57400000000000000000025 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/AssistDocuments.swift; sourceTree = "<group>"; };
+		A57400000000000000000026 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Shared/AssistSharedInbox.swift; sourceTree = "<group>"; };
+		A57400000000000000000027 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistShare/ShareViewController.swift; sourceTree = "<group>"; };
+		A57400000000000000000028 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistWidget/AssistWidget.swift; sourceTree = "<group>"; };
+		A57400000000000000000029 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = AssistShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A5740000000000000000002A = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = AssistWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A5740000000000000000002B = {isa = PBXFileReference; lastKnownFileType = text.xml; path = AssistShare/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A5740000000000000000002C = {isa = PBXFileReference; lastKnownFileType = text.xml; path = AssistWidget/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A57300000000000000000011 /* AssistToolHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistToolHost.swift; sourceTree = "<group>"; };
 		A57200000000000000000011 /* AssistToolContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistToolContracts.swift; sourceTree = "<group>"; };
 		A57200000000000000000012 /* AssistDeviceToolAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistDeviceToolAdapter.swift; sourceTree = "<group>"; };
 		A57200000000000000000013 /* AssistToolTransactions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistToolTransactions.swift; sourceTree = "<group>"; };
@@ -100,11 +200,25 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		A57400000000000000000051 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A57400000000000000000052 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		13B07F8C1A680F5B00A75B9A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A57700000000000000000065,
+				A57700000000000000000066,
+				A57700000000000000000067,
+				A57700000000000000000068,
+				A57700000000000000000069,
+				A5770000000000000000006A,
+				A5770000000000000000006B,
+				A5770000000000000000006C,
+				A5770000000000000000006D,
 				A55000000000000000000005 /* CoreAILM in Frameworks */,
+				A57500000000000000000005,
+				A57500000000000000000006,
+				A57500000000000000000007,
 				A55000000000000000000006 /* Tokenizers in Frameworks */,
 				A56500000000000000000001 /* FluidAudio in Frameworks */,
 				0C80B921A6F3F58F76C31292 /* libPods-Assist.a in Frameworks */,
@@ -139,6 +253,45 @@
 				A57200000000000000000012 /* AssistDeviceToolAdapter.swift */,
 				A57200000000000000000013 /* AssistToolTransactions.swift */,
 				A57200000000000000000014 /* AssistDeviceToolRun.swift */,
+				A57300000000000000000011 /* AssistToolHost.swift */,
+				A57500000000000000000011,
+				A57500000000000000000012,
+				A57500000000000000000013,
+				A57500000000000000000014,
+				A57600000000000000000011,
+				A57600000000000000000012,
+				A57800000000000000000001,
+				A57800000000000000000002,
+				A57800000000000000000003,
+				A57800000000000000000004,
+				A57800000000000000000005,
+				A57800000000000000000006,
+				A57800000000000000000007,
+				A57800000000000000000008,
+				A57800000000000000000009,
+				A5780000000000000000000A,
+				A5780000000000000000000B,
+				A5780000000000000000000C,
+				A5780000000000000000000D,
+				A57800000000000000000065,
+				A57800000000000000000066,
+				A57800000000000000000067,
+				A57800000000000000000068,
+				A57800000000000000000069,
+				A5780000000000000000006A,
+				A5780000000000000000006B,
+				A5780000000000000000006C,
+				A5780000000000000000006D,
+				A57400000000000000000021,
+				A57400000000000000000022,
+				A57400000000000000000023,
+				A57400000000000000000024,
+				A57400000000000000000025,
+				A57400000000000000000026,
+				A57400000000000000000027,
+				A57400000000000000000028,
+				A5740000000000000000002B,
+				A5740000000000000000002C,
 				A55100000000000000000011 /* AssistNumericalProbe.swift */,
 				A55100000000000000000012 /* NumericalProbe */,
 				A55200000000000000000012 /* NumericalProbeFP32 */,
@@ -166,6 +319,9 @@
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
 				5DCACB8F33CDC322A6C60F78 /* libPods-Assist.a */,
+				A57500000000000000000015,
+				A57500000000000000000016,
+				A57500000000000000000017,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -195,6 +351,8 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* Assist.app */,
+				A57400000000000000000029 /* AssistShare.appex */,
+				A5740000000000000000002A /* AssistWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -211,6 +369,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		A57400000000000000000041 /* AssistShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A57400000000000000000061;
+			buildPhases = (A57400000000000000000053, A57400000000000000000051, A57400000000000000000055, );
+			buildRules = ();
+			dependencies = ();
+			name = AssistShare;
+			productName = AssistShare;
+			productReference = A57400000000000000000029;
+			productType = "com.apple.product-type.app-extension";
+		};
+		A57400000000000000000042 /* AssistWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A57400000000000000000062;
+			buildPhases = (A57400000000000000000054, A57400000000000000000052, A57400000000000000000056, );
+			buildRules = ();
+			dependencies = ();
+			name = AssistWidget;
+			productName = AssistWidget;
+			productReference = A5740000000000000000002A;
+			productType = "com.apple.product-type.app-extension";
+		};
 		13B07F861A680F5B00A75B9A /* Assist */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "Assist" */;
@@ -223,10 +403,13 @@
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
+				A57400000000000000000033 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A57400000000000000000071,
+				A57400000000000000000072,
 			);
 			name = Assist;
 			productName = Assist;
@@ -270,11 +453,15 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* Assist */,
+				A57400000000000000000041 /* AssistShare */,
+				A57400000000000000000042 /* AssistWidget */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		A57400000000000000000055 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A5740000000000000000000D, ); runOnlyForDeploymentPostprocessing = 0; };
+		A57400000000000000000056 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A5740000000000000000000E, ); runOnlyForDeploymentPostprocessing = 0; };
 		13B07F8E1A680F5B00A75B9A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -388,10 +575,24 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		A57400000000000000000053 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A57400000000000000000007, A57400000000000000000009, ); runOnlyForDeploymentPostprocessing = 0; };
+		A57400000000000000000054 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A57400000000000000000008, A5740000000000000000000A, A5770000000000000000000E, A5770000000000000000000D, ); runOnlyForDeploymentPostprocessing = 0; };
 		13B07F871A680F5B00A75B9A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A57700000000000000000001,
+				A57700000000000000000002,
+				A57700000000000000000003,
+				A57700000000000000000004,
+				A57700000000000000000005,
+				A57700000000000000000006,
+				A57700000000000000000007,
+				A57700000000000000000008,
+				A57700000000000000000009,
+				A5770000000000000000000A,
+				A5770000000000000000000B,
+				A5770000000000000000000C,
 				A55000000000000000000001 /* RCTNativeAssist.mm in Sources */,
 				A55000000000000000000002 /* ModelDirectoryPicker.swift in Sources */,
 				A55D00000000000000000001 /* ModelDirectoryBookmark.swift in Sources */,
@@ -416,6 +617,19 @@
 				A57200000000000000000002 /* AssistDeviceToolAdapter.swift in Sources */,
 				A57200000000000000000003 /* AssistToolTransactions.swift in Sources */,
 				A57200000000000000000004 /* AssistDeviceToolRun.swift in Sources */,
+				A57300000000000000000001 /* AssistToolHost.swift in Sources */,
+				A57500000000000000000001,
+				A57500000000000000000002,
+				A57500000000000000000003,
+				A57500000000000000000004,
+				A57600000000000000000001,
+				A57600000000000000000002,
+				A57400000000000000000001,
+				A57400000000000000000002,
+				A57400000000000000000003,
+				A57400000000000000000004,
+				A57400000000000000000005,
+				A57400000000000000000006,
 				A55100000000000000000001 /* AssistNumericalProbe.swift in Sources */,
 				A55300000000000000000001 /* AssistRuntimeMonitor.swift in Sources */,
 				A57000000000000000000001 /* AssistDeviceCapabilities.swift in Sources */,
@@ -426,14 +640,24 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		A57400000000000000000071 = {isa = PBXTargetDependency; target = A57400000000000000000041; targetProxy = A57400000000000000000031; };
+		A57400000000000000000072 = {isa = PBXTargetDependency; target = A57400000000000000000042; targetProxy = A57400000000000000000032; };
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		A57400000000000000000081 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistShare/AssistShare.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 29; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistShare/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.share; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		A57400000000000000000082 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistShare/AssistShare.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 29; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistShare/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.share; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		A57400000000000000000083 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistWidget/AssistWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 29; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		A57400000000000000000084 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistWidget/AssistWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 29; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-Assist.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 28;
+				CODE_SIGN_ENTITLEMENTS = Assist/Assist.entitlements;
+				CURRENT_PROJECT_VERSION = 29;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
@@ -463,9 +687,10 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5709B34CF0A7D63546082F79 /* Pods-Assist.release.xcconfig */;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Assist/Assist.entitlements;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -631,6 +856,8 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		A57400000000000000000061 = {isa = XCConfigurationList; buildConfigurations = (A57400000000000000000081, A57400000000000000000082, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A57400000000000000000062 = {isa = XCConfigurationList; buildConfigurations = (A57400000000000000000083, A57400000000000000000084, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "Assist" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

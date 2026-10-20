@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>NSAlarmKitUsageDescription</key>
+  <string>Assist programme et gère uniquement les alarmes et minuteurs que tu confirmes.</string>
+  <key>NSSupportsLiveActivities</key>
+  <true/>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
@@ -57,6 +61,15 @@
 	<string>Assist utilise Face ID uniquement lorsque vous confirmez une action sensible dans l’application.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Assist utilise votre position actuelle uniquement au premier plan lorsque vous la demandez pour une action précise.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Assist se connecte au serveur Ubuntu que vous configurez pour effectuer vos recherches Internet privées. Aucun accès au réseau local n’est lancé sans votre demande.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key><string>org.27pm.assist.inbox</string>
+			<key>CFBundleURLSchemes</key><array><string>assist</string></array>
+		</dict>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>En mode vocal, Assist écoute vos messages et vos interruptions pendant ses réponses. L’audio reste sur cet iPhone.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

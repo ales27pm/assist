@@ -18,6 +18,10 @@ import { ScreenHeading, SettingsRow, SurfaceGroup } from './uiPrimitives';
 import { VoiceComparisonPanel } from './VoiceComparisonPanel';
 import { AdvancedVoicePanel } from './AdvancedVoicePanel';
 import { DeviceToolsPanel } from './DeviceToolsPanel';
+import { NativeWorkspacePanel } from './NativeWorkspacePanel';
+import { AlarmPanel } from './AlarmPanel';
+import { TranslationPanel } from './TranslationPanel';
+import { DocumentActionsPanel } from './DocumentActionsPanel';
 import { scheduleAccessibilityFocus } from './focusAccessibility';
 
 type Props = {
@@ -35,6 +39,8 @@ type Props = {
   readResponses?: boolean;
   onReadResponsesChange?: (enabled: boolean) => void;
   voiceAvailable?: boolean;
+  onVoiceConfigurationChange?: () => void;
+  workspaceRequest?: number;
 };
 
 export function SettingsScreen({
@@ -52,12 +58,33 @@ export function SettingsScreen({
   readResponses = true,
   onReadResponsesChange,
   voiceAvailable = true,
+  onVoiceConfigurationChange,
+  workspaceRequest = 0,
 }: Props) {
   const { theme } = useAppearance();
   const { colors } = theme;
   const [comparingVoices, setComparingVoices] = useState(false);
   const [advancedVoice, setAdvancedVoice] = useState(false);
   const [deviceTools, setDeviceTools] = useState(false);
+  const [workspace, setWorkspace] = useState(false);
+  const [nativeFeature, setNativeFeature] = useState<'alarms' | 'translation' | 'documents' | null>(null);
+  const nativeFeatureControls = useRef<Partial<Record<'alarms' | 'translation' | 'documents', React.ComponentRef<typeof View> | null>>>({});
+  const previousNativeFeature = useRef(nativeFeature);
+  useEffect(() => {
+    const previous = previousNativeFeature.current;
+    previousNativeFeature.current = nativeFeature;
+    if (previous && !nativeFeature) return scheduleAccessibilityFocus(() => nativeFeatureControls.current[previous]);
+  }, [nativeFeature]);
+  const workspaceControl = useRef<React.ComponentRef<typeof View>>(null);
+  const wasWorkspace = useRef(false);
+  useEffect(() => {
+    if (workspaceRequest > 0) setWorkspace(true);
+  }, [workspaceRequest]);
+  useEffect(() => {
+    const restore = wasWorkspace.current && !workspace;
+    wasWorkspace.current = workspace;
+    if (restore) return scheduleAccessibilityFocus(() => workspaceControl.current);
+  }, [workspace]);
   const deviceToolsControl = useRef<React.ComponentRef<typeof View>>(null);
   const wasDeviceTools = useRef(false);
   useEffect(() => {
@@ -124,10 +151,15 @@ export function SettingsScreen({
     }
   }, [modelStatus, budgetError]);
 
+  if (workspace)
+    return <NativeWorkspacePanel onClose={() => setWorkspace(false)} blocked={busy} />;
+  if (nativeFeature === 'alarms') return <AlarmPanel onClose={() => setNativeFeature(null)} blocked={busy} />;
+  if (nativeFeature === 'translation') return <TranslationPanel onClose={() => setNativeFeature(null)} blocked={busy} />;
+  if (nativeFeature === 'documents') return <DocumentActionsPanel onClose={() => setNativeFeature(null)} blocked={busy} />;
   if (comparingVoices)
     return <VoiceComparisonPanel onClose={() => setComparingVoices(false)} />;
   if (advancedVoice)
-    return <AdvancedVoicePanel onClose={() => setAdvancedVoice(false)} />;
+    return <AdvancedVoicePanel onClose={() => setAdvancedVoice(false)} onConfigurationChange={onVoiceConfigurationChange} />;
   if (deviceTools)
     return (
       <DeviceToolsPanel onClose={() => setDeviceTools(false)} blocked={busy} />
@@ -328,6 +360,40 @@ export function SettingsScreen({
           detail="Autorisations et essais explicites, sans appel par Gemma."
           onPress={() => setDeviceTools(true)}
           controlRef={deviceToolsControl}
+          disabled={busy}
+          stacked
+        />
+        <SettingsRow
+          label="Documents et Ubuntu"
+          value="Imports, connexion privée et tâches"
+          detail="Actions explicites; aucune transmission automatique à Gemma."
+          onPress={() => setWorkspace(true)}
+          controlRef={workspaceControl}
+          disabled={busy}
+          stacked
+        />
+        <SettingsRow
+          label="Alarmes et minuteurs Assist"
+          value="Programmation, arrêt et vérification"
+          detail="Uniquement les alarmes créées par Assist, après ton accord."
+          onPress={() => setNativeFeature('alarms')}
+          controlRef={node => { nativeFeatureControls.current.alarms = node; }}
+          disabled={busy}
+          stacked
+        />
+        <SettingsRow
+          label="Traduction locale"
+          value="Langues installées et téléchargement explicite"
+          onPress={() => setNativeFeature('translation')}
+          controlRef={node => { nativeFeatureControls.current.translation = node; }}
+          disabled={busy}
+          stacked
+        />
+        <SettingsRow
+          label="Scanner, PDF et composition"
+          value="Documents choisis, index local et messages à vérifier"
+          onPress={() => setNativeFeature('documents')}
+          controlRef={node => { nativeFeatureControls.current.documents = node; }}
           disabled={busy}
           stacked
         />

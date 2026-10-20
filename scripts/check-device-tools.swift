@@ -27,14 +27,32 @@ struct DeviceToolChecks {
          call(.location_current), call(.photo_select), call(.camera_capture),
          call(.notification_schedule, ["title": .string("Rappel"), "body": .string("Réunion dans une heure"), "fire_at": .string("2026-10-18T13:00:00Z")]),
          call(.biometrics_status), call(.biometrics_authenticate, ["reason": .string("Confirmer mon identité locale")]),
-         call(.device_capabilities), call(.native_boundary, ["feature": .string("systemSettings")])]
+         call(.device_capabilities), call(.native_boundary, ["feature": .string("systemSettings")]),
+         call(.maps_search, ["query": .string("Bibliothèque Québec"), "limit": .number(5)]),
+         call(.maps_directions, ["origin_latitude": .number(46.8139), "origin_longitude": .number(-71.2080), "destination_latitude": .number(46.8), "destination_longitude": .number(-71.3), "transport": .string("walking")]),
+         call(.weather_forecast, ["latitude": .number(46.8139), "longitude": .number(-71.2080), "unit": .string("celsius"), "hourly_count": .number(12), "daily_count": .number(5)]),
+         call(.alarm_list),
+         call(.alarm_create, ["kind": .string("timer"), "title": .string("Minuteur"), "duration_seconds": .number(300)]),
+         call(.alarm_update, ["alarm_id": .string("12345678-1234-1234-1234-123456789ABC"), "kind": .string("timer"), "title": .string("Minuteur corrigé"), "duration_seconds": .number(60)]),
+         call(.alarm_stop, ["alarm_id": .string("12345678-1234-1234-1234-123456789ABC")]),
+         call(.alarm_cancel, ["alarm_id": .string("12345678-1234-1234-1234-123456789ABC")]),
+         call(.translation_languages, ["source_language": .string(""), "target_language": .string("en")]),
+         call(.text_translate, ["text": .string("Bonjour"), "source_language": .string("fr"), "target_language": .string("en"), "allow_download": .bool(false)]),
+         call(.document_scan, ["max_pages": .number(8)]),
+         call(.document_export_pdf, ["inbox_id": .string("12345678-1234-1234-1234-123456789abc"), "filename": .string("document.pdf")]),
+         call(.document_preview, ["inbox_id": .string("12345678-1234-1234-1234-123456789abc")]),
+         call(.document_read, ["inbox_id": .string("12345678-1234-1234-1234-123456789abc")]),
+         call(.document_search, ["query": .string("Rapport"), "limit": .number(5)]),
+         call(.document_index, ["inbox_id": .string("12345678-1234-1234-1234-123456789abc"), "title": .string("Rapport"), "expiration_days": .number(1)]),
+         call(.document_unindex, ["inbox_id": .string("12345678-1234-1234-1234-123456789abc")]),
+         call(.message_compose, ["channel": .string("email"), "recipients": .string("a@example.test"), "subject": .string("Objet"), "body": .string("Texte exact à vérifier")])]
     }
     static func raw(_ call: AssistDeviceToolCall) -> String {
         let arguments = call.arguments.keys.sorted().map { key in
             let value: String
             switch call.arguments[key]! {
             case .string(let text): value = "<|\"|>\(text)<|\"|>"
-            case .number(let number): value = String(Int(number))
+            case .number(let number): value = number.rounded() == number ? String(Int(number)) : String(number)
             case .bool(let bool): value = bool ? "true" : "false"
             default: value = "null"
             }
@@ -56,6 +74,7 @@ struct DeviceToolChecks {
         }
         return ["planningMessages": planning, "continuationMessages": continuation, "multiMessages": multi,
                 "multiNames": ["calendar_list", "contacts_search", "reminders_list", "device_capabilities"],
+                "subsetTools": AssistDeviceToolAdapter.closedToolSchema(allowedTools: [.calendar_list]),
                 "tools": AssistDeviceToolAdapter.closedToolSchema(), "additionalContext": AssistDeviceToolAdapter.additionalContext,
                 "bosToken": "<bos>", "eosToken": "<eos>"]
     }
@@ -64,9 +83,10 @@ struct DeviceToolChecks {
         if CommandLine.arguments.dropFirst().first == "--fixture-json" {
             print(String(decoding: try JSONSerialization.data(withJSONObject: fixture(), options: [.sortedKeys]), as: UTF8.self)); return
         }
-        try expect(AssistToolName.allCases.count == 13 && Set(examples.map(\.name)) == Set(AssistToolName.allCases), "all thirteen tools covered")
+        try expect(AssistToolName.allCases.count == 31 && Set(examples.map(\.name)) == Set(AssistToolName.allCases), "all thirty-one tools covered")
         let schemas = AssistDeviceToolRegistry.definitions
-        try expect(schemas.count == 13, "thirteen explicit definitions")
+        try expect(schemas.count == 31, "thirty-one explicit definitions")
+        try expect(AssistDeviceToolAdapter.closedToolSchema().count == 31, "v1 schema default remains complete")
         for (name, schema) in zip(AssistToolName.allCases, schemas) {
             guard let function = schema["function"] as? [String: Any], let parameters = function["parameters"] as? [String: Any] else {
                 throw AssistToolContractError.invalidValue
@@ -76,15 +96,28 @@ struct DeviceToolChecks {
             try expect(parameters["type"] as? String == "object" && parameters["properties"] is [String: Any], "explicit object schema")
         }
         for example in examples {
-            try expect(try AssistDeviceToolAdapter.parse(raw: raw(example), stoppedAtToolResponse: true, now: now) == .call(example), "exact call \(example.name)")
+            do {
+                try expect(try AssistDeviceToolAdapter.parse(raw: raw(example), stoppedAtToolResponse: true, now: now) == .call(example), "exact call \(example.name)")
+            } catch {
+                throw NSError(domain: "DeviceToolChecks", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed closed-schema example \(example.name.rawValue): \(error)"])
+            }
             try rejects({ _ = try AssistDeviceToolAdapter.parse(raw: raw(example), stoppedAtToolResponse: false, now: now) }, "no call without observed token50")
             var unknown = example.arguments; unknown["calendarId"] = .string("model-chosen")
             try rejects({ _ = try AssistDeviceToolRegistry.validate(call: call(example.name, unknown), now: now) }, "host-only destination rejected \(example.name)")
         }
-        try expect(AssistToolName.allCases.filter { $0.effect == .write } == [.calendar_create, .reminder_create, .notification_schedule], "exact write classification")
-        try expect(Set(AssistToolName.allCases.filter { $0.effect == .interactive }) == [.photo_select, .camera_capture, .biometrics_authenticate], "exact interactive classification")
+        try expect(AssistToolName.allCases.filter { $0.effect == .write } == [.calendar_create, .reminder_create, .notification_schedule, .alarm_create, .alarm_update, .alarm_stop, .alarm_cancel, .document_index, .document_unindex], "exact write classification")
+        try expect(Set(AssistToolName.allCases.filter { $0.effect == .interactive }) == [.photo_select, .camera_capture, .biometrics_authenticate, .text_translate, .document_scan, .document_export_pdf, .document_preview, .message_compose], "exact interactive classification")
         let trimmed = call(.contacts_search, ["query": .string(" \nÉquipe \t"), "limit": .number(1)])
         try expect(try AssistDeviceToolRegistry.validate(call: trimmed, now: now).arguments["query"] == .string("Équipe"), "query normalized before host preview")
+        for invalid in [
+            call(.maps_search, ["query": .string("Québec\nParis"), "limit": .number(1)]),
+            call(.maps_directions, ["origin_latitude": .number(91), "origin_longitude": .number(0), "destination_latitude": .number(0), "destination_longitude": .number(0), "transport": .string("walking")]),
+            call(.maps_directions, ["origin_latitude": .number(0), "origin_longitude": .number(0), "destination_latitude": .number(0), "destination_longitude": .number(0), "transport": .string("transit")]),
+            call(.weather_forecast, ["latitude": .number(0), "longitude": .number(0), "unit": .string("celsius"), "hourly_count": .number(13), "daily_count": .number(5)]),
+            call(.weather_forecast, ["latitude": .number(0), "longitude": .number(0), "unit": .string("celsius"), "hourly_count": .number(1.5), "daily_count": .number(5)]),
+        ] { try rejects({ _ = try AssistDeviceToolRegistry.validate(call: invalid) }, "closed Apple coordinates/counts/transport") }
+        try expect(AssistToolName.legacyCases.count == 13, "legacy registry stays thirteen")
+        try expect(AssistToolName.allCases.filter { $0.execution == "apple_network" } == [.maps_search, .maps_directions, .weather_forecast], "Apple network execution is explicit")
         let calendar = raw(examples[1])
         let invalidRaw = [
             calendar + calendar, "Je lis. " + calendar, calendar + " suite", calendar + "<|tool_response>",
@@ -154,6 +187,23 @@ struct DeviceToolChecks {
         try expect(AssistToolValue.number(5).sendableValue is Int, "integer arguments stay integer in Jinja")
         let planning = try AssistDeviceToolAdapter.planningMessages(request: request, now: now, timeZone: TimeZone(secondsFromGMT: 0)!)
         try rejects({ _ = try AssistDeviceToolAdapter.continuationMessages(messages: planning, call: examples[1], result: .string("{}")) }, "object result required")
+        // The broker may return after a short alarm's scheduled instant. Its
+        // completed call is evidence, not a new proposal to schedule in the past.
+        let pastAlarmISO = AssistToolContent.iso(now.addingTimeInterval(-1))
+        for name in [AssistToolName.alarm_create, .alarm_update] {
+            var arguments: [String: AssistToolValue] = ["kind": .string("alarm"), "title": .string("Alarme déjà programmée"), "date_iso": .string(pastAlarmISO)]
+            if name == .alarm_update { arguments["alarm_id"] = .string("12345678-1234-1234-1234-123456789ABC") }
+            let completedCall = call(name, arguments)
+            _ = try AssistDeviceToolRegistry.validate(call: completedCall, now: now.addingTimeInterval(-60))
+            try rejects({ _ = try AssistDeviceToolRegistry.validate(call: completedCall, now: now) }, "fresh past alarm admission rejected \(name)")
+            try rejects({ _ = try AssistDeviceToolAdapter.parse(raw: raw(completedCall), stoppedAtToolResponse: true, now: now) }, "fresh past alarm proposal rejected \(name)")
+            let receipt: AssistToolValue = .object(["result_status": .string("succeeded"), "appOwnedOnly": .bool(true)])
+            let historical = try AssistDeviceToolAdapter.continuationMessages(messages: planning, call: completedCall, result: receipt, now: now)
+            try expect(historical.count == planning.count + 1 && historical.last?["tool_responses"] != nil,
+                       "completed past alarm reinjected once without new admission \(name)")
+            var invalidArguments = arguments; invalidArguments["title"] = .string("")
+            try rejects({ _ = try AssistDeviceToolAdapter.continuationMessages(messages: planning, call: call(name, invalidArguments), result: receipt, now: now) }, "historical alarm still validates static arguments \(name)")
+        }
         var messages = planning
         for example in Array(examples.prefix(4)) { messages = try AssistDeviceToolAdapter.continuationMessages(messages: messages, call: example, result: .object(["ok": .bool(true)])) }
         try expect(messages.count == planning.count + 4, "one assistant pair per call")
@@ -167,7 +217,15 @@ struct DeviceToolChecks {
             try AssistDeviceToolAdapter.validateRenderedContinuationPrompt(continuation, calls: [examples[1]])
             try AssistDeviceToolAdapter.validateRenderedContinuationPrompt(multi, calls: [examples[1], examples[0], examples[3], examples[11]])
             try rejects({ try AssistDeviceToolAdapter.validateRenderedContinuationPrompt(multi + "<|turn>model\n", calls: [examples[1], examples[0], examples[3], examples[11]]) }, "no unwanted new turn")
+            guard let subsetPlanning = golden?["subsetPlanning"], let subsetContinuation = golden?["subsetContinuation"] else {
+                throw AssistToolContractError.invalidValue
+            }
+            try AssistDeviceToolAdapter.validateRenderedPlanningPrompt(subsetPlanning, allowedTools: [.calendar_list])
+            try AssistDeviceToolAdapter.validateRenderedContinuationPrompt(subsetContinuation, calls: [examples[1]], allowedTools: [.calendar_list])
+            try rejects({ try AssistDeviceToolAdapter.validateRenderedPlanningPrompt(planningText, allowedTools: [.calendar_list]) }, "extra declarations rejected for subset")
+            try rejects({ try AssistDeviceToolAdapter.validateRenderedPlanningPrompt(subsetPlanning) }, "v1 still requires complete catalogue")
+            try rejects({ try AssistDeviceToolAdapter.validateRenderedContinuationPrompt(subsetContinuation, calls: [examples[0]], allowedTools: [.calendar_list]) }, "unselected continuation rejected")
         }
-        print("PASS: 13 closed tool schemas; strict single-call/boundary grammar; flat typed arguments; UTC/bounds/effects; bounded duplicate-safe JSON; data-marker rejection; four chronological object continuations. Synthetic data only.")
+        print("PASS: 31 closed tool schemas; strict single-call/boundary grammar; flat typed arguments; UTC/bounds/effects; bounded duplicate-safe JSON; data-marker rejection; historical completed alarms without fresh past admission; four chronological object continuations. Synthetic data only.")
     }
 }

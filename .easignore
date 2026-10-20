@@ -1,13 +1,13 @@
 # EAS receives source and diagnostics; only the explicitly staged Gemma bundle may include weights.
 /*
-!/mobile/
-!/scripts/
+!/mobile
+!/scripts
 **/node_modules/
 **/.git/
 **/.expo/
 **/.eas-output/
 **/build/
-!/mobile/.eas/build/
+!/mobile/.eas/build
 **/Pods/
 **/DerivedData/
 **/vendor/
@@ -16,11 +16,11 @@
 **/.idea/
 **/xcuserdata/
 **/*.aimodel/
-!/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/
+!/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel
 !/mobile/ios/Assist/NumericalProbe/RMSNormProbe.aimodel/**
-!/mobile/ios/Assist/NumericalProbeFP32/RMSNormProbe.aimodel/
+!/mobile/ios/Assist/NumericalProbeFP32/RMSNormProbe.aimodel
 !/mobile/ios/Assist/NumericalProbeFP32/RMSNormProbe.aimodel/**
-!/mobile/ios/Assist/BundledModels/Gemma/
+!/mobile/ios/Assist/BundledModels/Gemma
 !/mobile/ios/Assist/BundledModels/Gemma/**
 # Keep secrets and unconverted checkpoints excluded even inside the staged bundle.
 **/.xcode.env.local

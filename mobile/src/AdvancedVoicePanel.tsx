@@ -18,10 +18,13 @@ import type {
 } from './advancedVoice';
 
 /** Resource management only. Opening this screen never requests the microphone. */
-export function AdvancedVoicePanel({ onClose }: { onClose: () => void }) {
+export function AdvancedVoicePanel({ onClose, onConfigurationChange }: {
+  onClose: () => void;
+  onConfigurationChange?: () => void;
+}) {
   const { theme } = useAppearance();
   const { colors } = theme;
-  const voice = useAdvancedVoice();
+  const voice = useAdvancedVoice(onConfigurationChange);
   const heading = useRef<React.ComponentRef<typeof Text>>(null);
   useEffect(() => scheduleAccessibilityFocus(() => heading.current), []);
   const state = voice.state;

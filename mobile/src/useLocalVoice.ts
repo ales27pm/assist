@@ -49,6 +49,7 @@ export function useLocalVoice({
   const monitoringRef = useRef(false);
   const epoch = useRef(0);
   const statusRevision = useRef(0);
+  const capabilityRead = useRef(0);
   const current = useRef<
     | { id: string; kind: 'capture'; failed: boolean; hasFinalText: boolean }
     | { id: string; kind: 'speech'; failed: boolean }
@@ -209,49 +210,40 @@ export function useLocalVoice({
     await readFailureDiagnostics(version);
   }, [cancel, readFailureDiagnostics]);
 
+  const refreshCapabilities = useCallback(async () => {
+    if (!supported || !mounted.current || !foreground.current) return;
+    const read = ++capabilityRead.current;
+    const version = epoch.current;
+    const revision = statusRevision.current;
+    try {
+      const next = parseVoiceStatus(await NativeAssist!.getVoiceStatus());
+      if (!mounted.current || !foreground.current || read !== capabilityRead.current)
+        return;
+      const latest = version === epoch.current && revision === statusRevision.current;
+      // A capability read may outlive cancellation, but must not revive audio.
+      setStatus(latest ? next : {
+        ...next,
+        phase: phaseRef.current === 'stopping' ? 'idle' : phaseRef.current,
+        monitoring: monitoringRef.current,
+        diagnostics: undefined,
+        audioDiagnostics: undefined,
+      });
+      if (latest && !current.current) {
+        rememberDiagnostics(next.diagnostics);
+        if (next.audioDiagnostics !== undefined) setAudioDiagnostics(next.audioDiagnostics);
+      }
+    } catch (e) {
+      if (mounted.current && foreground.current && read === capabilityRead.current &&
+          version === epoch.current && revision === statusRevision.current)
+        setError(errorMessage(e));
+    }
+  }, [supported, rememberDiagnostics]);
+
   useEffect(() => {
     mounted.current = true;
     if (!supported) return;
     let live = true;
-    const refresh = () => {
-      const version = epoch.current;
-      const revision = statusRevision.current;
-      NativeAssist!
-        .getVoiceStatus()
-        .then(json => {
-          if (!live) return;
-          const next = parseVoiceStatus(json);
-          const latest =
-            version === epoch.current && revision === statusRevision.current;
-          // Capability inspection can outlive the initial hidden-screen stop.
-          // Keep its capabilities, but never restore obsolete runtime state.
-          setStatus(
-            latest
-              ? next
-              : {
-                  ...next,
-                  phase:
-                    phaseRef.current === 'stopping' ? 'idle' : phaseRef.current,
-                  monitoring: monitoringRef.current,
-                  diagnostics: undefined,
-                  audioDiagnostics: undefined,
-                },
-          );
-          if (latest && !current.current) {
-            rememberDiagnostics(next.diagnostics);
-            if (next.audioDiagnostics !== undefined)
-              setAudioDiagnostics(next.audioDiagnostics);
-          }
-        })
-        .catch(e => {
-          if (
-            live &&
-            version === epoch.current &&
-            revision === statusRevision.current
-          )
-            setError(errorMessage(e));
-        });
-    };
+    const refresh = refreshCapabilities;
     refresh(); // Capability inspection never requests microphone permissions.
     const subscription = NativeAssist!.onVoiceEvent(event => {
       if (!live || !visible.current || !foreground.current) return;
@@ -339,6 +331,7 @@ export function useLocalVoice({
     });
     const lifecycle = AppState.addEventListener('change', next => {
       foreground.current = next === 'active';
+      if (next !== 'active') ++capabilityRead.current;
       // Privacy prompts temporarily make iOS inactive. Native waits for active
       // before opening the mic; a real background always cancels the request.
       if (
@@ -357,7 +350,7 @@ export function useLocalVoice({
       lifecycle.remove();
       cancel();
     };
-  }, [supported, cancel, rememberDiagnostics, publishPhase]);
+  }, [supported, cancel, rememberDiagnostics, publishPhase, refreshCapabilities]);
 
   useEffect(() => {
     if (!enabled) cancel();
@@ -674,6 +667,7 @@ export function useLocalVoice({
     error,
     diagnostics,
     audioDiagnostics,
+    refreshCapabilities,
     startListening,
     finishListening,
     cancel,
