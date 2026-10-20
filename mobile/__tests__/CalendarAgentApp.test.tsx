@@ -1340,3 +1340,42 @@ test('a finalized voice turn uses the same consent and speaks only the validated
   expect(native.confirmToolAction).toHaveBeenCalledTimes(1);
   expect(native.generate).not.toHaveBeenCalled();
 });
+
+test('native picker cancellation pauses the voice turn without retry, TTS or losing the chat draft', async () => {
+  const pending = deferred<string>();
+  native.generateWithTools.mockReturnValue(pending.promise);
+  const user = await openToolsChat();
+  await user.type(screen.getByLabelText('Message'), 'Brouillon conservé');
+  await user.press(screen.getByRole('button', { name: 'Mode vocal' }));
+  const id = native.startListening.mock.calls[0][0];
+  await act(async () => voiceEvent({
+    json: JSON.stringify({ sessionId: id, kind: 'transcript', phase: 'idle',
+      text: 'Lis le texte de ma photo.', isFinal: true }),
+  }));
+  const { requestId } = JSON.parse(native.generateWithTools.mock.calls[0][0]);
+  const photo = { tool: 'photo_select', effect: 'interactive', title: 'Choisir une photo' };
+  await emitDeviceActivity(requestId, 'awaiting_confirmation', photo);
+  const modal = screen.UNSAFE_getAllByType(Modal).find(item => item.props.visible)!;
+  await user.press(screen.getByRole('button', { name: 'Continuer dans iOS' }));
+  await act(async () => modal.props.onDismiss());
+  await emitDeviceActivity(requestId, 'executing', photo);
+  await emitDeviceActivity(requestId, 'cancelled', photo);
+  await act(async () => pending.resolve(JSON.stringify({
+    ...JSON.parse(toolsResult(requestId, 'L’action a été annulée. Aucun nouvel essai automatique.')),
+    finishReason: 'cancelled',
+  })));
+  expect(screen.getByText('En pause')).toBeOnTheScreen();
+  expect(screen.getByRole('button', { name: 'Reprendre' })).toBeEnabled();
+  expect(screen.queryByText(/La réponse locale ne s’est pas terminée/)).not.toBeOnTheScreen();
+  expect(screen.queryByText(/La tâche outils n’a pas été finalisée/)).not.toBeOnTheScreen();
+  expect(native.generateWithTools).toHaveBeenCalledTimes(1);
+  expect(native.startListening).toHaveBeenCalledTimes(1);
+  expect(native.speak).not.toHaveBeenCalled();
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  expect(native.enqueueSpeech).not.toHaveBeenCalled();
+  await user.press(screen.getByRole('button', { name: 'Reprendre' }));
+  expect(native.startListening).toHaveBeenCalledTimes(2);
+  expect(native.generateWithTools).toHaveBeenCalledTimes(1);
+  await user.press(screen.getByRole('button', { name: 'Fermer le mode vocal' }));
+  expect(screen.getByLabelText('Message').props.value).toBe('Brouillon conservé');
+});

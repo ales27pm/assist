@@ -1,6 +1,7 @@
 import NativeAssist from '../specs/NativeAssist';
 import {
   getDeviceCapabilityStatus,
+  getCurrentLocation,
   listCalendarEvents,
   listReminders,
   requestDeviceCapability,
@@ -11,6 +12,7 @@ jest.mock('../specs/NativeAssist', () => ({
   __esModule: true,
   default: {
     getDeviceCapabilityStatus: jest.fn(),
+    getCurrentLocation: jest.fn(),
     requestDeviceCapability: jest.fn(),
     searchContacts: jest.fn(),
     listCalendarEvents: jest.fn(),
@@ -19,6 +21,15 @@ jest.mock('../specs/NativeAssist', () => ({
 }));
 
 const native = jest.mocked(NativeAssist!);
+const capabilityStates = {
+  contacts: 'notDetermined',
+  calendar: 'authorized',
+  reminders: 'authorized',
+  location: 'authorizedWhenInUse',
+  camera: 'denied',
+  notifications: 'provisional',
+  biometrics: { available: true, type: 'faceId', errorCode: 0 },
+};
 
 describe('device capability bridge', () => {
   beforeEach(() => jest.clearAllMocks());
@@ -26,7 +37,7 @@ describe('device capability bridge', () => {
   it('reads permission state without requesting a capability', async () => {
     native.getDeviceCapabilityStatus.mockResolvedValue(
       JSON.stringify({
-        capabilities: { contacts: 'notDetermined' },
+        capabilities: capabilityStates,
         boundaries: {
           telephony: { supported: false, reason: 'iOS limitation' },
         },
@@ -98,6 +109,101 @@ describe('device capability bridge', () => {
       '3',
     );
   });
+});
+
+describe('native location and capability receipts are validated before UI consumption', () => {
+  const location = {
+    latitude: 45.5,
+    longitude: -73.5,
+    horizontalAccuracy: 12,
+    timestampISO: '2026-10-18T12:00:00Z',
+  };
+  test.each([
+    { latitude: 91 },
+    { latitude: -91 },
+    { longitude: 181 },
+    { longitude: -181 },
+    { horizontalAccuracy: -1 },
+    { timestampISO: 'not-a-timestamp' },
+    { timestampISO: '2026-02-30T12:00:00Z' },
+  ])('rejects malformed location %#', async changes => {
+    native.getCurrentLocation.mockResolvedValue(
+      JSON.stringify({ ...location, ...changes }),
+    );
+    await expect(getCurrentLocation()).rejects.toThrow();
+  });
+  test.each([
+    { latitude: 90, longitude: 180 },
+    { latitude: -90, longitude: -180 },
+  ])('accepts geographic boundary %#', async changes => {
+    native.getCurrentLocation.mockResolvedValue(
+      JSON.stringify({ ...location, ...changes }),
+    );
+    await expect(getCurrentLocation()).resolves.toMatchObject(changes);
+  });
+  test.each([
+    {},
+    { ...capabilityStates, contacts: 'totallyGranted' },
+    { ...capabilityStates, camera: 'limited' },
+    { ...capabilityStates, notifications: 'checkRequired' },
+  ])(
+    'rejects missing or invented permission inventory %#',
+    async capabilities => {
+      native.getDeviceCapabilityStatus.mockResolvedValue(
+        JSON.stringify({ capabilities, boundaries: {} }),
+      );
+      await expect(getDeviceCapabilityStatus()).rejects.toThrow();
+    },
+  );
+  test.each([
+    ['contacts', 'limited'],
+    ['calendar', 'writeOnly'],
+    ['reminders', 'writeOnly'],
+    ['location', 'authorizedAlways'],
+    ['notifications', 'ephemeral'],
+  ])('keeps native %s=%s statuses', async (name, value) => {
+    native.getDeviceCapabilityStatus.mockResolvedValue(
+      JSON.stringify({
+        capabilities: { ...capabilityStates, [name]: value },
+        boundaries: {},
+      }),
+    );
+    await expect(getDeviceCapabilityStatus()).resolves.toMatchObject({
+      capabilities: { [name]: value },
+    });
+  });
+  test.each(['faceID', 'futureSensor', 'authenticated'])(
+    'rejects biometric type outside the native enum: %s',
+    async type => {
+      native.getDeviceCapabilityStatus.mockResolvedValue(
+        JSON.stringify({
+          capabilities: {
+            ...capabilityStates,
+            biometrics: { available: true, type, errorCode: 0 },
+          },
+          boundaries: {},
+        }),
+      );
+      await expect(getDeviceCapabilityStatus()).rejects.toThrow();
+    },
+  );
+  test.each(['faceId', 'touchId', 'opticId', 'none', 'unknown'])(
+    'accepts native biometric type %s',
+    async type => {
+      native.getDeviceCapabilityStatus.mockResolvedValue(
+        JSON.stringify({
+          capabilities: {
+            ...capabilityStates,
+            biometrics: { available: type.endsWith('Id'), type, errorCode: 0 },
+          },
+          boundaries: {},
+        }),
+      );
+      await expect(getDeviceCapabilityStatus()).resolves.toMatchObject({
+        capabilities: { biometrics: { type } },
+      });
+    },
+  );
 });
 
 describe('closed calendar read boundary', () => {

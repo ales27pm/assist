@@ -32,6 +32,12 @@ final class AssistDeviceCapabilities {
     var payloads: [String: Any] = [:]
     var partialCalendarReceipt = false
     var partialReminderReceipt = false
+    var locationReceiptOverride: String?
+    var capabilityReceiptOverride: String?
+    var imageErrorCode: String?
+    var imageReceiptOverride: String?
+    var notificationBooleanAsNumber = false
+    var biometricReceiptOverride: String?
     var deferPermission = false
     private var permissionStarted = false
     private var permissionStartWaiter: CheckedContinuation<Void, Never>?
@@ -78,26 +84,33 @@ final class AssistDeviceCapabilities {
     }
     func currentLocation(_ completion: Completion) {
         calls.append("location")
-        completion("{\"latitude\":45.5,\"longitude\":-73.5,\"horizontalAccuracy\":12,\"timestampISO\":\"2026-10-18T12:00:00Z\"}", nil)
+        completion(locationReceiptOverride ?? "{\"latitude\":45.5,\"longitude\":-73.5,\"horizontalAccuracy\":12,\"timestampISO\":\"2026-10-18T12:00:00Z\"}", nil)
     }
     func selectPhoto(_ completion: Completion) { calls.append("photo_select") }
-    func selectPhotoForToolOCR(_ completion: @escaping Completion) { calls.append("photo_select"); pendingPhotoCompletion = completion }
+    func selectPhotoForToolOCR(_ completion: @escaping Completion) {
+        calls.append("photo_select")
+        if let imageErrorCode { completion(nil, NSError(domain: "Assist.DeviceCapabilities", code: 1,
+            userInfo: ["code": imageErrorCode, NSLocalizedDescriptionKey: "PRIVATE_FRAMEWORK_DESCRIPTION"])); return }
+        pendingPhotoCompletion = completion
+    }
     func capturePhoto(_ completion: Completion) { calls.append("camera_capture") }
     func capturePhotoForToolOCR(_ completion: Completion) {
         calls.append("camera_capture")
-        completion("{\"source\":\"camera\",\"byteCount\":12,\"visionAvailable\":true,\"ocrStatus\":\"no_text\",\"ocrLines\":0,\"ocrTruncated\":false,\"ocrReliable\":false}", nil)
+        if let imageErrorCode { completion(nil, NSError(domain: "Assist.DeviceCapabilities", code: 1,
+            userInfo: ["code": imageErrorCode, NSLocalizedDescriptionKey: "PRIVATE_FRAMEWORK_DESCRIPTION"])); return }
+        completion(imageReceiptOverride ?? "{\"source\":\"camera\",\"byteCount\":12,\"visionAvailable\":true,\"ocrStatus\":\"no_text\",\"ocrLines\":0,\"ocrTruncated\":false,\"ocrReliable\":false}", nil)
     }
     func scheduleLocalNotification(_ payload: String, completion: Completion) {
         calls.append("notification"); payloads["notification"] = payload
         let object = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any]
         let id = object?["id"] as? String ?? ""
-        completion("{\"id\":\"\(id)\",\"scheduled\":true}", nil)
+        completion("{\"id\":\"\(id)\",\"scheduled\":\(notificationBooleanAsNumber ? "1" : "true")}", nil)
     }
-    func biometricStatus(_ completion: Completion) { calls.append("biometric_status"); completion("{\"available\":true,\"type\":\"faceId\"}", nil) }
+    func biometricStatus(_ completion: Completion) { calls.append("biometric_status"); completion(biometricReceiptOverride ?? "{\"available\":true,\"type\":\"faceId\"}", nil) }
     func authenticateWithBiometrics(_ reason: String, completion: Completion) { calls.append("biometric_auth"); completion("{\"authenticated\":true}", nil) }
     func capabilityStatus(_ completion: Completion) {
         calls.append("capabilities")
-        completion("{\"capabilities\":{\"contacts\":\"authorized\",\"calendar\":\"authorized\",\"reminders\":\"authorized\",\"location\":\"authorizedWhenInUse\",\"camera\":\"authorized\",\"notifications\":\"authorized\"}}", nil)
+        completion(capabilityReceiptOverride ?? "{\"capabilities\":{\"contacts\":\"authorized\",\"calendar\":\"authorized\",\"reminders\":\"authorized\",\"location\":\"authorizedWhenInUse\",\"camera\":\"authorized\",\"notifications\":\"authorized\"}}", nil)
     }
     func nativeCapabilityBoundary(_ feature: String, completion: Completion) { calls.append("boundary"); completion("{\"boundary\":{\"supported\":false}}", nil) }
     func deliverLatePhotoResult() {
@@ -111,11 +124,14 @@ final class AssistApplePlaces {
     typealias Completion = (Result<String, Error>) -> Void
     var calls: [String] = []
     var deferResult = false
+    var errorCode: Int?
     var cancelCount = 0
     var pending: Completion?
     func cancel() { cancelCount += 1; pending?(.failure(CancellationError())); pending = nil }
     private func send(_ request: String, tool: String, completion: @escaping Completion) {
         calls.append(tool)
+        if let errorCode { completion(.failure(NSError(domain: "Assist.ApplePlaces", code: errorCode,
+            userInfo: [NSLocalizedDescriptionKey: "PRIVATE_APPLE_FRAMEWORK_DESCRIPTION"]))); return }
         if deferResult { pending = completion; return }
         do {
             var row = try AssistToolValue.decodeJSON(request).objectDictionary!
@@ -153,6 +169,7 @@ final class AssistAlarms {
     var calls: [String] = []
     var status: AssistAlarmPolicy.Status = .succeeded
     var code: AssistAlarmPolicy.Code = .ok
+    var receiptMode = "valid"
     var journalURL: URL?
     var sawDurableSubmission = false
     var cancelCount = 0
@@ -168,11 +185,23 @@ final class AssistAlarms {
                     $0["operationId"] as? String == request.operationId && $0["state"] as? String == "submitted"
                 }
             }
-            let items: [AssistAlarmPolicy.Item] = request.kind == nil || status == .failed_safe ? [] : [
-                .init(request: request, state: request.kind == .timer ? .countdown : .scheduled,
-                      uncertain: status == .outcome_unknown)
-            ]
-            completion(try AssistAlarmPolicy.encode(AssistAlarmPolicy.receipt(request, status: status, code: code, items: items)), nil)
+            var item: [String: Any] = ["alarm_id": request.alarm_id ?? request.operationId,
+                "kind": request.kind?.rawValue ?? "timer", "title": request.title ?? "Fixture",
+                "state": request.action == .cancel ? "not_present" : request.kind == .alarm ? "scheduled" : "countdown",
+                "uncertain": status == .outcome_unknown]
+            if request.kind == .alarm { item["date_iso"] = request.date_iso }
+            else { item["duration_seconds"] = request.duration_seconds ?? 120 }
+            switch receiptMode {
+            case "foreign": item["alarm_id"] = "22222222-2222-4222-8222-222222222222"
+            case "title": item["title"] = "Changed"
+            case "duration": item["duration_seconds"] = 600
+            case "uncertain": item["uncertain"] = true
+            default: break
+            }
+            let items = request.action == .list || status == .failed_safe || receiptMode == "empty" ? [] : [item]
+            let row: [String: Any] = ["schemaVersion": 1, "requestId": request.requestId, "operationId": request.operationId,
+                "action": request.action.rawValue, "status": status.rawValue, "code": code.rawValue, "items": items]
+            completion(String(data: try JSONSerialization.data(withJSONObject: row), encoding: .utf8), nil)
         } catch { completion(nil, error as NSError) }
     }
     func cancel() { cancelCount += 1 }
@@ -188,7 +217,7 @@ final class AssistTranslation {
 @MainActor
 final class AssistDocumentActions {
     static let shared = AssistDocumentActions()
-    enum Mode { case unused, deferred, nativeUnknown, malformed, userCancelled, preSubmissionError, succeeded }
+    enum Mode { case unused, deferred, nativeUnknown, malformed, userCancelled, preSubmissionError, succeeded, wrongReadMethod, longIndexExpiry }
     var mode = Mode.unused
     var calls: [String] = []
     var cancelCount = 0
@@ -222,6 +251,15 @@ final class AssistDocumentActions {
                     : ["status": .string("cancelled")]
                 completion(try AssistDocumentActionsPolicy.response(request, fields: fields), nil)
             case .succeeded: completion(try success(request), nil)
+            case .wrongReadMethod, .longIndexExpiry:
+                let fields: [String: AssistToolValue] = mode == .wrongReadMethod
+                    ? ["status": .string("read"), "inboxId": .string(request.inboxId), "kind": .string("pdf"),
+                       "text": .string("Fixture"), "method": .string("utf8"), "truncated": .bool(false),
+                       "untrusted": .bool(true), "documentState": .string("text")]
+                    : ["status": .string("indexed"), "inboxId": .string(request.inboxId), "expiresAt": .string("2099-01-01T00:00:00Z")]
+                var row = fields; row["schemaVersion"] = .number(1); row["requestId"] = .string(request.requestId)
+                row["action"] = .string(request.action.rawValue)
+                completion(try AssistJSON.encode(AssistToolValue.object(row)), nil)
             }
         } catch { completion(nil, error as NSError) }
     }

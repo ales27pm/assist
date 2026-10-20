@@ -1,4 +1,5 @@
 import NativeAssist from '../specs/NativeAssist';
+import { parseUniqueJSON } from './uniqueJSON';
 
 /** iOS capabilities deliberately exposed by Assist's native bridge. */
 export type DeviceCapability =
@@ -256,10 +257,87 @@ export function validateCalendarReadResult(
 
 /** Reads the current native consent state without prompting the user. */
 export async function getDeviceCapabilityStatus(): Promise<CapabilitySnapshot> {
-  return parseObject(
-    await native().getDeviceCapabilityStatus(),
-    'les capacités de l’appareil',
-  );
+  const value = boundedNativeObject(await native().getDeviceCapabilityStatus());
+  exactNativeKeys(value, ['capabilities', 'boundaries']);
+  const capabilities = calendarObject(value.capabilities);
+  exactNativeKeys(capabilities, [
+    ...Object.keys(permissionStates),
+    'biometrics',
+  ]);
+  for (const [name, statuses] of Object.entries(permissionStates)) {
+    if (
+      typeof capabilities[name] !== 'string' ||
+      !statuses.includes(capabilities[name])
+    )
+      throw new Error('Invalid capability status');
+  }
+  const biometric = calendarObject(capabilities.biometrics);
+  if (
+    typeof biometric.available !== 'boolean' ||
+    typeof biometric.type !== 'string' ||
+    !['faceId', 'touchId', 'opticId', 'none', 'unknown'].includes(biometric.type) ||
+    Object.keys(biometric).some(
+      key => !['available', 'type', 'errorCode'].includes(key),
+    ) ||
+    (biometric.errorCode !== undefined &&
+      !Number.isSafeInteger(biometric.errorCode))
+  )
+    throw new Error('Invalid biometric status');
+  const boundaries = calendarObject(value.boundaries);
+  if (Object.keys(boundaries).length > 16)
+    throw new Error('Invalid native boundaries');
+  for (const [name, raw] of Object.entries(boundaries)) {
+    const boundary = calendarObject(raw);
+    exactNativeKeys(boundary, ['supported', 'reason']);
+    if (
+      !name.length ||
+      name.length > 128 ||
+      boundary.supported !== false ||
+      typeof boundary.reason !== 'string' ||
+      !boundary.reason.length ||
+      utf8Bytes(boundary.reason) > 2048
+    )
+      throw new Error('Invalid native boundary');
+  }
+  return value as CapabilitySnapshot;
+}
+
+const commonPermissionStates = [
+  'notDetermined',
+  'denied',
+  'restricted',
+  'unavailable',
+];
+const permissionStates: Record<string, string[]> = {
+  contacts: [...commonPermissionStates, 'authorized', 'limited'],
+  calendar: [...commonPermissionStates, 'authorized', 'writeOnly'],
+  reminders: [...commonPermissionStates, 'authorized', 'writeOnly'],
+  location: [
+    ...commonPermissionStates,
+    'authorizedAlways',
+    'authorizedWhenInUse',
+  ],
+  camera: [...commonPermissionStates, 'authorized'],
+  notifications: [
+    'notDetermined',
+    'denied',
+    'unavailable',
+    'authorized',
+    'provisional',
+    'ephemeral',
+  ],
+};
+function boundedNativeObject(json: string): Record<string, unknown> {
+  if (typeof json !== 'string' || utf8Bytes(json) > 16 * 1024)
+    throw new Error('Oversized native receipt');
+  return calendarObject(parseUniqueJSON(json));
+}
+function exactNativeKeys(value: Record<string, unknown>, keys: string[]) {
+  if (
+    Object.keys(value).length !== keys.length ||
+    !keys.every(key => Object.prototype.hasOwnProperty.call(value, key))
+  )
+    throw new Error('Invalid native receipt fields');
 }
 
 /** Prompts for one named capability only after an explicit UI/tool invocation. */
@@ -366,10 +444,32 @@ export async function getCurrentLocation(): Promise<{
   horizontalAccuracy: number;
   timestampISO: string;
 }> {
-  return parseObject(
-    await native().getCurrentLocation(),
-    'la position actuelle',
-  );
+  const value = boundedNativeObject(await native().getCurrentLocation());
+  exactNativeKeys(value, [
+    'latitude',
+    'longitude',
+    'horizontalAccuracy',
+    'timestampISO',
+  ]);
+  if (
+    typeof value.latitude !== 'number' ||
+    !Number.isFinite(value.latitude) ||
+    Math.abs(value.latitude) > 90 ||
+    typeof value.longitude !== 'number' ||
+    !Number.isFinite(value.longitude) ||
+    Math.abs(value.longitude) > 180 ||
+    typeof value.horizontalAccuracy !== 'number' ||
+    !Number.isFinite(value.horizontalAccuracy) ||
+    value.horizontalAccuracy < 0
+  )
+    throw new Error('Invalid native location');
+  calendarTimestamp(value.timestampISO);
+  return value as {
+    latitude: number;
+    longitude: number;
+    horizontalAccuracy: number;
+    timestampISO: string;
+  };
 }
 
 /** Opens the system picker; only the user-selected image is returned. */

@@ -139,6 +139,71 @@ enum AssistInferencePreparation {
     }
 }
 
+/// Race an owned model operation against its absolute deadline. Cancellation
+/// actively stops the SDK, then structured concurrency drains the operation.
+/// No detached stop can escape and cancel a subsequent request's engine.
+enum AssistInferenceDeadline {
+    private enum TimeLimit: Error { case reached }
+
+    static func run<Value: Sendable>(
+        until deadline: ContinuousClock.Instant,
+        operation: @escaping @Sendable () async throws -> Value,
+        cancelOperation: @escaping @Sendable () async -> Void,
+        acceptCancelledValue: @escaping @Sendable (Value) -> Bool = { _ in false }
+    ) async throws -> Value {
+        func check() throws {
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline else {
+                throw TimeLimit.reached
+            }
+        }
+        do {
+            try check()
+            return try await withThrowingTaskGroup(of: Value.self) { group in
+                group.addTask { try check(); return try await operation() }
+                group.addTask {
+                    try await Task.sleep(until: deadline, clock: .continuous)
+                    try check()
+                    throw TimeLimit.reached
+                }
+                var completed: Value?
+                do {
+                    guard let value = try await group.next() else { throw CancellationError() }
+                    completed = value
+                    try check()
+                    group.cancelAll()
+                    return value
+                } catch {
+                    group.cancelAll()
+                    await cancelOperation()
+                    // A public text stream may retain an explicitly cancelled
+                    // partial result, never an EOS success or a deadline result.
+                    // Drain every remaining task before considering that value.
+                    var drainFailure: (any Error)?
+                    while !group.isEmpty {
+                        do { if let value = try await group.next() { completed = value } }
+                        catch {
+                            if !(error is CancellationError), !(error is TimeLimit), drainFailure == nil {
+                                drainFailure = error
+                            }
+                        }
+                    }
+                    // Preserve a real worker failure even when the timer won.
+                    if error is CancellationError || error is TimeLimit {
+                        if let drainFailure { throw drainFailure }
+                    }
+                    if error is CancellationError {
+                        if let completed, acceptCancelledValue(completed) { return completed }
+                    }
+                    throw error
+                }
+            }
+        } catch is TimeLimit {
+            throw AssistInferenceError.invalid("Le budget de temps de la consultation locale est atteint.")
+        }
+    }
+}
+
 enum AssistInferencePolicy {
     static let sourceModel = "google/gemma-4-E2B-it"
     static let supportedContexts: Set<Int> = [8192, 32768]

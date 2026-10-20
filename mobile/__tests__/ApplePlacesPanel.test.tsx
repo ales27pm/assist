@@ -506,6 +506,15 @@ test('safe generic error hides provider errors and bad native output', async () 
   );
   expect(screen.queryByText(/PRIVATE_RAW/)).not.toBeOnTheScreen();
 });
+test('weather authorization remains distinct and never displays forecast data', async () => {
+  native.getAppleForecast.mockRejectedValue(new Error('WeatherKit n’est pas autorisé pour cette build ou ce compte Apple.'));
+  await renderAsync(<ApplePlacesPanel blocked={false} />);
+  const user = await findPlaces();
+  await user.press(screen.getByRole('button', { name: 'Météo : Bibliothèque' }));
+  expect(screen.getByRole('alert')).toHaveTextContent('Le service météo Apple n’autorise pas cette version d’Assist. Aucune prévision n’a été affichée.');
+  expect(screen.queryByText(/12 °/)).not.toBeOnTheScreen();
+  expect(native.getAppleForecast).toHaveBeenCalledTimes(1);
+});
 test('unmount cancels only Apple and discards a late provider response', async () => {
   let resolve!: (value: string) => void;
   native.searchApplePlaces.mockImplementation(

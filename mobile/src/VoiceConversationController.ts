@@ -20,6 +20,10 @@ export type ConversationVoiceState = {
   diagnostics: VoiceInputDiagnostics | null;
 };
 
+export type ConversationVoiceResult =
+  | { text: string; spoken: boolean; cancelled?: false }
+  | { cancelled: true };
+
 type Commands = {
   startCapture: (isCurrent: () => boolean) => Promise<boolean>;
   finishCapture: () => Promise<void>;
@@ -29,7 +33,7 @@ type Commands = {
   generate: (
     text: string,
     isCurrent: () => boolean,
-  ) => Promise<{ text: string; spoken: boolean }>;
+  ) => Promise<ConversationVoiceResult>;
   changed: (state: ConversationVoiceState) => void;
   now?: () => number;
 };
@@ -87,6 +91,11 @@ export class VoiceConversationController {
     if (this.active) return;
     this.active = true;
     const version = ++this.version;
+    // Resuming can overlap an old generation's finalizer. Until listen()
+    // admits fresh capture, that finalizer must not reuse the previous final.
+    this.retireSessions();
+    this.finalText = null;
+    this.captureIdle = false;
     this.update({ phase: 'starting', error: '' });
     try {
       await this.cancelWork();
@@ -149,6 +158,26 @@ export class VoiceConversationController {
       });
     this.cancelling = pending;
     return pending;
+  }
+
+  private async pauseAfterToolCancellation(version: number): Promise<void> {
+    if (!this.current(version)) return;
+    this.active = false;
+    const stoppingVersion = ++this.version;
+    this.retireSessions();
+    this.update({ phase: 'stopping', error: '', replyInterrupted: true });
+    try {
+      // This runs inside our generating promise. Drain the native command only;
+      // pause()/cancelWork() would wait for that same promise and deadlock.
+      await this.cancelCommand();
+      if (this.version === stoppingVersion) this.update({ phase: 'paused' });
+    } catch {
+      if (this.version === stoppingVersion)
+        this.update({
+          phase: 'error',
+          error: 'L’arrêt de la voix n’a pas été confirmé. Ferme le mode vocal puis réessaie.',
+        });
+    }
   }
 
   private async listen(version: number): Promise<void> {
@@ -358,6 +387,10 @@ export class VoiceConversationController {
           this.current(version),
         );
         if (!this.current(version)) return;
+        if (result.cancelled === true) {
+          await this.pauseAfterToolCancellation(version);
+          return;
+        }
         this.generationDone = true;
         this.update({ reply: result.text });
         if (!result.spoken) this.speechDrained = true;

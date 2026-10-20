@@ -218,6 +218,21 @@ struct ToolTransactionChecks {
         let interactionExecuting = try transaction(try jsonObject(await interactionRecorder.next()))
         try expect(interactionExecuting["status"] as? String == "executing" && interactionExecuting["revision"] as? Int == 2,
                    "interaction execution advances revision")
+        let activeConflictRecorder = ActivityRecorder()
+        let activeConflict: AssistToolTransactionError?
+        do {
+            _ = try await broker.perform(call: .init(name: .device_capabilities, arguments: [:]),
+                requestId: "competing-native-execution", admission: AssistAgentAdmission()) { value in
+                Task { @MainActor in
+                    await activeConflictRecorder.append(value)
+                    broker.cancelPending()
+                }
+            }
+            activeConflict = nil
+        } catch { activeConflict = error as? AssistToolTransactionError }
+        let activeConflicts = await activeConflictRecorder.count()
+        try expect(activeConflict == .busy && activeConflicts == 0 && broker.allowsTransientInactivity,
+                   "consuming a confirmation does not release broker ownership while its native callback is still pending")
         broker.cancelPending()
         try await rejects({ _ = try await interactionTask.value }, "cancelled interaction unexpectedly succeeded")
         let interactionCancelled = try transaction(try jsonObject(await interactionRecorder.next()))
@@ -226,6 +241,57 @@ struct ToolTransactionChecks {
         try expect(gateway.interactionCancelCount == 1, "broker cancellation reaches the owned native interaction")
         gateway.deliverLatePhotoResult()
         try expect(gateway.interactionCancelCount == 1, "late callback does not reopen or double-resume the interaction")
+
+        // The whole broker operation must be reserved before the permission
+        // await. MainActor alone cannot prevent another perform from entering
+        // and replacing its pending confirmation after that suspension.
+        let reentrantGateway = AssistDeviceCapabilities()
+        reentrantGateway.deferPermission = true
+        let reentrantBroker = AssistToolTransactionCoordinator(gateway: reentrantGateway,
+            journalURL: root.appendingPathComponent("reentrant-preflight.json"), foreground: { true })
+        let firstRecorder = ActivityRecorder()
+        let firstPreflight = Task {
+            try await reentrantBroker.perform(call: .init(name: .contacts_search,
+                arguments: ["query": .string("Fixture"), "limit": .number(1)]), requestId: "reserved-preflight",
+                admission: AssistAgentAdmission()) { value in Task { await firstRecorder.append(value) } }
+        }
+        await reentrantGateway.waitForPermissionCheck()
+        let competingRecorder = ActivityRecorder()
+        let competingFailure: AssistToolTransactionError?
+        do {
+            _ = try await reentrantBroker.perform(call: .init(name: .device_capabilities, arguments: [:]),
+                requestId: "competing-preflight", admission: AssistAgentAdmission()) { value in
+                Task { @MainActor in
+                    await competingRecorder.append(value)
+                    reentrantBroker.cancelPending() // releases a buggy admitted preview, never confirms it
+                }
+            }
+            competingFailure = nil
+        } catch { competingFailure = error as? AssistToolTransactionError }
+        reentrantGateway.releasePermissionCheck()
+        let retainedPreview = try transaction(try jsonObject(await firstRecorder.next()))
+        reentrantBroker.cancelPending()
+        try await rejects({ _ = try await firstPreflight.value }, "preflight owner did not release after explicit cancellation")
+        let competingActivities = await competingRecorder.count()
+        try expect(competingFailure == .busy && competingActivities == 0 && retainedPreview["tool"] as? String == "contacts_search",
+                   "a concurrent perform during permission preflight is busy, emits no preview and preserves the original owner")
+        let replacementRecorder = ActivityRecorder()
+        let replacementTask = Task {
+            try await reentrantBroker.perform(call: .init(name: .device_capabilities, arguments: [:]),
+                requestId: "replacement-after-drain", admission: AssistAgentAdmission()) { value in
+                Task { await replacementRecorder.append(value) }
+            }
+        }
+        let replacementPreview = try transaction(try jsonObject(await replacementRecorder.next()))
+        let staleID = UUID(uuidString: try string(retainedPreview, "id"))!
+        reentrantBroker.cancelPending(id: staleID)
+        let acceptedReplacement = try reentrantBroker.confirm(transactionId: string(replacementPreview, "id"),
+            token: string(replacementPreview, "confirmationToken"))
+        try expect(acceptedReplacement, "a delayed cancellation for the retired preview cannot cancel its replacement")
+        _ = try await replacementTask.value
+        _ = await replacementRecorder.next()
+        let replacementTerminal = try transaction(try jsonObject(await replacementRecorder.next()))
+        try expect(replacementTerminal["status"] as? String == "success", "broker ownership is released after cancellation and a fresh confirmed access works")
 
         // A cancellation while permission status is suspended must be observed
         // immediately after the await, before any preview/token or contacts I/O.
@@ -451,6 +517,96 @@ struct ToolTransactionChecks {
         }
         alarms.journalURL = nil; alarms.status = .succeeded; alarms.code = .ok
 
+        // Regressions discovered by the isolated 71-case review. All are driven
+        // through exact consent and production result validation, not helpers.
+        for name: AssistToolName in [.alarm_create, .alarm_update, .alarm_stop, .alarm_cancel] {
+            var arguments = timerCall.arguments
+            if name != .alarm_create { arguments["alarm_id"] = .string("11111111-1111-4111-8111-111111111111") }
+            if name == .alarm_stop || name == .alarm_cancel { arguments = ["alarm_id": arguments["alarm_id"]!] }
+            let call = AssistDeviceToolCall(name: name, arguments: arguments)
+            alarms.receiptMode = "valid"
+            _ = try await performConfirmed(call, requestId: "valid-\(name.rawValue)", gateway: gateway, journalRoot: root)
+            let modes = name == .alarm_create || name == .alarm_update ? ["empty", "foreign", "title", "duration", "uncertain"] : ["empty", "foreign", "uncertain"]
+            for mode in modes {
+                alarms.receiptMode = mode
+                let before = alarms.calls.count
+                let terminal = try await partialWriteOutcome(call, requestId: "invalid-\(name.rawValue)-\(mode)", gateway: gateway, journalRoot: root)
+                try expect(terminal["status"] as? String == "outcome_unknown" && terminal["receipt"] != nil,
+                           "untrustworthy alarm ACK remains uncertain after handoff")
+                try expect(alarms.calls.count == before + 1, "malformed alarm receipt never triggers a second native attempt")
+            }
+        }
+        alarms.receiptMode = "valid"
+        for (latitude, longitude, timestamp) in [(91.0, -73.5, "2026-10-18T12:00:00Z"),
+            (45.5, 181.0, "2026-10-18T12:00:00Z"), (45.5, -73.5, "not-a-timestamp"),
+            (45.5, -73.5, "2026-02-30T12:00:00Z")] {
+            gateway.locationReceiptOverride = try AssistJSON.encode(AssistToolValue.object([
+                "latitude": .number(latitude), "longitude": .number(longitude), "horizontalAccuracy": .number(12), "timestampISO": .string(timestamp)]))
+            let terminal = try await partialWriteOutcome(.init(name: .location_current, arguments: [:]), requestId: "invalid-location", gateway: gateway, journalRoot: root)
+            try expect(terminal["status"] as? String == "failed_safe" && terminal["receipt"] == nil, "invalid location never reaches the model as success")
+        }
+        gateway.locationReceiptOverride = nil
+        let validStates = ["contacts": "authorized", "calendar": "authorized", "reminders": "authorized",
+                           "location": "authorizedWhenInUse", "camera": "authorized", "notifications": "authorized"]
+        for states in [[:], validStates.merging(["contacts": "totallyGranted"]) { _, new in new },
+                       validStates.merging(["camera": "limited"]) { _, new in new }] {
+            gateway.capabilityReceiptOverride = try AssistJSON.encode(AssistToolValue.object(["capabilities": .object(states.mapValues(AssistToolValue.string))]))
+            let terminal = try await partialWriteOutcome(.init(name: .device_capabilities, arguments: [:]), requestId: "invalid-capabilities", gateway: gateway, journalRoot: root)
+            try expect(terminal["status"] as? String == "failed_safe" && terminal["receipt"] == nil, "incomplete/invented capability inventory is not success")
+        }
+        gateway.capabilityReceiptOverride = nil
+        gateway.imageErrorCode = "E_CANCELLED"
+        for name: AssistToolName in [.photo_select, .camera_capture] {
+            let terminal = try await partialWriteOutcome(.init(name: name, arguments: [:]), requestId: "image-user-cancelled", gateway: gateway, journalRoot: root)
+            try expect(terminal["status"] as? String == "cancelled" && terminal["receipt"] == nil && terminal["failure"] == nil,
+                       "legacy Apple picker cancellation remains cancellation without journal or public error")
+            let encoded = String(data: try JSONSerialization.data(withJSONObject: terminal), encoding: .utf8)!
+            try expect(!encoded.contains("PRIVATE_FRAMEWORK_DESCRIPTION") && !encoded.contains("E_CANCELLED"), "raw picker failure stays outside activity")
+        }
+        gateway.imageErrorCode = nil
+        gateway.imageReceiptOverride = #"{"source":"camera","byteCount":12,"visionAvailable":true,"ocrStatus":"no_text","ocrLines":9223372036854775808,"ocrTruncated":false,"ocrReliable":false}"#
+        let overflowingLines = try await partialWriteOutcome(.init(name: .camera_capture, arguments: [:]),
+            requestId: "out-of-range-native-counter", gateway: gateway, journalRoot: root)
+        try expect(overflowingLines["status"] as? String == "failed_safe", "an out-of-range native integer is rejected without an Int conversion trap")
+        gateway.imageReceiptOverride = #"{"source":"camera","byteCount":12,"visionAvailable":1,"ocrStatus":"no_text","ocrLines":0,"ocrTruncated":false,"ocrReliable":false}"#
+        let numericVision = try await partialWriteOutcome(.init(name: .camera_capture, arguments: [:]),
+            requestId: "numeric-native-boolean", gateway: gateway, journalRoot: root)
+        try expect(numericVision["status"] as? String == "failed_safe", "a native numeric value cannot stand in for a true OCR capability flag")
+        gateway.imageReceiptOverride = nil
+        gateway.biometricReceiptOverride = #"{"available":1,"type":"faceId"}"#
+        let numericBiometric = try await partialWriteOutcome(.init(name: .biometrics_status, arguments: [:]),
+            requestId: "numeric-biometric-boolean", gateway: gateway, journalRoot: root)
+        try expect(numericBiometric["status"] as? String == "failed_safe", "a numeric biometric availability is not a boolean receipt")
+        gateway.biometricReceiptOverride = nil
+        gateway.notificationBooleanAsNumber = true
+        let numericScheduled = try await partialWriteOutcome(.init(name: .notification_schedule,
+            arguments: ["title": .string("Fixture"), "body": .string("Fixture"), "fire_at": .string(fireAt)]),
+            requestId: "numeric-write-boolean", gateway: gateway, journalRoot: root)
+        try expect(numericScheduled["status"] as? String == "outcome_unknown" && numericScheduled["receipt"] != nil,
+                   "a malformed post-handoff write boolean remains uncertain, never safely rejected or confirmed")
+        gateway.notificationBooleanAsNumber = false
+        for (code, expected) in [(4, "apple_network"), (5, "weather_authorization"), (6, "apple_unavailable"), (7, "weather_attribution")] {
+            AssistApplePlaces.shared.errorCode = code
+            let call = AssistDeviceToolCall(name: .weather_forecast, arguments: ["latitude": .number(46.8139),
+                "longitude": .number(-71.2082), "unit": .string("celsius"), "hourly_count": .number(0), "daily_count": .number(0)])
+            let terminal = try await partialWriteOutcome(call, requestId: "closed-apple-failure", gateway: gateway, journalRoot: root)
+            try expect(terminal["status"] as? String == "failed_safe" && terminal["failure"] as? String == expected &&
+                       terminal["receipt"] == nil && terminal["weather"] == nil, "Apple error preserves its closed reason without forecast success")
+            let encoded = String(data: try JSONSerialization.data(withJSONObject: terminal), encoding: .utf8)!
+            try expect(!encoded.contains("PRIVATE_APPLE_FRAMEWORK_DESCRIPTION"), "raw framework error does not enter activity")
+        }
+        AssistApplePlaces.shared.errorCode = nil
+        let selectedID = "b0123456-1234-4234-8234-123456789012"
+        for (mode, call, expected) in [
+            (AssistDocumentActions.Mode.wrongReadMethod, AssistDeviceToolCall(name: .document_read, arguments: ["inbox_id": .string(selectedID)]), "failed_safe"),
+            (.longIndexExpiry, AssistDeviceToolCall(name: .document_index, arguments: ["inbox_id": .string(selectedID), "title": .string("Fixture"), "expiration_days": .number(1)]), "outcome_unknown"),
+        ] {
+            AssistDocumentActions.shared.mode = mode
+            let terminal = try await partialWriteOutcome(call, requestId: "invalid-document", gateway: gateway, journalRoot: root)
+            try expect(terminal["status"] as? String == expected, "malformed document output follows read/write uncertainty contract")
+        }
+        AssistDocumentActions.shared.mode = .unused
+
         // Closing the tactile proposal is a pre-admission cancellation: no
         // service invocation, permission prompt or write metadata may appear.
         let cancelledAlarmURL = root.appendingPathComponent("alarm-cancel-before-consent.json")
@@ -626,9 +782,12 @@ struct ToolTransactionChecks {
         }
         documents.journalURL = nil
         let compose = interactiveCalls[2]
-        try expect(AssistCapabilityActions.callbackFailure(AssistToolTransactionError.outcomeUnknown as NSError, call: compose) == .outcomeUnknown,
+        func isUnknown(_ error: AssistToolTransactionError) -> Bool {
+            if case .outcomeUnknown = error { return true }; return false
+        }
+        try expect(isUnknown(AssistCapabilityActions.callbackFailure(AssistToolTransactionError.outcomeUnknown as NSError, call: compose)),
                    "typed NSError uncertainty survives native callback bridging")
-        try expect(AssistCapabilityActions.callbackFailure(AssistDocumentActionsPolicy.failure(.outcomeUnknown), call: compose) == .outcomeUnknown,
+        try expect(isUnknown(AssistCapabilityActions.callbackFailure(AssistDocumentActionsPolicy.failure(.outcomeUnknown), call: compose)),
                    "document-owner uncertainty survives native callback bridging")
         print("PASS: \(checks) tool-transaction journal and permit checks")
     }

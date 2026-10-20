@@ -31,6 +31,7 @@ import {
   ToolOperationReceipt,
   acceptDeviceToolActivity,
   deviceToolPublicAnswer,
+  deviceToolFailureMessage,
   interruptDeviceToolActivity,
   parseDeviceToolActivity,
   parseDeviceToolCapabilities,
@@ -43,6 +44,13 @@ import {
   negotiateToolHostCapabilities,
   ToolHostSelection,
 } from './src/toolHostProtocol';
+import {
+  appendDeviceReferenceTurn,
+  deviceReferenceResultEligible,
+  emptyDeviceReferenceContext,
+  omitDeviceReferenceContext,
+} from './src/deviceReferenceContext';
+import { parseUniqueJSON } from './src/uniqueJSON';
 import {
   CalendarToolTransaction,
   finishCalendarTransaction,
@@ -62,7 +70,7 @@ import { scheduleAccessibilityFocus } from './src/focusAccessibility';
 import { useLocalVoice } from './src/useLocalVoice';
 import { VoiceConversationScreen } from './src/VoiceConversationScreen';
 import { VoiceConversationController } from './src/VoiceConversationController';
-import type { ConversationVoiceState } from './src/VoiceConversationController';
+import type { ConversationVoiceResult, ConversationVoiceState } from './src/VoiceConversationController';
 import { useVoicePreferences } from './src/useVoicePreferences';
 import { ResponseSpeechStream } from './src/responseSpeech';
 import {
@@ -100,6 +108,22 @@ type DisplayMessage = Message & {
 type DeviceToolTransport =
   | Readonly<{ kind: 'v1' }>
   | Readonly<{ kind: 'v2'; selection: ToolHostSelection }>;
+
+/** A stopped ordinary turn may expose its own interrupted prefix as UI only. */
+function ordinaryStoppedPrefix(json: string, requestId: string): GenerationResult | null {
+  let bytes = 0;
+  for (const character of json) {
+    const code = character.codePointAt(0)!;
+    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+    if (bytes > 128 * 1024) return null;
+  }
+  try {
+    parseUniqueJSON(json);
+    const result = parseResult(json);
+    return result.requestId === requestId && result.finishReason === 'cancelled' && result.text.trim()
+      ? result : null;
+  } catch { return null; }
+}
 
 /** Keep tool-derived answers visible, never promote them to trusted chat input. */
 function mergeDisplayedConversation(
@@ -198,7 +222,7 @@ export function AssistantScreen() {
   const [budget, setBudget] = useState('');
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [progress, setProgress] = useState<Progress | null>(null);
-  const [report, setReport] = useState<GenerationResult | null>(null);
+  const [report, setReport] = useState<(GenerationResult & { deviceTools?: true }) | null>(null);
   const [probeReport, setProbeReport] = useState<PrimitiveReport | null>(null);
   const active = useRef<string | null>(null);
   const operation = useRef(false);
@@ -232,12 +256,17 @@ export function AssistantScreen() {
     'consulting' | 'cancelling' | null
   >(null);
   const calendarEpoch = useRef(0);
+  const activeGenerationEpoch = useRef(0);
+  const typedStop = useRef<{ id: string; epoch: number } | null>(null);
   const calendarRequest = useRef<string | null>(null);
   const [toolsAvailable, setToolsAvailable] = useState(false);
   const toolTransport = useRef<DeviceToolTransport | null>(null);
   const toolsReady = useRef(false);
   toolsReady.current = toolsAvailable;
   const [toolsEnabled, setToolsEnabled] = useState(false);
+  // Separate from rendered messages, tool receipts and ordinary/research input.
+  const referenceContext = useRef(emptyDeviceReferenceContext());
+  const referenceEpoch = useRef(0);
   const [toolRunActive, setToolRunActive] = useState(false);
   const [toolDecision, setToolDecision] = useState<DeviceToolActivity | null>(
     null,
@@ -255,6 +284,10 @@ export function AssistantScreen() {
   } | null>(null);
   const toolPermissionPending = useRef(false);
   const ownedToolInteraction = useRef(false);
+  // A native sheet may return its result before iOS reports active again.
+  // Keep that result pending; background, Stop and unmount still retire it.
+  const ownedInactiveRequest = useRef<string | null>(null);
+  const toolForegroundWait = useRef<{ id: string; resolve: (active: boolean) => void } | null>(null);
   const calendarActivityEpoch = useRef(0);
   const foreground = useRef(
     AppState.currentState == null || AppState.currentState === 'active',
@@ -303,7 +336,7 @@ export function AssistantScreen() {
     generate: (
       text: string,
       isCurrent: () => boolean,
-    ) => Promise<{ text: string; spoken: boolean }>;
+    ) => Promise<ConversationVoiceResult>;
   } | null>(null);
   if (!voiceController.current) {
     voiceController.current = new VoiceConversationController({
@@ -417,10 +450,13 @@ export function AssistantScreen() {
     if (returning) refreshVoiceCapabilities();
   }, [tab, refreshVoiceCapabilities]);
   const speakResponse = voice.speak;
-  const cancelGeneration = useCallback(async () => {
+  const cancelGeneration = useCallback(async (reason?: 'typed-stop') => {
     const requestId = active.current;
     const calendarId = calendarRequest.current;
     const deviceId = toolRequest.current?.id;
+    ownedInactiveRequest.current = null;
+    toolForegroundWait.current?.resolve(false);
+    toolForegroundWait.current = null;
     weatherPresentation.current.cancel();
     if (deviceId) {
       messagesRef.current = messagesRef.current.map(message =>
@@ -437,6 +473,8 @@ export function AssistantScreen() {
     cancellationsInFlight.current += 1;
     if (mounted.current) setBusy(true);
     calendarEpoch.current += 1;
+    typedStop.current = reason === 'typed-stop' && requestId && !calendarId && !deviceId
+      ? { id: requestId, epoch: calendarEpoch.current } : null;
     if (mounted.current && calendarId) {
       updateCalendarTransaction(calendarId, transaction => ({
         ...transaction,
@@ -530,6 +568,7 @@ export function AssistantScreen() {
       pendingVoiceTurn.current = null;
     }
     if (!requestId) return;
+    calendarEpoch.current += 1;
     if (!NativeAssist) throw new Error('Le moteur local est indisponible.');
     const state = parseState(await NativeAssist.cancel());
     if (
@@ -652,7 +691,7 @@ export function AssistantScreen() {
         }
       });
     const subscription = NativeAssist?.onProgress(event => {
-      if (!mounted.current) {
+      if (!mounted.current || !active.current || activeGenerationEpoch.current !== calendarEpoch.current) {
         return;
       }
       // No planning, tool commands, or private tool results may enter UI/TTS.
@@ -757,9 +796,21 @@ export function AssistantScreen() {
     });
     const lifecycle = AppState.addEventListener('change', state => {
       foreground.current = state === 'active';
+      if (state === 'inactive' && ownedToolInteraction.current)
+        ownedInactiveRequest.current = toolRequest.current?.id ?? null;
+      if (state === 'active') {
+        ownedInactiveRequest.current = null;
+        toolForegroundWait.current?.resolve(true);
+        toolForegroundWait.current = null;
+      }
+      if (state === 'background') {
+        referenceEpoch.current += 1;
+        referenceContext.current = omitDeviceReferenceContext(referenceContext.current);
+      }
       const interrupts =
         state === 'background' ||
-        (state !== 'active' && !ownedToolInteraction.current);
+        (state !== 'active' && !ownedToolInteraction.current &&
+          ownedInactiveRequest.current !== toolRequest.current?.id);
       if (interrupts) calendarEpoch.current += 1;
       if (interrupts && active.current) {
         cancelGeneration();
@@ -771,6 +822,9 @@ export function AssistantScreen() {
       weatherGate.cancel();
       toolSheetDismissal.current?.resolve(false);
       toolSheetDismissal.current = null;
+      ownedInactiveRequest.current = null;
+      toolForegroundWait.current?.resolve(false);
+      toolForegroundWait.current = null;
       calendarEpoch.current += 1;
       controller.pause();
       responseSpeech.current?.cancel();
@@ -848,6 +902,8 @@ export function AssistantScreen() {
     const withDeviceTools = !calendarToday && toolsAvailable && toolsEnabled;
     // Capture the negotiated immutable catalogue before any voice/engine await.
     const transportForRun = withDeviceTools ? toolTransport.current : null;
+    const referencesForRun = referenceContext.current;
+    const referenceVersion = referenceEpoch.current;
     const nativeAgent = calendarToday || withDeviceTools;
     if (
       !text.trim() ||
@@ -870,15 +926,15 @@ export function AssistantScreen() {
     }
     const speechVersion = speechIntent.current;
     const agentVersion = calendarEpoch.current;
+    const generationCurrent = () =>
+      mounted.current && isCurrent() && agentVersion === calendarEpoch.current;
     const calendarCurrent = () =>
-      mounted.current &&
-      foreground.current &&
-      agentVersion === calendarEpoch.current;
+      generationCurrent() && foreground.current;
     const readThisResponse =
       !calendarToday && fromVoice && readResponsesEnabled.current;
     let completed: (GenerationResult & { spoken: boolean }) | undefined;
     await perform(async () => {
-      if (!isCurrent() || (nativeAgent && !calendarCurrent())) return;
+      if (!generationCurrent() || (nativeAgent && !calendarCurrent())) return;
       const maxTokens = outputBudget(budget);
       requestPrompt.current = text.trim();
       setShowExample(false);
@@ -908,6 +964,7 @@ export function AssistantScreen() {
       if (fromVoice && !withDeviceTools)
         pendingVoiceTurn.current = { id: requestId, messages: conversation };
       active.current = requestId;
+      activeGenerationEpoch.current = agentVersion;
       if (withDeviceTools) {
         toolRequest.current = { id: requestId, epoch: agentVersion };
         setToolRunActive(true);
@@ -958,6 +1015,8 @@ export function AssistantScreen() {
           : null;
       responseSpeech.current = stream;
       let speechFinished = false;
+      let referenceAnswer = '';
+      let referenceEligible = false;
       setProgress(null);
       setReport(null);
       try {
@@ -976,6 +1035,7 @@ export function AssistantScreen() {
                 requestId,
                 messages: conversation,
                 maxTokens: request.maxTokens ?? undefined,
+                referenceContext: referencesForRun,
               })
             : request,
         );
@@ -986,10 +1046,33 @@ export function AssistantScreen() {
           : calendarToday
           ? await NativeAssist!.generateCalendarToday(payload)
           : await NativeAssist!.generate(payload);
+        if (withDeviceTools && !foreground.current && ownedInactiveRequest.current === requestId) {
+          const resumed = await new Promise<boolean>(resolve => {
+            toolForegroundWait.current = { id: requestId, resolve };
+          });
+          if (!resumed) return;
+        }
+        if (!generationCurrent()) {
+          // Only an explicit Stop of this still-owned typed request can retain
+          // a cancelled prefix. EOS, lifecycle retirement and voice never do.
+          if (!nativeAgent && !fromVoice && mounted.current && isCurrent() &&
+              active.current === requestId && typedStop.current?.id === requestId &&
+              typedStop.current.epoch === calendarEpoch.current && referenceVersion === referenceEpoch.current) {
+            const interrupted = ordinaryStoppedPrefix(json, requestId);
+            if (interrupted) {
+              setProgress(interrupted);
+              setReport({ ...interrupted, deviceTools: undefined });
+            }
+          }
+          return;
+        }
         if (nativeAgent && !calendarCurrent()) return;
         const deviceResult = withDeviceTools
           ? parseDeviceToolResult(json)
           : null;
+        // The result parser first enforces its byte bound. Ambiguous duplicate
+        // keys must then fail before any final text or weather evidence is shown.
+        if (withDeviceTools) parseUniqueJSON(json);
         const parsedResult =
           deviceResult ??
           (calendarToday ? parseCalendarResult(json) : parseResult(json));
@@ -1025,7 +1108,7 @@ export function AssistantScreen() {
         const attributionReady = await weatherPresentation.current.wait(
           requestId,
         );
-        if (nativeAgent && (!calendarCurrent() || !isCurrent())) return;
+        if (!generationCurrent() || (nativeAgent && !calendarCurrent())) return;
         const result = withDeviceTools
           ? {
               ...parsedResult,
@@ -1047,11 +1130,16 @@ export function AssistantScreen() {
               ? finishCalendarTransaction(transaction, result.agentTrace)
               : interruptCalendarTransaction(transaction, 'unconfirmed'),
           );
-        if (mounted.current && isCurrent()) {
+        if (generationCurrent()) {
           setProgress(result);
-          setReport(result);
+          // Presentation provenance comes from the selected route, never a
+          // similarly named extra field in a native result payload.
+          setReport({ ...result, deviceTools: withDeviceTools ? true : undefined });
           // Incomplete text is visible but never silently saved as a completed turn.
-          if (result.finishReason === 'eos' && result.text.trim().length > 0) {
+          if (result.finishReason === 'cancelled') {
+            if (spokenRequest.current === requestId) spokenRequest.current = null;
+            completed = { ...result, spoken: false };
+          } else if (result.finishReason === 'eos' && result.text.trim().length > 0) {
             const nextMessages: Message[] = [
               ...conversation,
               { role: 'assistant', content: result.text },
@@ -1091,6 +1179,11 @@ export function AssistantScreen() {
                 'La réponse est disponible, mais sa lecture a échoué. Reprends pour réessayer.',
               );
             }
+            referenceAnswer = result.text;
+            referenceEligible = !calendarToday && attributionReady &&
+              (!withDeviceTools ||
+                (transportForRun?.kind === 'v2' && transportForRun.selection.hostProtocolVersion === 3 &&
+                  deviceReferenceResultEligible(json)));
             completed = {
               ...result,
               spoken: readThisResponse && speechFinished,
@@ -1098,9 +1191,11 @@ export function AssistantScreen() {
           }
         }
       } catch (cause) {
+        if (!generationCurrent()) return;
         if (withDeviceTools) {
           if (calendarCurrent())
             throw new Error(
+              deviceToolFailureMessage(messagesRef.current.flatMap(message => message.deviceTool?.requestId === requestId ? [message.deviceTool] : [])) ??
               'La tâche outils n’a pas été finalisée. Vérifie les reçus et toute action incertaine avant une nouvelle création. Aucun nouvel essai automatique.',
             );
           return;
@@ -1123,7 +1218,13 @@ export function AssistantScreen() {
           );
         }
       } finally {
+        if (typedStop.current?.id === requestId) typedStop.current = null;
         weatherPresentation.current.cancel(requestId);
+        if (ownedInactiveRequest.current === requestId) ownedInactiveRequest.current = null;
+        if (toolForegroundWait.current?.id === requestId) {
+          toolForegroundWait.current.resolve(false);
+          toolForegroundWait.current = null;
+        }
         if (toolRequest.current?.id === requestId) {
           await refreshToolOperations();
           settleDeviceToolRequest(requestId, true);
@@ -1145,6 +1246,21 @@ export function AssistantScreen() {
         }
         if (pendingVoiceTurn.current?.id === requestId)
           pendingVoiceTurn.current = null;
+        if (referenceVersion === referenceEpoch.current) {
+          const successfulActivities = !withDeviceTools || messagesRef.current
+            .filter(message => message.deviceTool?.requestId === requestId)
+            .every(message => message.deviceTool!.transaction.status === 'success');
+          const eligible = referenceEligible && successfulActivities && generationCurrent();
+          // A failed/refused/interrupted tool turn retires its earlier goal.
+          // Dropping only this turn would leave an older clarification looking
+          // unanswered, without the cancellation/permission fact in context.
+          if (withDeviceTools && !eligible)
+            referenceContext.current = omitDeviceReferenceContext(referenceContext.current);
+          referenceContext.current = appendDeviceReferenceTurn(
+            referenceContext.current, text.trim(), referenceAnswer,
+            eligible,
+          );
+        }
         if (responseSpeech.current === stream) {
           responseSpeech.current = null;
           stream?.cancel();
@@ -1201,6 +1317,7 @@ export function AssistantScreen() {
     },
     generate: async (text, valid) => {
       const result = await send(text, true, valid);
+      if (result?.finishReason === 'cancelled') return { cancelled: true };
       if (!result || result.finishReason !== 'eos' || !result.text.trim()) {
         throw new Error(
           'La réponse locale ne s’est pas terminée. Reprends pour réessayer.',
@@ -1467,6 +1584,8 @@ export function AssistantScreen() {
     confirmClear('Nouvelle conversation ?', () =>
       perform(async () => {
         await NativeAssist!.reset();
+        referenceEpoch.current += 1;
+        referenceContext.current = emptyDeviceReferenceContext();
         setShowExample(false);
         setMessages([]);
         setPrompt('');
@@ -1531,21 +1650,26 @@ export function AssistantScreen() {
     setTab('lab');
   }
 
-  const weatherMessages = messages.filter(
+  const toolEvidenceMessages = messages.filter(
     message =>
-      message.deviceTool?.transaction.weather || message.weatherForecast,
+      message.deviceTool || message.weatherForecast,
   );
-  const latestWeatherMessage = weatherMessages.at(-1);
-  const weatherTask =
+  const voiceToolTask =
     toolRequest.current?.id ??
-    latestWeatherMessage?.deviceTool?.requestId ??
-    latestWeatherMessage?.weatherTask;
-  const voiceWeatherMessages = weatherMessages
+    (report?.deviceTools ? report.requestId : undefined);
+  const voiceToolMessages = toolEvidenceMessages
     .filter(
       message =>
-        (message.deviceTool?.requestId ?? message.weatherTask) === weatherTask,
+        (message.deviceTool?.requestId ?? message.weatherTask) === voiceToolTask,
     )
     .slice(-4);
+  const referenceNotice = toolsEnabled && toolTransport.current?.kind === 'v2'
+    ? toolTransport.current.selection.hostProtocolVersion === 2
+      ? 'Cette version iOS traite chaque demande d’outils séparément. Reformule les références nécessaires.'
+      : referenceContext.current.omittedTurns > 0
+      ? 'Certaines références précédentes ont été écartées. Précise le contexte si nécessaire.'
+      : ''
+    : '';
   const nativeIntentBanner = <NativeIntentBanner key="native-intent" blocked={busy} toolsAvailable={toolsAvailable} onDraft={(text, needsTools) => {
     controller.pause();
     setSpeechMode(false);
@@ -1702,7 +1826,9 @@ export function AssistantScreen() {
                   ['maps_search', 'maps_directions', 'weather_forecast'].includes(tool.id),
                 )
               }
-              toolEvidence={[nativeIntentBanner, ...voiceWeatherMessages.map(message =>
+              toolEvidence={[nativeIntentBanner,
+                referenceNotice ? <Text key="reference-notice" style={styles.muted}>{referenceNotice}</Text> : null,
+                ...voiceToolMessages.map(message =>
                 message.deviceTool ? (
                   <DeviceToolCard
                     key={message.deviceTool.transaction.id}
@@ -1730,7 +1856,14 @@ export function AssistantScreen() {
                     }
                   />
                 ),
-              )]}
+              ),
+                report?.deviceTools && report.finishReason === 'cancelled' && report.text.trim()
+                  ? <View key="tool-interrupted">
+                      <Text style={styles.muted}>Accès interrompu</Text>
+                      <Text selectable style={styles.body}>{report.text}</Text>
+                    </View>
+                  : null,
+              ]}
               onPause={() => {
                 controller.pause();
               }}
@@ -1761,6 +1894,7 @@ export function AssistantScreen() {
                 }}
               >
                 {nativeIntentBanner}
+                {!!referenceNotice && <Text style={styles.muted}>{referenceNotice}</Text>}
                 {!messages.length &&
                   !progress &&
                   !pendingUserText &&
@@ -1894,8 +2028,9 @@ export function AssistantScreen() {
                       </Text>
                       {report && report.finishReason !== 'eos' && (
                         <Text style={styles.muted}>
-                          Réponse incomplète. Ton message est conservé pour
-                          réessayer.
+                          {report.finishReason === 'cancelled'
+                            ? 'Action interrompue. Ton message est conservé. Aucun nouvel essai automatique.'
+                            : 'Réponse incomplète. Ton message est conservé pour réessayer.'}
                         </Text>
                       )}
                     </View>
@@ -1933,7 +2068,13 @@ export function AssistantScreen() {
                       disabled: !toolsAvailable || busy || voice.captureBusy,
                     }}
                     disabled={!toolsAvailable || busy || voice.captureBusy}
-                    onPress={() => setToolsEnabled(value => !value)}
+                    onPress={() => {
+                      if (toolsEnabled) {
+                        referenceEpoch.current += 1;
+                        referenceContext.current = omitDeviceReferenceContext(referenceContext.current);
+                      }
+                      setToolsEnabled(!toolsEnabled);
+                    }}
                     style={({ pressed }) => [
                       styles.toolEntry,
                       (!toolsAvailable || busy) && styles.disabled,
@@ -2020,7 +2161,7 @@ export function AssistantScreen() {
                     }
                     aria-disabled={generating ? false : cannotSend}
                     disabled={generating ? false : cannotSend}
-                    onPress={generating ? cancelGeneration : () => send()}
+                    onPress={generating ? () => cancelGeneration('typed-stop') : () => send()}
                     style={({ pressed }) => [
                       styles.sendButton,
                       pressed && styles.pressed,
@@ -2124,6 +2265,8 @@ export function AssistantScreen() {
                     if (mounted.current) {
                       setSelected(false);
                       setSelectionVersion(value => value + 1);
+                      referenceEpoch.current += 1;
+                      referenceContext.current = emptyDeviceReferenceContext();
                       setMessages([]);
                       setProgress(null);
                       setReport(null);
@@ -2136,6 +2279,8 @@ export function AssistantScreen() {
                     if (mounted.current) {
                       setSelected(true);
                       setSelectionVersion(value => value + 1);
+                      referenceEpoch.current += 1;
+                      referenceContext.current = emptyDeviceReferenceContext();
                       setMessages([]);
                       setProgress(null);
                       setReport(null);
@@ -2152,6 +2297,8 @@ export function AssistantScreen() {
                     perform(async () => {
                       await NativeAssist!.unloadModel();
                       setPrompt('');
+                      referenceEpoch.current += 1;
+                      referenceContext.current = emptyDeviceReferenceContext();
                       setMessages([]);
                       setProgress(null);
                       setReport(null);

@@ -63,3 +63,87 @@ test('generates canonical operation IDs used as durable ownership references', (
     /^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/,
   );
 });
+describe('successful mutations acknowledge the exact approved alarm', () => {
+  for (const action of ['create', 'update', 'stop', 'cancel'] as const) {
+    const mutation = { ...request, action };
+    const response = { ...receipt, action };
+    test.each(
+      [
+        [],
+        [{ ...item, alarm_id: '22222222-2222-4222-8222-222222222222' }],
+        [{ ...item, uncertain: true }],
+      ].map(items => ({ items })),
+    )(
+      `${action} rejects missing, foreign or uncertain targets %#`,
+      ({ items }) => {
+        expect(() =>
+          parseAlarmReceipt(JSON.stringify({ ...response, items }), mutation),
+        ).toThrow();
+      },
+    );
+    test(`${action} accepts the target alongside other owned alarms`, () => {
+      expect(
+        parseAlarmReceipt(
+          JSON.stringify({
+            ...response,
+            items: [
+              item,
+              { ...item, alarm_id: '22222222-2222-4222-8222-222222222222' },
+            ],
+          }),
+          mutation,
+        ).status,
+      ).toBe('succeeded');
+    });
+  }
+  test.each([
+    { title: 'Café' },
+    { duration_seconds: 600 },
+    {
+      kind: 'alarm',
+      date_iso: '2027-01-15T09:00:00Z',
+      duration_seconds: undefined,
+    },
+  ])('create/update reject changed approved configuration %#', changes => {
+    for (const action of ['create', 'update'] as const) {
+      expect(() =>
+        parseAlarmReceipt(
+          JSON.stringify({
+            ...receipt,
+            action,
+            items: [{ ...item, ...changes }],
+          }),
+          { ...request, action },
+        ),
+      ).toThrow();
+    }
+  });
+  test('keeps historical success and empty list receipts valid', () => {
+    expect(
+      parseAlarmReceipt(
+        JSON.stringify({
+          ...receipt,
+          items: [{ ...item, state: 'not_present' }],
+        }),
+        request,
+      ).status,
+    ).toBe('succeeded');
+    expect(
+      parseAlarmReceipt(
+        JSON.stringify({ ...receipt, action: 'list', items: [] }),
+        { ...request, action: 'list' },
+      ).items,
+    ).toEqual([]);
+  });
+  test.each(['"status":"failed_safe",', '"st\\u0061tus":"failed_safe",'])(
+    'rejects duplicate decoded envelope keys %s',
+    duplicate => {
+      expect(() =>
+        parseAlarmReceipt(
+          JSON.stringify(receipt).replace('{', `{${duplicate}`),
+          request,
+        ),
+      ).toThrow();
+    },
+  );
+});

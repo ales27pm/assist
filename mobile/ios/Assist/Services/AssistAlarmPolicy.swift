@@ -152,12 +152,53 @@ enum AssistAlarmPolicy {
               (value.status == .succeeded ? value.code == .ok : value.code != .ok),
               value.status != .outcome_unknown || value.code == .outcome_unknown else { throw failure(.unavailable) }
         for item in value.items { try validate(item) }
+        try uniqueKeys(data)
+        if value.status == .succeeded, request.action != .list {
+            guard let target = value.items.first(where: { $0.alarm_id == request.alarm_id }),
+                  !target.uncertain else { throw failure(.unavailable) }
+            if request.action == .create || request.action == .update {
+                guard target.kind == request.kind, target.title == request.title,
+                      target.date_iso == request.date_iso,
+                      target.duration_seconds == request.duration_seconds else { throw failure(.unavailable) }
+            }
+        }
         // JSONDecoder ignores extra fields; exact re-encoding comparison rejects
         // unknown fields and null optionals without duplicating the wire schema.
         guard let decoded = try JSONSerialization.jsonObject(with: data) as? NSDictionary,
               let canonical = try JSONSerialization.jsonObject(with: Data(encode(value).utf8)) as? NSDictionary,
               decoded == canonical else { throw failure(.unavailable) }
         return value
+    }
+    // The Codable decode above establishes valid JSON first. Walk string tokens
+    // only to reject duplicate decoded object keys, including escaped aliases.
+    // Unlike the model-value reader this retains the 1,024-item inventory limit.
+    private static func uniqueKeys(_ data: Data) throws {
+        let bytes = Array(data)
+        var objects: [Set<String>] = []
+        var offset = 0
+        while offset < bytes.count {
+            switch bytes[offset] {
+            case 123: objects.append([])
+            case 125: objects.removeLast()
+            case 34:
+                let start = offset
+                offset += 1
+                while offset < bytes.count {
+                    if bytes[offset] == 92 { offset += 2; continue }
+                    if bytes[offset] == 34 { break }
+                    offset += 1
+                }
+                let end = offset + 1
+                var next = end
+                while next < bytes.count, [9, 10, 13, 32].contains(bytes[next]) { next += 1 }
+                if next < bytes.count, bytes[next] == 58 {
+                    let key = try JSONDecoder().decode(String.self, from: Data(bytes[start..<end]))
+                    guard !objects.isEmpty, objects[objects.count - 1].insert(key).inserted else { throw failure(.unavailable) }
+                }
+            default: break
+            }
+            offset += 1
+        }
     }
     static func validate(_ item: Item) throws {
         guard canonicalUUID(item.alarm_id), !item.title.isEmpty, item.title.utf8.count <= 120,

@@ -1,6 +1,8 @@
 import { extendedToolEffects } from './nativeBundleTools';
 import { DeviceToolName, deviceToolNames, legacyDeviceToolNames } from './deviceToolProtocol';
 import { boundedIdentifier, Message } from './protocol';
+import { DeviceReferenceContext, emptyDeviceReferenceContext, validateDeviceReferenceContext } from './deviceReferenceContext';
+import { parseUniqueJSON } from './uniqueJSON';
 
 type ToolEffect = 'read' | 'write' | 'interactive';
 type ToolExecution = 'device' | 'apple_network' | 'private_gateway';
@@ -22,7 +24,7 @@ export type ToolHostCapabilities = Readonly<{
   tools: readonly ToolHostEntry[];
 }>;
 export type ToolHostSelection = Readonly<{
-  hostProtocolVersion: 2;
+  hostProtocolVersion: 2 | 3;
   policyVersion: 1;
   catalogRevision: string;
   confirmation: 'all_accesses';
@@ -107,7 +109,7 @@ function positiveVersion(value: unknown): value is number {
 export function parseToolHostCapabilities(json: string): ToolHostCapabilities {
   if (typeof json !== 'string' || utf8Bytes(json) > 24 * 1024)
     return incompatible();
-  const row = closedObject(JSON.parse(json), [
+  const row = closedObject(parseUniqueJSON(json), [
     'schemaVersion',
     'hostProtocolVersions',
     'policyVersion',
@@ -182,7 +184,7 @@ export function negotiateToolHostCapabilities(
   const host = parseToolHostCapabilities(json);
   required ??= deviceToolNames.filter(id => legacyDeviceToolNames.includes(id) || host.tools.some(entry => entry.id === id));
   if (
-    !host.hostProtocolVersions.includes(2) ||
+    !host.hostProtocolVersions.some(version => version === 2 || version === 3) ||
     required.length === 0 ||
     required.length > deviceToolNames.length ||
     new Set(required).size !== required.length
@@ -202,7 +204,7 @@ export function negotiateToolHostCapabilities(
     return Object.freeze({ id, version: 1 as const });
   });
   return Object.freeze({
-    hostProtocolVersion: 2,
+    hostProtocolVersion: host.hostProtocolVersions.includes(3) ? 3 : 2,
     policyVersion: 1,
     catalogRevision: host.catalogRevision,
     confirmation: 'all_accesses',
@@ -212,7 +214,7 @@ export function negotiateToolHostCapabilities(
 
 export function createToolHostRequest(
   selection: ToolHostSelection,
-  turn: { requestId: string; messages: readonly Message[]; maxTokens?: number },
+  turn: { requestId: string; messages: readonly Message[]; maxTokens?: number; referenceContext?: DeviceReferenceContext },
 ) {
   if (
     !boundedIdentifier(turn.requestId) ||
@@ -239,12 +241,24 @@ export function createToolHostRequest(
     hostProtocolVersion: selection.hostProtocolVersion,
     catalogRevision: selection.catalogRevision,
     requiredTools: selection.requiredTools.map(tool => ({ ...tool })),
-    profile: 'device_v1' as const,
+    profile: selection.hostProtocolVersion === 3 ? 'device_context_v1' as const : 'device_v1' as const,
     requestId: turn.requestId,
     messages: turn.messages.map(message => ({ ...message })),
     temperature: 0,
+    ...(selection.hostProtocolVersion === 3 ? {
+      referenceContext: validateDeviceReferenceContext(turn.referenceContext ?? emptyDeviceReferenceContext()),
+    } : {}),
     ...(turn.maxTokens === undefined ? {} : { maxTokens: turn.maxTokens }),
   };
+  // Escaped newlines or quotes may cost more wire bytes than the UTF-8 text.
+  // Drop complete reference pairs, with an explicit count, before rejecting an
+  // otherwise valid current request because of its historical quotations.
+  while (utf8Bytes(JSON.stringify(request)) > 24 * 1024 && request.referenceContext?.turns.length) {
+    const context = request.referenceContext;
+    request.referenceContext = validateDeviceReferenceContext({ ...context,
+      turns: context.turns.slice(1), omittedTurns: Math.min(1_000_000, context.omittedTurns + 1),
+    });
+  }
   if (utf8Bytes(JSON.stringify(request)) > 24 * 1024) return incompatible();
   return request;
 }

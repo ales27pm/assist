@@ -96,7 +96,7 @@ enum AssistDocumentActionsPolicy {
 
     /// Validate all native output before the broker may reinsert it into Gemma.
     @discardableResult
-    static func result(_ json: String, request: Request) throws -> AssistToolValue {
+    static func result(_ json: String, request: Request, now: Date = Date()) throws -> AssistToolValue {
         let value = try AssistToolValue.decodeJSON(json)
         guard let row = value.objectDictionary, row["schemaVersion"]?.integerValue == 1,
               row["requestId"] == .string(request.requestId), row["action"] == .string(request.action.rawValue),
@@ -117,8 +117,9 @@ enum AssistDocumentActionsPolicy {
         case .read:
             fields = ["inboxId", "kind", "text", "method", "truncated", "untrusted", "documentState"]
             guard status == "read", row["inboxId"] == .string(request.inboxId),
-                  ["text", "url", "image", "pdf"].contains(row["kind"]?.stringValue ?? ""),
-                  ["utf8", "vision_ocr", "pdf_text"].contains(row["method"]?.stringValue ?? "") else { throw failure(.invalid) }
+                  let kind = row["kind"]?.stringValue,
+                  let method = ["text": "utf8", "url": "utf8", "image": "vision_ocr", "pdf": "pdf_text"][kind],
+                  row["method"] == .string(method) else { throw failure(.invalid) }
             try extracted(row)
         case .preview:
             fields = ["inboxId"]
@@ -129,7 +130,9 @@ enum AssistDocumentActionsPolicy {
         case .index:
             fields = ["inboxId", "expiresAt"]
             guard status == "indexed", row["inboxId"] == .string(request.inboxId),
-                  let date = row["expiresAt"]?.stringValue, ISO8601DateFormatter().date(from: date) != nil else { throw failure(.invalid) }
+                  let raw = row["expiresAt"]?.stringValue, raw.utf8.count == 20,
+                  let date = try? AssistToolContent.timestamp(raw), date > now,
+                  date <= now.addingTimeInterval(Double(request.integer("expirationDays")) * 86_400) else { throw failure(.invalid) }
         case .unindex:
             fields = ["inboxId"]
             guard status == "unindexed", row["inboxId"] == .string(request.inboxId) else { throw failure(.invalid) }

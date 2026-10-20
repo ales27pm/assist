@@ -43,7 +43,7 @@ const snapshot = {
     location: 'authorizedWhenInUse',
     camera: 'notDetermined',
     notifications: 'notDetermined',
-    biometrics: { available: true, type: 'faceID' },
+    biometrics: { available: true, type: 'faceId' },
   },
   boundaries: {},
 };

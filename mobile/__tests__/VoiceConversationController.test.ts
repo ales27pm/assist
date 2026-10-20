@@ -1,7 +1,8 @@
 import { VoiceConversationController } from '../src/VoiceConversationController';
+import type { ConversationVoiceResult } from '../src/VoiceConversationController';
 import type { VoicePhase } from '../src/voice';
 
-type Reply = { text: string; spoken: boolean };
+type Reply = ConversationVoiceResult;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -196,6 +197,89 @@ test('reading disabled returns to listening after generation without waiting for
   expect(test.commands.startCapture).toHaveBeenCalledTimes(2);
   expect(test.controller.snapshot().phase).toBe('listening');
   expect(test.controller.snapshot().reply).toBe('Réponse au texte.');
+});
+
+test('explicit native tool cancellation pauses once without a new capture, retry or generation error', async () => {
+  const test = fixture();
+  await test.controller.start();
+  transcript(test, 'Ouvre le scanner.', true);
+  await flush();
+  test.generation.resolve({ cancelled: true });
+  await flush();
+  expect(test.controller.snapshot()).toMatchObject({
+    phase: 'paused', transcript: 'Ouvre le scanner.', reply: '', error: '', replyInterrupted: true,
+  });
+  expect(test.controller.isActive()).toBe(false);
+  expect(test.commands.generate).toHaveBeenCalledTimes(1);
+  expect(test.commands.cancel).toHaveBeenCalledTimes(2); // Initial start and terminal native cancellation.
+  expect(test.commands.startCapture).toHaveBeenCalledTimes(1);
+  state(test, 'reply-1', 'idle');
+  transcript(test, 'Événement tardif.', true);
+  test.controller.tick();
+  await flush();
+  expect(test.commands.generate).toHaveBeenCalledTimes(1);
+  expect(test.commands.startCapture).toHaveBeenCalledTimes(1);
+});
+
+test('explicit resume during terminal tool cancellation waits for native drain and can generate a fresh turn', async () => {
+  const test = fixture();
+  await test.controller.start();
+  transcript(test, 'Ouvre les photos.', true);
+  await flush();
+  const drain = deferred<void>();
+  test.commands.cancel.mockReturnValueOnce(drain.promise);
+  test.generation.resolve({ cancelled: true });
+  await flush();
+  expect(test.controller.snapshot().phase).toBe('stopping');
+  const second = deferred<Reply>();
+  test.commands.generate.mockReturnValueOnce(second.promise);
+  const resuming = test.controller.start();
+  await flush();
+  expect(test.commands.startCapture).toHaveBeenCalledTimes(1);
+  expect(test.commands.cancel).toHaveBeenCalledTimes(2);
+  drain.resolve();
+  await resuming;
+  expect(test.controller.snapshot().phase).toBe('listening');
+  expect(test.commands.startCapture).toHaveBeenCalledTimes(2);
+  expect(test.commands.generate).toHaveBeenCalledTimes(1);
+  transcript(test, 'Nouvelle question explicite.', true, 'idle', 'capture-2');
+  await flush();
+  expect(test.commands.generate).toHaveBeenCalledTimes(2);
+  second.resolve({ text: 'Réponse.', spoken: false });
+  await flush();
+  expect(test.controller.snapshot().error).toBe('');
+  expect(test.controller.snapshot().reply).toBe('Réponse.');
+});
+
+test('an explicit interruption wins over a late cancelled tool result', async () => {
+  const test = fixture();
+  await test.controller.start();
+  transcript(test, 'Ancien outil.', true);
+  await flush();
+  const interrupting = test.controller.interrupt();
+  test.generation.resolve({ cancelled: true });
+  await interrupting;
+  await flush();
+  expect(test.controller.snapshot().phase).toBe('listening');
+  expect(test.controller.isActive()).toBe(true);
+  expect(test.commands.startCapture).toHaveBeenCalledTimes(2);
+  expect(test.commands.cancel).toHaveBeenCalledTimes(2);
+  expect(test.controller.snapshot().error).toBe('');
+});
+
+test('unconfirmed native drain after a tool cancellation stays an explicit error without reopening capture', async () => {
+  const test = fixture();
+  await test.controller.start();
+  transcript(test, 'Ouvre le scanner.', true);
+  await flush();
+  test.commands.cancel.mockRejectedValueOnce(new Error('Native stop unconfirmed'));
+  test.generation.resolve({ cancelled: true });
+  await flush();
+  expect(test.controller.snapshot().phase).toBe('error');
+  expect(test.controller.snapshot().error).toContain('n’a pas été confirmé');
+  expect(test.controller.isActive()).toBe(false);
+  expect(test.commands.startCapture).toHaveBeenCalledTimes(1);
+  expect(test.commands.generate).toHaveBeenCalledTimes(1);
 });
 
 test('pausing or leaving during a pending capture rejects its late completion and events', async () => {

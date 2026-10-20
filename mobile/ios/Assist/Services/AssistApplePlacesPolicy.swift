@@ -209,7 +209,7 @@ enum AssistApplePlacesPolicy {
         return encoded
     }
 
-    enum Failure: Int, Sendable { case invalid = 1, busy, cancelled, network, weatherAuthorization, unavailable }
+    enum Failure: Int, Sendable { case invalid = 1, busy, cancelled, network, weatherAuthorization, unavailable, attributionUnavailable }
     static func failure(_ failure: Failure) -> NSError {
         let message: String
         switch failure {
@@ -219,6 +219,7 @@ enum AssistApplePlacesPolicy {
         case .network: message = "Le service Apple est inaccessible sur le réseau pour le moment."
         case .weatherAuthorization: message = "WeatherKit n’est pas autorisé pour cette build ou ce compte Apple."
         case .unavailable: message = "Le service Apple n’a pas fourni de résultat utilisable."
+        case .attributionUnavailable: message = "L’attribution Apple Weather n’a pas pu être obtenue ou validée. Aucune prévision n’est affichée."
         }
         return NSError(domain: "Assist.ApplePlaces", code: failure.rawValue,
                        userInfo: [NSLocalizedDescriptionKey: message])

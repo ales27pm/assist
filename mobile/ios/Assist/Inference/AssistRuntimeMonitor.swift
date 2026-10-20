@@ -126,6 +126,109 @@ struct AssistRuntimeGenerationSummary: Codable, Sendable {
     let finishReason: String
 }
 
+/// A preparation outcome, never an assertion that a user-visible answer or an
+/// OS action completed. Only fixed codes and measured counts are exported.
+enum AssistRuntimeThoughtTreeOutcome: String, Sendable, CaseIterable {
+    case ready, rejected, cancelled, error
+
+    var finishReason: String { "tree_" + rawValue }
+    var code: String { "THOUGHT_TREE_" + rawValue.uppercased() }
+}
+
+private struct AssistRuntimeThoughtTree: Sendable {
+    let key: String
+    let requestId: String
+    let startedAtMs: Double
+    var rootsStarted = false
+    var leavesStarted = false
+    var roots: AssistRuntimeGenerationSummary?
+    var leaves: AssistRuntimeGenerationSummary?
+    var invalid = false
+
+    private func passIndex(_ key: String) -> Int? {
+        let prefix = String(self.key.prefix(100))
+        if key == prefix + ":tree-roots" { return 0 }
+        if key == prefix + ":tree-leaves" { return 1 }
+        return nil
+    }
+
+    mutating func beginPass(_ key: String) {
+        guard let index = passIndex(key) else { return }
+        if index == 0 {
+            if rootsStarted { invalid = true }
+            rootsStarted = true
+        } else {
+            if leavesStarted || !rootsStarted || roots == nil { invalid = true }
+            leavesStarted = true
+        }
+    }
+
+    mutating func endPass(_ key: String, summary: AssistRuntimeGenerationSummary, measured: Bool) {
+        guard let index = passIndex(key) else { return }
+        guard measured else { invalid = true; return }
+        if index == 0 {
+            guard rootsStarted, roots == nil else { invalid = true; return }
+            roots = summary
+        } else {
+            guard leavesStarted, leaves == nil else { invalid = true; return }
+            leaves = summary
+        }
+    }
+
+    var completeEOS: Bool {
+        !invalid && roots?.finishReason == "eos" && leaves?.finishReason == "eos"
+    }
+
+    /// A thrown/unended pass may have consumed tokens. In that case a partial
+    /// sum would misrepresent the preparation total, so both counts stay nil.
+    func total(_ value: (AssistRuntimeGenerationSummary) -> Int?) -> Int? {
+        guard !invalid, (!rootsStarted || roots != nil), (!leavesStarted || leaves != nil) else { return nil }
+        let summaries = [roots, leaves].compactMap { $0 }
+        guard !summaries.isEmpty else { return nil }
+        var sum = 0
+        for summary in summaries {
+            guard let count = value(summary), AssistRuntimeMetrics.count(count) != nil else { return nil }
+            let added = sum.addingReportingOverflow(count)
+            guard !added.overflow, AssistRuntimeMetrics.count(added.partialValue) != nil else { return nil }
+            sum = added.partialValue
+        }
+        return sum
+    }
+}
+
+/// A finite event vocabulary for native tool passes. No prompt, result, tool
+/// name, arbitrary token ID or SDK cache contents cross this boundary.
+enum AssistRuntimeToolPass {
+    private enum Outcome: String, CaseIterable {
+        case eosEmpty = "EOS_EMPTY", eosTokens = "EOS_TOKENS"
+        case boundaryEmpty = "BOUNDARY_EMPTY", boundary = "BOUNDARY"
+        case length = "LENGTH", cancelled = "CANCELLED", error = "ERROR"
+    }
+
+    static let codes = Set((0...4).flatMap { index in
+        Outcome.allCases.map { "TOOL_PASS_\(index)_\($0.rawValue)" }
+    })
+
+    static func code(passIndex: Int, finishReason: String, stoppedAtToolResponse: Bool,
+                     generatedTokens: Int?) -> String? {
+        guard (0...4).contains(passIndex),
+              generatedTokens.map({ AssistRuntimeMetrics.count($0) != nil }) != false else { return nil }
+        let outcome: Outcome
+        switch finishReason {
+        case "eos":
+            guard let generatedTokens else { return nil }
+            outcome = stoppedAtToolResponse
+                ? (generatedTokens == 0 ? .boundaryEmpty : .boundary)
+                : (generatedTokens == 0 ? .eosEmpty : .eosTokens)
+        case "length": outcome = .length
+        case "cancelled": outcome = .cancelled
+        case "error": outcome = .error
+        default: return nil
+        }
+        return "TOOL_PASS_\(passIndex)_\(outcome.rawValue)"
+    }
+}
+
 /// Fixed-capacity storage: appending does not shift or grow the history.
 struct AssistRuntimeRing<Element: Sendable>: Sendable {
     private var storage: [Element?]
@@ -178,6 +281,11 @@ enum AssistRuntimeMetrics {
     /// Export only the app's opaque counter IDs or canonical UUIDs, never arbitrary caller text.
     static func requestId(_ value: String) -> String? {
         guard value.utf8.count <= 128 else { return nil }
+        for suffix in [":tree-roots", ":tree-leaves"] where value.hasSuffix(suffix) {
+            let base = String(value.dropLast(suffix.count))
+            guard !base.contains(":"), let safe = requestId(base) else { return nil }
+            return safe + suffix
+        }
         if let uuid = UUID(uuidString: value) { return uuid.uuidString.lowercased() }
         let parts = value.split(separator: "-", omittingEmptySubsequences: false)
         guard parts.count == 3, parts[0] == "request",
@@ -226,7 +334,8 @@ struct AssistRuntimeMonitorState: Sendable {
         "DIAGNOSTIC_COMPLETED", "DIAGNOSTIC_FAILED", "APP_ACTIVE", "APP_BACKGROUND", "APP_FOREGROUND",
         "APP_INACTIVE", "THERMAL_CHANGED", "MEMORY_PRESSURE_CHANGED", "MONITOR_STARTED", "MONITOR_STOPPED",
         "PHASE_CHANGED", "VOICE_STAGE_CHANGED",
-    ])
+    ]).union(AssistRuntimeToolPass.codes)
+        .union(["THOUGHT_TREE_STARTED"] + AssistRuntimeThoughtTreeOutcome.allCases.map(\.code))
     private static let thermalStates = Set(["nominal", "fair", "serious", "critical", "unknown"])
     private static let pressureStates = Set(["normal", "warning", "critical", "unknown"])
     private var phase = "idle"
@@ -242,6 +351,8 @@ struct AssistRuntimeMonitorState: Sendable {
     private var lastEventMs = 0.0
     private var contextCapacity: Int?
     private var generation: AssistRuntimeGeneration?
+    private var thoughtTree: AssistRuntimeThoughtTree?
+    private var lastThoughtTreeKey: String?
     private(set) var diagnostic: AssistRuntimeDiagnostic?
     private var diagnosticActive = false
     private(set) var history = AssistRuntimeRing<AssistRuntimeSample>(capacity: 60)
@@ -294,6 +405,17 @@ struct AssistRuntimeMonitorState: Sendable {
         ))
     }
 
+    @discardableResult
+    mutating func recordToolPass(passIndex: Int, finishReason: String, stoppedAtToolResponse: Bool,
+                                generatedTokens: Int?, at nowMs: Double) -> Bool {
+        guard let code = AssistRuntimeToolPass.code(passIndex: passIndex, finishReason: finishReason,
+                                                    stoppedAtToolResponse: stoppedAtToolResponse,
+                                                    generatedTokens: generatedTokens) else { return false }
+        let warning = finishReason == "error" || code.hasSuffix("_EMPTY")
+        event(code: code, severity: warning ? "warning" : "info", at: nowMs)
+        return true
+    }
+
     mutating func setContextCapacity(_ value: Int?) {
         contextCapacity = value.flatMap { AssistRuntimeMetrics.count($0) }.flatMap { $0 > 0 ? $0 : nil }
     }
@@ -337,6 +459,7 @@ struct AssistRuntimeMonitorState: Sendable {
 
     mutating func beginGeneration(requestId: String, promptTokens: Int, contextCapacity: Int, elapsedMs: Double, at nowMs: Double) {
         guard requestId.utf8.count <= 128 else { return }
+        thoughtTree?.beginPass(requestId)
         phase = "generating"
         setContextCapacity(contextCapacity)
         generation = AssistRuntimeGeneration(
@@ -370,13 +493,50 @@ struct AssistRuntimeMonitorState: Sendable {
         generation = current
         let reason = ["eos", "length", "cancelled", "error", "rejected", "interrupted"].contains(finishReason) ? finishReason : "unknown"
         phase = ["error", "rejected"].contains(reason) ? "failed" : "ready"
-        generations.append(AssistRuntimeGenerationSummary(
+        let summary = AssistRuntimeGenerationSummary(
             requestId: current.requestId, promptTokens: current.promptTokens, generatedTokens: current.generatedTokens,
             ttftMs: current.ttftMs, decodeTokensPerSecond: current.decodeSpeed, generationElapsedMs: current.elapsedMs,
             contextCapacity: current.contextCapacity, finishReason: reason
-        ))
+        )
+        generations.append(summary)
+        thoughtTree?.endPass(requestId, summary: summary,
+                             measured: AssistRuntimeMetrics.count(promptTokens) != nil &&
+                                AssistRuntimeMetrics.count(generatedTokens) != nil &&
+                                AssistRuntimeMetrics.duration(elapsedMs) != nil &&
+                                current.promptTokens == promptTokens && current.generatedTokens == generatedTokens &&
+                                current.elapsedMs == elapsedMs)
         event(code: reason == "cancelled" ? "GENERATION_CANCELLED" : (reason == "error" ? "GENERATION_FAILED" : "GENERATION_COMPLETED"),
               severity: reason == "error" ? "warning" : "info", at: nowMs)
+    }
+
+    @discardableResult
+    mutating func recordThoughtTreeStart(requestId: String, at nowMs: Double) -> Bool {
+        guard thoughtTree == nil, requestId != lastThoughtTreeKey,
+              !requestId.contains(":"), let safe = AssistRuntimeMetrics.requestId(requestId),
+              AssistRuntimeMetrics.duration(nowMs) != nil else { return false }
+        thoughtTree = AssistRuntimeThoughtTree(key: requestId, requestId: safe, startedAtMs: nowMs)
+        event(code: "THOUGHT_TREE_STARTED", severity: "info", at: nowMs)
+        return true
+    }
+
+    @discardableResult
+    mutating func recordThoughtTreeEnd(requestId: String, outcome: AssistRuntimeThoughtTreeOutcome,
+                                      at nowMs: Double) -> Bool {
+        guard let tree = thoughtTree, tree.key == requestId,
+              let now = AssistRuntimeMetrics.duration(nowMs), now >= tree.startedAtMs else { return false }
+        thoughtTree = nil
+        lastThoughtTreeKey = requestId
+        // Incomplete telemetry cannot establish readiness. Retire its identity
+        // without inventing either a successful or rejected controller result.
+        guard outcome != .ready || tree.completeEOS else { return false }
+        generations.append(AssistRuntimeGenerationSummary(
+            requestId: tree.requestId, promptTokens: tree.total(\.promptTokens),
+            generatedTokens: tree.total(\.generatedTokens), ttftMs: nil, decodeTokensPerSecond: nil,
+            generationElapsedMs: now - tree.startedAtMs, contextCapacity: nil,
+            finishReason: outcome.finishReason
+        ))
+        event(code: outcome.code, severity: [.rejected, .error].contains(outcome) ? "warning" : "info", at: now)
+        return true
     }
 
     mutating func beginDiagnostic(total: Int, at nowMs: Double) {
@@ -435,6 +595,8 @@ private struct AssistRuntimeReport: Codable, Sendable {
         "sampling": "native foreground sampler targets one second independently of JS; syscalls at most once per 500 ms; exports do not append history; history 60 samples, events 200, generations 100; scheduler delays may miss peaks",
         "persistence": "best-effort atomic local checkpoint at most every five seconds while sampling, plus rate-limited stage, pressure and lifecycle checkpoints; two sessions, each <=128 KiB; not a crash handler; abrupt termination may lose observations after the last successful checkpoint",
         "events": "bounded constant codes; observedElapsedMs preserves source ContinuousClock time, elapsedMs is monotonic delivery order; stale lifecycle observations cannot replace a newer foreground state",
+        "toolPasses": "TOOL_PASS_0...4 constant events distinguish native pass index, EOS with zero accepted tokens, token-50 tool boundary, length, cancellation and error before output validation; token counts remain in generation summaries; no prompt, arguments, text, arbitrary token IDs or cache contents; EOS_EMPTY alone does not identify a model, protocol or cache cause",
+        "thoughtTree": "THOUGHT_TREE_STARTED/READY/REJECTED/CANCELLED/ERROR mark private preparation only; tree_roots/leaves generation IDs use fixed :tree-roots/:tree-leaves suffixes; tree_ready/rejected/cancelled/error summaries reuse the external request ID and sum only measured completed preparation passes; counts are absent if any started pass is unmeasured; generationElapsedMs is native wall time from preparation start through selection/rejection/drained cancellation, not total user turn latency; TTFT, decode speed and context capacity are absent on aggregates; ready requires two measured EOS summaries plus caller validation, not proof of an executed action or answer quality",
         "acceleratorUtilization": "GPU/ANE utilization and actual execution placement are not measured",
         "coreMLPredictions": "latest observed asynchronous operation per allowlisted component, not every in-flight operation; voiceTurn counts observed transitions to voice preparing, not conversation turns; native observer is awaited before submission; first begin per component after observed voice preparing requests an immediate best-effort atomic checkpoint (at most six), later successes use periodic checkpoints and failures are rate limited; metadata only, no tensor values; not an NSException handler; an older checkpoint does not prove the crashing component",
     ]
@@ -516,7 +678,8 @@ private struct AssistRuntimeReport: Codable, Sendable {
                   ["info", "warning", "critical"].contains($0.severity) && $0.sequence >= 0 && $0.elapsedMs >= 0
               }), generations.allSatisfy({
                   $0.requestId.map({ AssistRuntimeMetrics.requestId($0) == $0 }) != false &&
-                  ["eos", "length", "cancelled", "error", "rejected", "interrupted", "unknown"].contains($0.finishReason)
+                  (Set(["eos", "length", "cancelled", "error", "rejected", "interrupted", "unknown"])
+                    .union(AssistRuntimeThoughtTreeOutcome.allCases.map(\.finishReason))).contains($0.finishReason)
               }) else { throw AssistRuntimeArchive.error() }
     }
 
@@ -762,6 +925,31 @@ actor AssistRuntimeMonitor {
         guard running() else { return }
         state.endGeneration(requestId: requestId, promptTokens: promptTokens, generatedTokens: generatedTokens,
                             elapsedMs: elapsedMs, ttftMs: ttftMs, finishReason: finishReason, at: elapsed())
+        checkpointEvent()
+    }
+
+    /// Await before parsing a completed tool turn, including empty EOS. This
+    /// observes an outcome only; it cannot reset, retry or change the engine.
+    func recordToolPass(passIndex: Int, finishReason: String, stoppedAtToolResponse: Bool = false,
+                        generatedTokens: Int? = nil) {
+        guard running(), state.recordToolPass(passIndex: passIndex, finishReason: finishReason,
+                                              stoppedAtToolResponse: stoppedAtToolResponse,
+                                              generatedTokens: generatedTokens, at: elapsed()) else { return }
+        checkpointEvent()
+    }
+
+    /// This timer is separate from individual model generations and does not
+    /// change admission, phase, active generation metrics or public progress.
+    func recordThoughtTreeStart(requestId: String) {
+        guard running(), state.recordThoughtTreeStart(requestId: requestId, at: elapsed()) else { return }
+        checkpointEvent()
+    }
+
+    /// Await after controller validation, or after cancellation has drained.
+    /// No branch content, model output, raw error or user-visible TTFT is taken.
+    func recordThoughtTreeEnd(requestId: String, outcome: AssistRuntimeThoughtTreeOutcome) {
+        guard running(), state.recordThoughtTreeEnd(requestId: requestId, outcome: outcome,
+                                                   at: elapsed()) else { return }
         checkpointEvent()
     }
 

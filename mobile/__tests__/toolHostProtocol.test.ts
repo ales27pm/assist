@@ -35,6 +35,16 @@ function capabilities() {
   };
 }
 
+test('ambiguous duplicate capability keys cannot enable a host or change a tool descriptor', () => {
+  const json = JSON.stringify(capabilities());
+  for (const ambiguous of [
+    json.replace('"schemaVersion":1', '"schemaVersion":2,"schemaVersion":1'),
+    json.replace('"hostProtocolVersions":[2]', '"hostProtocolVersions":[999],"hostProtocolVersions":[2]'),
+    json.replace('"effect":"read"', '"effect":"write","effect":"read"'),
+    json.replace('"version":1', '"version":2,"\\u0076ersion":1'),
+  ]) expect(() => negotiateToolHostCapabilities(ambiguous)).toThrow();
+});
+
 test('negotiates thirty-one known contracts with explicit Apple network execution', () => {
   const selected = negotiateToolHostCapabilities(
     JSON.stringify(capabilities()),

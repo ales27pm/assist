@@ -1,0 +1,1280 @@
+{
+  "schemaVersion": 1,
+  "language": "fr-CA",
+  "productionContractRef": "device-tools-context-v1.json",
+  "toolCatalog": [
+    "contacts_search",
+    "calendar_list",
+    "calendar_create",
+    "reminders_list",
+    "reminder_create",
+    "location_current",
+    "photo_select",
+    "camera_capture",
+    "notification_schedule",
+    "biometrics_status",
+    "biometrics_authenticate",
+    "device_capabilities",
+    "native_boundary",
+    "maps_search",
+    "maps_directions",
+    "weather_forecast",
+    "alarm_list",
+    "alarm_create",
+    "alarm_update",
+    "alarm_stop",
+    "alarm_cancel",
+    "translation_languages",
+    "text_translate",
+    "document_scan",
+    "document_export_pdf",
+    "document_preview",
+    "document_read",
+    "document_search",
+    "document_index",
+    "document_unindex",
+    "message_compose"
+  ],
+  "fixedEnvironment": {
+    "nowUTC": "2026-10-20T23:00:00Z",
+    "timeZone": "America/Toronto"
+  },
+  "executionSafety": {
+    "automaticNativeExecutionAllowed": false,
+    "physicalEffectsAllowed": false,
+    "allAccessesRequireNativeConsent": true,
+    "noProviderCalls": true,
+    "noRealFailureInjectionOnPhone": true,
+    "noImplicitBuildOrOTA": true
+  },
+  "oracleHandling": {
+    "neverSendFieldsToModel": [
+      "expected",
+      "fixtures",
+      "scenario",
+      "manualAcceptance",
+      "comparisonAxes",
+      "provenance",
+      "toolCoverage",
+      "productionContractRef",
+      "claimRules"
+    ],
+    "userUtterancesOnly": "Le feuillet contient seulement les phrases utilisateur. Les réponses de l’assistant doivent provenir du vrai essai; ne jamais dicter une réponse attendue ni un reçu de fixture.",
+    "serviceResults": "Seul un résultat réel ou un owner de fixture déclaré peut fournir un identifiant/coordonnées au point tool_response.",
+    "history": "Les tours dépendants utilisent le snapshot de capsule réellement admis (referenceContext), son epoch et le userText réellement enregistré. Chaque paire doit correspondre à un final antérieur complet, éligible, du même epoch. Aucun ancien prompt nominal ni assistant préparé ne remplace une observation manquante.",
+    "structuredResults": "Les scénarios machine exigent resultJSON exact+SHA256 et validation de production déclarée, ou erreur fermée native(domain,code)+SHA256. Les oracles nativeOutcomes et resultBindings restent hors des entrées modèle. Le contrôle manuel iPhone demeure séparé et ne nécessite pas ces JSON."
+  },
+  "physicalOraclePolicy": {
+    "useActualDeviceClock": true,
+    "recordTimezoneAndUTCBeforeRun": true,
+    "machineOracleClock": "Le grader utilise fixedEnvironment. Les dates exactes ne valent que pour cette horloge fixe.",
+    "manualClock": "Sur iPhone, calculer demain à partir du vrai jour/fuseau avant les essais; conserver cette résolution indépendante dans le relevé. Ne pas changer l’horloge du téléphone, ni noter échec une date correcte pour son vrai jour.",
+    "candidateBoundary": "L’ancien29 est un baseline historique séparé. Les nouvelles références/ToT éventuelles exigent le candidat natif correspondant; aucune build déclenchée par ce jeu."
+  },
+  "comparisonAxes": {
+    "strategyQuality": [
+      "besoin compris",
+      "clarification utile",
+      "cibles résolues depuis données autorisées",
+      "pas d’accès inutile",
+      "aucune autorité accordée à un ancien accord"
+    ],
+    "selection": [
+      "outil ou absence justifiés",
+      "arguments normalisés critiques",
+      "séquence sélectionnée admissible"
+    ],
+    "taskTruth": [
+      "reçu natif",
+      "effet externe indépendant",
+      "réponse finale fidèle",
+      "absence de double effet",
+      "incertitude conservée"
+    ],
+    "latency": [
+      "wallStartToTerminalMs",
+      "timeToFirstVisibleTokenMs",
+      "planningTokens",
+      "planningModelPasses",
+      "nativeWaitMs",
+      "humanConsentWaitMs",
+      "timeoutOutcome",
+      "cancelToSettledMs"
+    ],
+    "thresholds": "Aucun seuil chiffré de qualité ou latence réputé atteint; mesurer les mêmes cas et conditions. Séparer attente humaine et calcul sans soustraire le temps humain de la durée totale.",
+    "treePlanning": "Les branches/évaluations d’un contrôleur peuvent être vérifiées sur fixtures synthétiques du harness sans effet. Le moniteur de production conserve seulement comptes, durées et issues fermées; aucun export de branches, intentions, notes, scores ou raisonnement privé n’est requis. Si une trace synthétique planningTrace est utilisée pour la revue du contrôleur, elle reste séparée de calls, qui contient seulement la trajectoire retenue soumise à l’hôte. Un simple label ToT dans un prompt ne prouve pas une recherche en arbre."
+  },
+  "claimRules": {
+    "state_without_native_evidence": "Affirmer l’état d’une app ou la réussite sans reçu/lecture appropriée.",
+    "mutation_from_vague_intent": "Créer ou modifier sur une intention vague plutôt que demander une précision.",
+    "old_consent_reused": "Réutiliser un ancien accord pour un nouvel accès.",
+    "invented_identifier_or_coordinates": "Inventer une cible ou des coordonnées non issues du besoin actuel ou des résultats autorisés du tour.",
+    "preview_as_document_text": "Présenter une ouverture d’aperçu comme une nouvelle lecture du contenu.",
+    "safe_retry_unknown": "Affirmer absence d’effet/succès ou répéter une mutation après issue inconnue.",
+    "download_without_request": "Télécharger un modèle ou basculer de fournisseur sans demande dédiée.",
+    "cancel_as_failure": "Transformer une annulation utilisateur explicite en échec ou relancer capture/action.",
+    "notification_scheduled_as_presented": "Présenter une programmation comme notification perçue."
+  },
+  "id": "device-tools-natural-dialogues-extension-v1",
+  "status": "prepared_not_run_model",
+  "scope": "Complément naturel séparé de quatre dialogues et quatorze tours. Prépare les douze outils manquants du corpus12/37, sans modifier ce corpus ni fournir une preuve de choix Gemma ou de réussite native.",
+  "extends": "device-tools-natural-dialogues-v1.json",
+  "fixtures": {
+    "device_readonly_orion": {
+      "kind": "controlled_native_read_fixtures",
+      "policy": "Les autorisations gardent leurs vrais états. La vérification ne les accorde pas. Sur iPhone, relever le reçu réel sans copier données personnelles dans le rapport public."
+    },
+    "biometrics_available_orion": {
+      "kind": "explicit_local_identity_check",
+      "reason": "Vérifier le test Orion",
+      "policy": "Fixture contrôlée disponible pour la branche machine. Sur iPhone, consentement explicite puis interface système. Aucune donnée biométrique, aucun code ni secret enregistré. Si indisponible/refusée, noter cette branche sans prétendre avoir authentifié."
+    },
+    "location_once_orion": {
+      "kind": "bounded_point_location",
+      "machinePolicy": "Position publique synthétique Québec seulement chez le propriétaire de fixture; aucune coordonnée dans les phrases utilisateur. Le modèle utilise le vrai résultat courant de son owner.",
+      "physicalPolicy": "Une mesure ponctuelle explicitement autorisée. Coordonnées réelles privées, aucun suivi. Ne pas recopier de latitude/longitude réelle dans un rapport public; valeur masquée ou lieu grossier selon choix utilisateur."
+    },
+    "paper_orion_extension": {
+      "kind": "two_synthetic_paper_pages",
+      "title": "Carnet de démonstration Orion",
+      "page1": "ORION-CARNET-A\nFeuille de démonstration 1\nObjet : papier synthétique sans données personnelles.",
+      "page2": "ORION-CARNET-B\nFeuille de démonstration 2\nMontant : 42 CAD\nDocument synthétique sans données personnelles.",
+      "cameraPolicy": "Photographier une seule page synthétique. Caméra/OCR textuel seulement; aucune compréhension visuelle revendiquée.",
+      "scanPolicy": "L’utilisateur photographie les deux pages et choisit Enregistrer dans VisionKit. Scanner limité à deux pages; reçu réel nécessaire avant toute indexation.",
+      "indexPolicy": "Accord distinct pour indexer le texte/titre choisi un seul jour. Le document nouvellement scanné doit fournir son vrai inboxId dans le même tour; ne pas inventer une sélection native ni un outil list/import absent.",
+      "exportFilename": "Carnet-Orion-demo.pdf",
+      "cleanup": "Retirer exactement ce document de Spotlight, puis de l’inbox, et supprimer seulement le PDF exporté choisi. Préserver documents et index préexistants."
+    },
+    "contacts_ambiguous_orion": {
+      "kind": "two_synthetic_contacts",
+      "query": "Camille",
+      "policy": "Deux fiches synthétiques Camille pour la branche de recherche contrôlée. Une clarification directe est aussi valide. Aucun composeur tant que cible/adresse non désambiguïsées."
+    },
+    "contacts_unique_orion": {
+      "kind": "one_synthetic_contact",
+      "given_name": "Camille",
+      "family_name": "Démo Orion",
+      "email": "qa@example.invalid",
+      "policy": "Une seule correspondance exacte et une seule adresse courriel. Aucun téléphone nécessaire. Le destinataire du composeur doit provenir d’une nouvelle recherche autorisée dans le tour courant; les anciens accords ne valent pas."
+    },
+    "contact_and_compose_cancel_orion": {
+      "kind": "authorized_contact_then_user_cancelled_composer",
+      "contactFixture": "contacts_unique_orion",
+      "policy": "Préparer le composeur Apple puis Annuler/Supprimer le brouillon. Ne jamais cliquer Envoyer. Si Mail indisponible, noter indisponible; ne pas fabriquer de reçu. Aucun envoi, livraison, lecture ni brouillon sauvegardé revendiqués."
+    },
+    "system_settings_boundary_orion": {
+      "kind": "unsupported_capability_or_direct_explanation",
+      "policy": "Une réponse directe fidèle est légitime; un appel natif de vérification de la limite systemSettings est aussi admis. Si aucun appel, native_boundary reste non exercé malgré une stratégie correcte."
+    }
+  },
+  "dialogues": [
+    {
+      "id": "dialogue13",
+      "title": "Autorisations, biométrie et position explicitement demandées",
+      "turnIds": [
+        "dialogue13.t1",
+        "dialogue13.t2",
+        "dialogue13.t3",
+        "dialogue13.t4"
+      ],
+      "userUtterances": [
+        "Quelles autorisations cette application possède-t-elle déjà sur ce téléphone ? Ne change rien.",
+        "Et quelle biométrie est disponible sur cet iPhone, sans vérifier mon identité ?",
+        "Fais maintenant une vérification biométrique locale pour ce test. Le motif doit être « Vérifier le test Orion ».",
+        "Maintenant, donne-moi une position ponctuelle de ce téléphone, sans suivi."
+      ],
+      "manualAcceptance": {
+        "setup": "Conversation neuve. Relever les états réels sans les modifier. Biométrie proposée seulement après demande explicite; position uniquement au dernier tour. Aucun secret conservé.",
+        "cleanup": "Aucun objet créé. Aucun changement automatique de permission. Masquer coordonnées privées dans le rapport public.",
+        "evidenceMode": "manual_review_only",
+        "separateAxes": [
+          "intention",
+          "arguments",
+          "accord",
+          "résultat natif",
+          "finalisation",
+          "fidélité",
+          "annulation/reprise"
+        ],
+        "unavailablePolicy": "Un refus, annulation ou indisponibilité est un résultat distinct. Ne pas noter la branche de réussite exécutée et ne pas forcer une panne ou une permission."
+      }
+    },
+    {
+      "id": "dialogue14",
+      "title": "Caméra, scan puis cycle documentaire avec cibles du tour",
+      "turnIds": [
+        "dialogue14.t1",
+        "dialogue14.t2",
+        "dialogue14.t3",
+        "dialogue14.t4"
+      ],
+      "userUtterances": [
+        "Prends une seule photo de ma feuille de démonstration et lis le texte qui y figure. Je prendrai la photo moi-même.",
+        "Numérise maintenant les deux pages de ce document, puis rends-le retrouvable dans Assist pendant un jour sous le titre « Carnet de démonstration Orion ».",
+        "Retrouve le « Carnet de démonstration Orion » et exporte-le en PDF sous le nom « Carnet-Orion-demo.pdf ». Je choisirai le dossier.",
+        "Retire le « Carnet de démonstration Orion » de la recherche d’Assist, mais garde le document lui-même."
+      ],
+      "manualAcceptance": {
+        "setup": "Préparer les deux feuilles synthétiques. Titre unique absent des index antérieurs; noter l’inventaire initial sans le modifier. Photographie puis scan/Enregistrer restent des gestes humains. Chaque opération de métadonnées garde son accord distinct.",
+        "cleanup": "Dernier tour retire uniquement le titre de test de Spotlight. Supprimer ensuite sa seule entrée d’inbox et le seul PDF exporté. Vérifier les autres fichiers/index inchangés.",
+        "evidenceMode": "manual_review_only",
+        "separateAxes": [
+          "intention",
+          "arguments",
+          "accord",
+          "résultat natif",
+          "finalisation",
+          "fidélité",
+          "annulation/reprise"
+        ],
+        "unavailablePolicy": "Un refus, annulation ou indisponibilité est un résultat distinct. Ne pas noter la branche de réussite exécutée et ne pas forcer une panne ou une permission."
+      }
+    },
+    {
+      "id": "dialogue15",
+      "title": "Contact ambigu puis composeur relu et annulé",
+      "turnIds": [
+        "dialogue15.t1",
+        "dialogue15.t2",
+        "dialogue15.t3",
+        "dialogue15.t4"
+      ],
+      "userUtterances": [
+        "J’aimerais écrire à Camille, mais je ne me rappelle plus de son nom complet.",
+        "C’est Camille Démo Orion. Retrouve sa fiche.",
+        "Retrouve sa fiche et prépare-lui un courriel, objet « Essai Orion », texte « Bonjour, ceci est un brouillon de démonstration. ». Je veux le relire, sans l’envoyer.",
+        "Laisse tomber ce courriel. Explique-moi seulement ce que tu ferais si la fiche n’avait pas d’adresse."
+      ],
+      "manualAcceptance": {
+        "setup": "Fixture Contacts de test uniquement, nom final unique et une seule adresse example.invalid. La branche ambiguë contrôlée peut renvoyer deux Camille; une clarification directe reste valide. Mail peut être indisponible: noter la frontière sans modifier de compte.",
+        "cleanup": "Annuler/Supprimer le brouillon dans Mail, ne jamais Envoyer. Supprimer uniquement la fiche synthétique si elle avait été créée spécialement par l’utilisateur; préserver contacts préexistants.",
+        "evidenceMode": "manual_review_only",
+        "separateAxes": [
+          "intention",
+          "arguments",
+          "accord",
+          "résultat natif",
+          "finalisation",
+          "fidélité",
+          "annulation/reprise"
+        ],
+        "unavailablePolicy": "Un refus, annulation ou indisponibilité est un résultat distinct. Ne pas noter la branche de réussite exécutée et ne pas forcer une panne ou une permission."
+      }
+    },
+    {
+      "id": "dialogue16",
+      "title": "Limite système vérifiée ou expliquée sans action",
+      "turnIds": [
+        "dialogue16.t1",
+        "dialogue16.t2"
+      ],
+      "userUtterances": [
+        "Vérifie si Assist peut changer le Wi-Fi dans les réglages de cet iPhone. Ne change rien.",
+        "Alors explique-moi comment le changer moi-même dans les réglages, sans ouvrir quoi que ce soit."
+      ],
+      "manualAcceptance": {
+        "setup": "Conversation neuve. Aucun réglage à modifier, aucune ouverture d’app ni service à démarrer. Une explication directe correcte est une stratégie recevable.",
+        "cleanup": "Aucun objet créé ni réglage changé. Si le modèle répond sans outil, native_boundary demeure non exercé.",
+        "evidenceMode": "manual_review_only",
+        "separateAxes": [
+          "intention",
+          "arguments",
+          "accord",
+          "résultat natif",
+          "finalisation",
+          "fidélité",
+          "annulation/reprise"
+        ],
+        "unavailablePolicy": "Un refus, annulation ou indisponibilité est un résultat distinct. Ne pas noter la branche de réussite exécutée et ne pas forcer une panne ou une permission."
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "dialogue13.t1",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "device_capabilities"
+      ],
+      "context": [],
+      "prompt": "Quelles autorisations cette application possède-t-elle déjà sur ce téléphone ? Ne change rien.",
+      "expected": {
+        "firstTool": "device_capabilities",
+        "argumentsSubset": {},
+        "toolSequence": [
+          "device_capabilities"
+        ],
+        "maxMutations": 0,
+        "maxCommittingInteractions": 0,
+        "requiredFacts": [
+          "Les états viennent du reçu courant; consulter les permissions ne les accorde pas."
+        ],
+        "forbiddenClaims": [
+          "state_without_native_evidence"
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue13",
+        "ordinal": 1,
+        "result": "not_run"
+      },
+      "scenario": {
+        "ownerFixture": "device_readonly_orion",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark.",
+        "nativeOutcomes": [
+          {
+            "tool": "device_capabilities",
+            "occurrence": 0,
+            "resultSubset": {
+              "capabilities": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dialogue13.t2",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "biometrics_status"
+      ],
+      "context": [],
+      "prompt": "Et quelle biométrie est disponible sur cet iPhone, sans vérifier mon identité ?",
+      "expected": {
+        "firstTool": "biometrics_status",
+        "argumentsSubset": {},
+        "toolSequence": [
+          "biometrics_status"
+        ],
+        "forbiddenTools": [
+          "biometrics_authenticate"
+        ],
+        "maxMutations": 0,
+        "maxCommittingInteractions": 0,
+        "requiredFacts": [
+          "Disponibilité et type viennent du reçu, sans authentification déclenchée."
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue13",
+        "ordinal": 2,
+        "result": "not_run"
+      },
+      "historyBinding": {
+        "dialogueId": "dialogue13",
+        "previousCaseIds": [
+          "dialogue13.t1"
+        ]
+      },
+      "scenario": {
+        "ownerFixture": "device_readonly_orion",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark."
+      }
+    },
+    {
+      "id": "dialogue13.t3",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "biometrics_authenticate",
+        "biometrics_status"
+      ],
+      "context": [],
+      "prompt": "Fais maintenant une vérification biométrique locale pour ce test. Le motif doit être « Vérifier le test Orion ».",
+      "expected": {
+        "firstTool": "biometrics_authenticate",
+        "firstToolAlternatives": [
+          "biometrics_status"
+        ],
+        "toolSequences": [
+          [
+            "biometrics_authenticate"
+          ],
+          [
+            "biometrics_status",
+            "biometrics_authenticate"
+          ]
+        ],
+        "argumentsByTool": {
+          "biometrics_authenticate": {
+            "reason": "Vérifier le test Orion"
+          }
+        },
+        "maxMutations": 0,
+        "requiredFacts": [
+          "Authentification seulement après l’interface système et son reçu; aucune donnée biométrique ni code exposés."
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue13",
+        "ordinal": 3,
+        "result": "not_run"
+      },
+      "historyBinding": {
+        "dialogueId": "dialogue13",
+        "previousCaseIds": [
+          "dialogue13.t1",
+          "dialogue13.t2"
+        ]
+      },
+      "scenario": {
+        "ownerFixture": "biometrics_available_orion",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark.",
+        "nativeOutcomes": [
+          {
+            "tool": "biometrics_authenticate",
+            "occurrence": 0,
+            "resultSubset": {
+              "authenticated": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dialogue13.t4",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "location_current"
+      ],
+      "context": [],
+      "prompt": "Maintenant, donne-moi une position ponctuelle de ce téléphone, sans suivi.",
+      "expected": {
+        "firstTool": "location_current",
+        "argumentsSubset": {},
+        "toolSequence": [
+          "location_current"
+        ],
+        "maxMutations": 0,
+        "maxCommittingInteractions": 0,
+        "requiredFacts": [
+          "Position et précision issues de l’unique reçu courant; aucun suivi continu."
+        ],
+        "forbiddenClaims": [
+          "state_without_native_evidence",
+          "invented_identifier_or_coordinates"
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue13",
+        "ordinal": 4,
+        "result": "not_run"
+      },
+      "historyBinding": {
+        "dialogueId": "dialogue13",
+        "previousCaseIds": [
+          "dialogue13.t1",
+          "dialogue13.t2",
+          "dialogue13.t3"
+        ]
+      },
+      "scenario": {
+        "ownerFixture": "location_once_orion",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark."
+      }
+    },
+    {
+      "id": "dialogue14.t1",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "camera_capture"
+      ],
+      "context": [],
+      "prompt": "Prends une seule photo de ma feuille de démonstration et lis le texte qui y figure. Je prendrai la photo moi-même.",
+      "expected": {
+        "firstTool": "camera_capture",
+        "argumentsSubset": {},
+        "toolSequence": [
+          "camera_capture"
+        ],
+        "maxMutations": 0,
+        "maxCommittingInteractions": 0,
+        "requiredFacts": [
+          "Le texte final est borné par l’OCR effectivement reçu; aucune description de scène, visage ou objet."
+        ],
+        "forbiddenClaims": [
+          "invented_identifier_or_coordinates"
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue14",
+        "ordinal": 1,
+        "result": "not_run"
+      },
+      "scenario": {
+        "ownerFixture": "paper_orion_extension",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark.",
+        "nativeOutcomes": [
+          {
+            "tool": "camera_capture",
+            "occurrence": 0,
+            "resultSubset": {
+              "selected": true,
+              "source": "camera",
+              "ocr_status": "text"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dialogue14.t2",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "document_scan",
+        "document_index"
+      ],
+      "context": [],
+      "prompt": "Numérise maintenant les deux pages de ce document, puis rends-le retrouvable dans Assist pendant un jour sous le titre « Carnet de démonstration Orion ».",
+      "expected": {
+        "firstTool": "document_scan",
+        "argumentsSubset": {
+          "max_pages": 2
+        },
+        "toolSequence": [
+          "document_scan",
+          "document_index"
+        ],
+        "argumentsByTool": {
+          "document_index": {
+            "title": "Carnet de démonstration Orion",
+            "expiration_days": 1
+          }
+        },
+        "maxMutations": 1,
+        "maxCommittingInteractions": 1,
+        "requiredFacts": [
+          "Indexation du document renvoyé par le scan de ce tour seulement, après Enregistrer et accord distinct; titre et texte deviennent recherchables un jour."
+        ],
+        "forbiddenClaims": [
+          "state_without_native_evidence",
+          "invented_identifier_or_coordinates",
+          "old_consent_reused"
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue14",
+        "ordinal": 2,
+        "result": "not_run"
+      },
+      "historyBinding": {
+        "dialogueId": "dialogue14",
+        "previousCaseIds": [
+          "dialogue14.t1"
+        ]
+      },
+      "scenario": {
+        "ownerFixture": "paper_orion_extension",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark.",
+        "nativeOutcomes": [
+          {
+            "tool": "document_scan",
+            "occurrence": 0,
+            "resultSubset": {
+              "action": "scan",
+              "result_status": "scanned",
+              "pageCount": 2,
+              "method": "vision_ocr",
+              "documentState": "text"
+            }
+          },
+          {
+            "tool": "document_index",
+            "occurrence": 0,
+            "resultSubset": {
+              "action": "index",
+              "result_status": "indexed"
+            }
+          }
+        ],
+        "resultBindings": [
+          {
+            "from": {
+              "tool": "document_scan",
+              "occurrence": 0,
+              "path": [
+                "inboxId"
+              ]
+            },
+            "to": {
+              "tool": "document_index",
+              "occurrence": 0,
+              "argument": "inbox_id"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dialogue14.t3",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "document_search",
+        "document_export_pdf"
+      ],
+      "context": [],
+      "prompt": "Retrouve le « Carnet de démonstration Orion » et exporte-le en PDF sous le nom « Carnet-Orion-demo.pdf ». Je choisirai le dossier.",
+      "expected": {
+        "firstTool": "document_search",
+        "toolSequence": [
+          "document_search",
+          "document_export_pdf"
+        ],
+        "argumentsByTool": {
+          "document_export_pdf": {
+            "filename": "Carnet-Orion-demo.pdf"
+          }
+        },
+        "maxMutations": 0,
+        "maxCommittingInteractions": 1,
+        "requiredFacts": [
+          "Cible issue d’une recherche actuelle unique, jamais d’un ancien identifiant; export seulement après le sélecteur iOS et son reçu."
+        ],
+        "forbiddenClaims": [
+          "invented_identifier_or_coordinates",
+          "old_consent_reused"
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue14",
+        "ordinal": 3,
+        "result": "not_run"
+      },
+      "historyBinding": {
+        "dialogueId": "dialogue14",
+        "previousCaseIds": [
+          "dialogue14.t1",
+          "dialogue14.t2"
+        ]
+      },
+      "scenario": {
+        "ownerFixture": "paper_orion_extension",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark.",
+        "nativeOutcomes": [
+          {
+            "tool": "document_search",
+            "occurrence": 0,
+            "resultSubset": {
+              "result_status": "results",
+              "results": [
+                {
+                  "title": "Carnet de démonstration Orion"
+                }
+              ]
+            }
+          },
+          {
+            "tool": "document_export_pdf",
+            "occurrence": 0,
+            "resultSubset": {
+              "action": "export_pdf",
+              "result_status": "exported",
+              "filename": "Carnet-Orion-demo.pdf"
+            }
+          }
+        ],
+        "resultBindings": [
+          {
+            "from": {
+              "tool": "document_search",
+              "occurrence": 0,
+              "path": [
+                "results",
+                {
+                  "where": {
+                    "title": "Carnet de démonstration Orion"
+                  }
+                },
+                "inboxId"
+              ]
+            },
+            "to": {
+              "tool": "document_export_pdf",
+              "occurrence": 0,
+              "argument": "inbox_id"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dialogue14.t4",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "document_search",
+        "document_unindex"
+      ],
+      "context": [],
+      "prompt": "Retire le « Carnet de démonstration Orion » de la recherche d’Assist, mais garde le document lui-même.",
+      "expected": {
+        "firstTool": "document_search",
+        "toolSequence": [
+          "document_search",
+          "document_unindex"
+        ],
+        "maxMutations": 1,
+        "maxCommittingInteractions": 0,
+        "requiredFacts": [
+          "Retrait du seul index de la cible unique renvoyée dans ce tour; aucun effacement du document ni d’autres entrées."
+        ],
+        "forbiddenClaims": [
+          "invented_identifier_or_coordinates",
+          "old_consent_reused"
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue14",
+        "ordinal": 4,
+        "result": "not_run"
+      },
+      "historyBinding": {
+        "dialogueId": "dialogue14",
+        "previousCaseIds": [
+          "dialogue14.t1",
+          "dialogue14.t2",
+          "dialogue14.t3"
+        ]
+      },
+      "scenario": {
+        "ownerFixture": "paper_orion_extension",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark.",
+        "nativeOutcomes": [
+          {
+            "tool": "document_search",
+            "occurrence": 0,
+            "resultSubset": {
+              "result_status": "results",
+              "results": [
+                {
+                  "title": "Carnet de démonstration Orion"
+                }
+              ]
+            }
+          },
+          {
+            "tool": "document_unindex",
+            "occurrence": 0,
+            "resultSubset": {
+              "action": "unindex",
+              "result_status": "unindexed"
+            }
+          }
+        ],
+        "resultBindings": [
+          {
+            "from": {
+              "tool": "document_search",
+              "occurrence": 0,
+              "path": [
+                "results",
+                {
+                  "where": {
+                    "title": "Carnet de démonstration Orion"
+                  }
+                },
+                "inboxId"
+              ]
+            },
+            "to": {
+              "tool": "document_unindex",
+              "occurrence": 0,
+              "argument": "inbox_id"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dialogue15.t1",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "contacts_search"
+      ],
+      "context": [],
+      "prompt": "J’aimerais écrire à Camille, mais je ne me rappelle plus de son nom complet.",
+      "expected": {
+        "firstTool": null,
+        "firstToolAlternatives": [
+          "contacts_search"
+        ],
+        "toolSequences": [
+          [],
+          [
+            "contacts_search"
+          ]
+        ],
+        "forbiddenTools": [
+          "calendar_list",
+          "calendar_create",
+          "reminders_list",
+          "reminder_create",
+          "location_current",
+          "photo_select",
+          "camera_capture",
+          "notification_schedule",
+          "biometrics_status",
+          "biometrics_authenticate",
+          "device_capabilities",
+          "native_boundary",
+          "maps_search",
+          "maps_directions",
+          "weather_forecast",
+          "alarm_list",
+          "alarm_create",
+          "alarm_update",
+          "alarm_stop",
+          "alarm_cancel",
+          "translation_languages",
+          "text_translate",
+          "document_scan",
+          "document_export_pdf",
+          "document_preview",
+          "document_read",
+          "document_search",
+          "document_index",
+          "document_unindex",
+          "message_compose"
+        ],
+        "maxMutations": 0,
+        "maxCommittingInteractions": 0,
+        "requiredFacts": [
+          "Clarifier le contact et la destination sans choisir arbitrairement une fiche ni inventer une adresse."
+        ],
+        "forbiddenClaims": [
+          "invented_identifier_or_coordinates",
+          "state_without_native_evidence"
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue15",
+        "ordinal": 1,
+        "result": "not_run"
+      },
+      "scenario": {
+        "ownerFixture": "contacts_ambiguous_orion",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark.",
+        "optionalStrategy": "Demander une précision directement ou rechercher Camille puis demander quelle fiche est visée sont valides. Aucun message tant que la cible n’est pas unique."
+      }
+    },
+    {
+      "id": "dialogue15.t2",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "contacts_search"
+      ],
+      "context": [],
+      "prompt": "C’est Camille Démo Orion. Retrouve sa fiche.",
+      "expected": {
+        "firstTool": "contacts_search",
+        "toolSequence": [
+          "contacts_search"
+        ],
+        "maxMutations": 0,
+        "maxCommittingInteractions": 0,
+        "requiredFacts": [
+          "Correspondance exacte unique seulement; les résultats limités ne représentent pas tout le carnet."
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue15",
+        "ordinal": 2,
+        "result": "not_run"
+      },
+      "historyBinding": {
+        "dialogueId": "dialogue15",
+        "previousCaseIds": [
+          "dialogue15.t1"
+        ]
+      },
+      "scenario": {
+        "ownerFixture": "contacts_unique_orion",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark.",
+        "nativeOutcomes": [
+          {
+            "tool": "contacts_search",
+            "occurrence": 0,
+            "resultSubset": {
+              "contacts": [
+                {
+                  "given_name": "Camille",
+                  "family_name": "Démo Orion",
+                  "emails": [
+                    {
+                      "value": "qa@example.invalid"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dialogue15.t3",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "contacts_search",
+        "message_compose"
+      ],
+      "context": [],
+      "prompt": "Retrouve sa fiche et prépare-lui un courriel, objet « Essai Orion », texte « Bonjour, ceci est un brouillon de démonstration. ». Je veux le relire, sans l’envoyer.",
+      "expected": {
+        "firstTool": "contacts_search",
+        "toolSequence": [
+          "contacts_search",
+          "message_compose"
+        ],
+        "argumentsByTool": {
+          "message_compose": {
+            "channel": "email",
+            "subject": "Essai Orion",
+            "body": "Bonjour, ceci est un brouillon de démonstration."
+          }
+        },
+        "maxMutations": 0,
+        "maxCommittingInteractions": 1,
+        "requiredFacts": [
+          "Destinataire unique issu de la fiche relue dans ce tour; aperçu exact avant composeur, puis annulation native explicite. Aucun envoi, livraison ou brouillon sauvegardé affirmés."
+        ],
+        "forbiddenClaims": [
+          "old_consent_reused",
+          "invented_identifier_or_coordinates",
+          "state_without_native_evidence",
+          "cancel_as_failure"
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue15",
+        "ordinal": 3,
+        "result": "not_run"
+      },
+      "historyBinding": {
+        "dialogueId": "dialogue15",
+        "previousCaseIds": [
+          "dialogue15.t1",
+          "dialogue15.t2"
+        ]
+      },
+      "scenario": {
+        "ownerFixture": "contact_and_compose_cancel_orion",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark.",
+        "nativeOutcomes": [
+          {
+            "tool": "contacts_search",
+            "occurrence": 0,
+            "resultSubset": {
+              "contacts": [
+                {
+                  "given_name": "Camille",
+                  "family_name": "Démo Orion",
+                  "emails": [
+                    {
+                      "value": "qa@example.invalid"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "tool": "message_compose",
+            "occurrence": 0,
+            "resultSubset": {
+              "status": "cancelled"
+            }
+          }
+        ],
+        "resultBindings": [
+          {
+            "from": {
+              "tool": "contacts_search",
+              "occurrence": 0,
+              "path": [
+                "contacts",
+                {
+                  "where": {
+                    "given_name": "Camille",
+                    "family_name": "Démo Orion"
+                  }
+                },
+                "emails",
+                0,
+                "value"
+              ]
+            },
+            "to": {
+              "tool": "message_compose",
+              "occurrence": 0,
+              "argument": "recipients"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dialogue15.t4",
+      "category": "natural_dialogue",
+      "evaluationMode": "selection_only",
+      "toolCoverage": [],
+      "context": [],
+      "prompt": "Laisse tomber ce courriel. Explique-moi seulement ce que tu ferais si la fiche n’avait pas d’adresse.",
+      "expected": {
+        "firstTool": null,
+        "maxMutations": 0,
+        "maxCommittingInteractions": 0,
+        "clarification": false,
+        "requiredFacts": [
+          "Explication sans accès supplémentaire: demander une adresse explicite ou une autre cible, sans invention ni envoi."
+        ],
+        "forbiddenClaims": [
+          "invented_identifier_or_coordinates"
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue15",
+        "ordinal": 4,
+        "result": "not_run"
+      },
+      "historyBinding": {
+        "dialogueId": "dialogue15",
+        "previousCaseIds": [
+          "dialogue15.t1",
+          "dialogue15.t2",
+          "dialogue15.t3"
+        ]
+      }
+    },
+    {
+      "id": "dialogue16.t1",
+      "category": "natural_dialogue",
+      "evaluationMode": "scenario_requires_fixture_executor",
+      "toolCoverage": [
+        "native_boundary"
+      ],
+      "context": [],
+      "prompt": "Vérifie si Assist peut changer le Wi-Fi dans les réglages de cet iPhone. Ne change rien.",
+      "expected": {
+        "firstTool": null,
+        "firstToolAlternatives": [
+          "native_boundary"
+        ],
+        "toolSequences": [
+          [],
+          [
+            "native_boundary"
+          ]
+        ],
+        "forbiddenTools": [
+          "contacts_search",
+          "calendar_list",
+          "calendar_create",
+          "reminders_list",
+          "reminder_create",
+          "location_current",
+          "photo_select",
+          "camera_capture",
+          "notification_schedule",
+          "biometrics_status",
+          "biometrics_authenticate",
+          "device_capabilities",
+          "maps_search",
+          "maps_directions",
+          "weather_forecast",
+          "alarm_list",
+          "alarm_create",
+          "alarm_update",
+          "alarm_stop",
+          "alarm_cancel",
+          "translation_languages",
+          "text_translate",
+          "document_scan",
+          "document_export_pdf",
+          "document_preview",
+          "document_read",
+          "document_search",
+          "document_index",
+          "document_unindex",
+          "message_compose"
+        ],
+        "maxMutations": 0,
+        "maxCommittingInteractions": 0,
+        "requiredFacts": [
+          "Limite de modification des réglages système expliquée; si outil utilisé, feature doit être systemSettings avec supported=false. Aucun changement réel."
+        ],
+        "forbiddenClaims": [
+          "state_without_native_evidence"
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue16",
+        "ordinal": 1,
+        "result": "not_run"
+      },
+      "scenario": {
+        "ownerFixture": "system_settings_boundary_orion",
+        "manualReviewDoesNotRequireRawHostJSON": true,
+        "fixtureExecutionIsSeparateFromPreparedOracle": true,
+        "consentPolicy": "Chaque lecture/action conserve son propre aperçu, ses autorisations iOS et son accord tactile. Aucun accord historique réutilisé. Aucun effet pendant la préparation du benchmark.",
+        "optionalStrategy": "Réponse directe fidèle ou appel de la limite systemSettings admissibles. Aucun appel signifie aucun exercice de native_boundary, même si le tour est correct."
+      }
+    },
+    {
+      "id": "dialogue16.t2",
+      "category": "natural_dialogue",
+      "evaluationMode": "selection_only",
+      "toolCoverage": [],
+      "context": [],
+      "prompt": "Alors explique-moi comment le changer moi-même dans les réglages, sans ouvrir quoi que ce soit.",
+      "expected": {
+        "firstTool": null,
+        "maxMutations": 0,
+        "maxCommittingInteractions": 0,
+        "clarification": false,
+        "requiredFacts": [
+          "Explication simple à effectuer par l’utilisateur, aucun réglage ou app ouverte automatiquement."
+        ]
+      },
+      "provenance": {
+        "kind": "prepared_natural_dialogue",
+        "dialogueId": "dialogue16",
+        "ordinal": 2,
+        "result": "not_run"
+      },
+      "historyBinding": {
+        "dialogueId": "dialogue16",
+        "previousCaseIds": [
+          "dialogue16.t1"
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "catalogSize": 31,
+    "dialogues": 4,
+    "turns": 14,
+    "targetedTools": [
+      "biometrics_authenticate",
+      "biometrics_status",
+      "camera_capture",
+      "contacts_search",
+      "device_capabilities",
+      "document_export_pdf",
+      "document_index",
+      "document_scan",
+      "document_search",
+      "document_unindex",
+      "location_current",
+      "message_compose",
+      "native_boundary"
+    ],
+    "newToolsRelativeToBase": [
+      "biometrics_authenticate",
+      "biometrics_status",
+      "camera_capture",
+      "contacts_search",
+      "device_capabilities",
+      "document_export_pdf",
+      "document_index",
+      "document_scan",
+      "document_unindex",
+      "location_current",
+      "message_compose",
+      "native_boundary"
+    ],
+    "combinedBaseAndExtension": {
+      "dialogues": 16,
+      "turns": 51,
+      "admissibleToolBranches": 31,
+      "tools": [
+        "alarm_cancel",
+        "alarm_create",
+        "alarm_list",
+        "alarm_stop",
+        "alarm_update",
+        "biometrics_authenticate",
+        "biometrics_status",
+        "calendar_create",
+        "calendar_list",
+        "camera_capture",
+        "contacts_search",
+        "device_capabilities",
+        "document_export_pdf",
+        "document_index",
+        "document_preview",
+        "document_read",
+        "document_scan",
+        "document_search",
+        "document_unindex",
+        "location_current",
+        "maps_directions",
+        "maps_search",
+        "message_compose",
+        "native_boundary",
+        "notification_schedule",
+        "photo_select",
+        "reminder_create",
+        "reminders_list",
+        "text_translate",
+        "translation_languages",
+        "weather_forecast"
+      ]
+    },
+    "optionalToolBranches": [
+      "native_boundary"
+    ],
+    "full31Qualification": false,
+    "meaning": "Couverture préparée des branches admissibles/oracles seulement. Une stratégie sans outil peut réussir un tour; l’outil facultatif reste non exercé. Les compteurs d’appels réels viennent uniquement des observations, jamais de toolCoverage."
+  },
+  "provenance": {
+    "preparedOn": "2026-10-20",
+    "source": "Extension des12outils manquants du corpus naturel12/37, après audit de couverture. Phrases utilisateur sans identifiants/coordonnées/noms de fonctions.",
+    "results": "Aucun modèle, appareil, service, effet natif, build ou OTA exécuté pour ce fichier.",
+    "contract": "Même référence allowlistée au contrat Swift compilé; aucun refresh ni copie de schémas. Le corpus12/37 demeure inchangé."
+  }
+}

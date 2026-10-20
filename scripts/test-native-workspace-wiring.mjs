@@ -62,6 +62,7 @@ function validate(data = objects, resources = plists, config = appConfig) {
     'Assist/Services/AssistNativeServices.swift', 'Assist/Services/AssistTaskCheckpoint.swift',
     'Assist/AssistDocuments.swift', 'Assist/Shared/AssistSharedInbox.swift',
     'Assist/Inference/AssistResearchAdapter.swift', 'Assist/Inference/AssistResearchRun.swift',
+    'Assist/Inference/AssistThoughtTree.swift',
     'Assist/Services/AssistApplePlacesPolicy.swift', 'Assist/Services/AssistApplePlaces.swift',
     'Assist/Services/AssistWeatherAttributionPolicy.swift', 'Assist/Services/AssistWeatherAttribution.swift',
     'Assist/Inference/AssistExtendedTools.swift', 'Assist/Services/AssistCapabilityActions.swift',

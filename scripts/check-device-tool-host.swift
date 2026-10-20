@@ -20,6 +20,8 @@ struct ToolHostChecks {
                    "isolated generation request preserved")
         try expect(selection.request.messages.count == 1 && selection.request.temperature == 0,
                    "no history or mutable generation policy")
+        try expect(selection.hostProtocolVersion == 2 && selection.referenceContext == .empty,
+                   "v2 keeps its empty reference context")
         let withoutBudget = valid.replacingOccurrences(of: ",\"maxTokens\":256", with: "")
         try expect(try AssistToolHost.selection(from: withoutBudget).request.maxTokens == nil,
                    "output budget may be omitted")
@@ -27,6 +29,56 @@ struct ToolHostChecks {
         let all = valid.replacingOccurrences(of: #"[{"id":"calendar_list","version":1}]"#, with: "[" + allTools + "]")
         try expect(try AssistToolHost.selection(from: all).allowedTools == Set(AssistToolName.allCases),
                    "full known catalogue remains selectable")
+
+        func contextJSON(_ turns: [[String: String]], omitted: Int = 0) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: [
+                "schemaVersion": 1, "turns": turns, "omittedTurns": omitted,
+            ]), as: UTF8.self)
+        }
+        let context = try contextJSON([["user": "Je visite Québec.", "assistant": "Le parc retenu est celui des Braves."]], omitted: 2)
+        let v3 = String(valid.dropLast()).replacingOccurrences(of: "\"hostProtocolVersion\":2", with: "\"hostProtocolVersion\":3")
+            .replacingOccurrences(of: "\"profile\":\"device_v1\"", with: "\"profile\":\"device_context_v1\"")
+            + ",\"referenceContext\":" + context + "}"
+        let selectedV3 = try AssistToolHost.selection(from: v3)
+        try expect(selectedV3.hostProtocolVersion == 3 && selectedV3.referenceContext.omittedTurns == 2,
+                   "v3 explicitly carries omitted references")
+        try expect(selectedV3.referenceContext.turns == [.init(user: "Je visite Québec.", assistant: "Le parc retenu est celui des Braves.")],
+                   "v3 keeps complete real conversation pairs")
+        try expect(selectedV3.request.messages.count == 1 && selectedV3.request.messages[0].role == "user" &&
+                   selectedV3.request.messages[0].content == selection.request.messages[0].content,
+                   "reference sidecar does not alter the isolated GenerationRequest")
+        let v3Empty = v3.replacingOccurrences(of: context, with: try contextJSON([]))
+        try expect(try AssistToolHost.selection(from: v3Empty).referenceContext == .empty, "v3 empty sidecar is explicit")
+        try rejects(v3.replacingOccurrences(of: "\"hostProtocolVersion\":3", with: "\"hostProtocolVersion\":2"))
+        try rejects(v3.replacingOccurrences(of: "device_context_v1", with: "device_v1"))
+        try rejects(valid.replacingOccurrences(of: "device_v1", with: "device_context_v1"))
+        try rejects(v3.replacingOccurrences(of: ",\"referenceContext\":" + context, with: ""))
+        for bad in [
+            #"{"schemaVersion":true,"turns":[],"omittedTurns":0}"#,
+            #"{"schemaVersion":1,"turns":[],"omittedTurns":true}"#,
+            #"{"schemaVersion":1,"turns":[],"omittedTurns":-1}"#,
+            #"{"schemaVersion":1,"turns":[],"omittedTurns":1000001}"#,
+            #"{"schemaVersion":1,"turns":[],"omittedTurns":0,"permission":true}"#,
+            #"{"schemaVersion":1,"turns":[{"user":"Question"}],"omittedTurns":0}"#,
+            #"{"schemaVersion":1,"turns":[],"omittedTurns":0,"turns":[]}"#,
+        ] { try rejects(v3.replacingOccurrences(of: context, with: bad)) }
+        for bad in ["", "   ", "Texte <|tool_call>", "file:///private/document.pdf", "Voir /tmp/document.pdf",
+                    "C:\\private\\document.pdf", "Identifiant 12345678-abcd-1234-abcd-123456789abc",
+                    "inbox_id précédent", "{\"created\":true}", "texte\u{0}caché", String(repeating: "é", count: 1_025)] {
+            try rejects(v3.replacingOccurrences(of: context, with: try contextJSON([["user": "Question", "assistant": bad]])))
+        }
+        try rejects(v3.replacingOccurrences(of: context, with: try contextJSON(Array(repeating: ["user": "Question", "assistant": "Réponse"], count: 4))))
+        let twoKB = String(repeating: "😀", count: 512)
+        let byteBounded = try contextJSON(Array(repeating: ["user": twoKB, "assistant": twoKB], count: 2))
+        try expect(try AssistToolHost.selection(from: v3.replacingOccurrences(of: context, with: byteBounded)).referenceContext.turns.count == 2,
+                   "UTF8 context accepts exactly 8192 bytes without truncation")
+        try rejects(v3.replacingOccurrences(of: context, with: try contextJSON(Array(repeating: ["user": twoKB, "assistant": twoKB], count: 3))))
+        struct FinalFixture: Encodable { let requestId = "host-fixture"; let text = "Réponse" }
+        for eligible in [false, true] {
+            let final = try AssistToolValue.decodeJSON(AssistToolHost.resultJSON(FinalFixture(), referenceContextEligible: eligible)).objectDictionary!
+            try expect(final == ["requestId": .string("host-fixture"), "text": .string("Réponse"), "referenceContextEligible": .bool(eligible)],
+                       "v3 final eligibility is additive and explicit")
+        }
 
         var invalid: [String] = [
             valid.replacingOccurrences(of: "\"schemaVersion\":1", with: "\"schemaVersion\":true"),
@@ -86,7 +138,7 @@ struct ToolHostChecks {
         let capabilities = try AssistToolValue.decodeJSON(AssistToolHost.capabilitiesJSON()).objectDictionary!
         try expect(Set(capabilities.keys) == ["schemaVersion", "hostProtocolVersions", "policyVersion", "catalogRevision", "confirmation", "tools"],
                    "capabilities expose no runtime, server or unimplemented profile")
-        try expect(capabilities["schemaVersion"] == .number(1) && capabilities["hostProtocolVersions"] == .array([.number(2)]),
+        try expect(capabilities["schemaVersion"] == .number(1) && capabilities["hostProtocolVersions"] == .array([.number(2), .number(3)]),
                    "envelope and host protocol are distinct versions")
         try expect(capabilities["policyVersion"] == .number(1) && capabilities["catalogRevision"] == .string("device-v3-31"),
                    "exact compiled policy and catalogue revision")
@@ -131,7 +183,7 @@ struct ToolHostChecks {
                 allowedTools: [.device_capabilities])
         } catch {
             checks += 1
-            print("PASS: \(checks) Tool Host v2 capability/selection/scope checks; no model, permission or device access")
+            print("PASS: \(checks) Tool Host v2/v3 capability/selection/context/scope checks; no model, permission or device access")
             return
         }
         throw AssistInferenceError.invalid("FAIL: unselected continuation accepted")

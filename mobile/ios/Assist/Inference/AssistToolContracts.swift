@@ -285,8 +285,10 @@ enum AssistDeviceToolRegistry {
         var properties: Definition = [:]
         var required: [String] = []
         let description: String
-        let latitude: Definition = ["type": "number", "minimum": -90, "maximum": 90]
-        let longitude: Definition = ["type": "number", "minimum": -180, "maximum": 180]
+        let latitude: Definition = ["type": "number", "minimum": -90, "maximum": 90,
+                                    "description": "Latitude explicite en degrés, de -90 à 90; aucune position inventée."]
+        let longitude: Definition = ["type": "number", "minimum": -180, "maximum": 180,
+                                     "description": "Longitude explicite en degrés, de -180 à 180; aucune position inventée."]
         switch name {
         case .alarm_list, .alarm_create, .alarm_update, .alarm_stop, .alarm_cancel, .translation_languages, .text_translate, .document_scan, .document_export_pdf, .document_preview, .document_read, .document_search, .document_index, .document_unindex, .message_compose:
             return AssistExtendedToolsPolicy.definition(name)
@@ -303,8 +305,10 @@ enum AssistDeviceToolRegistry {
             description = "Consulter WeatherKit pour des coordonnées explicites après confirmation tactile avant leur envoi à Apple. Prévision non garantie, avec attribution Apple obligatoire. Aucun accès implicite à la position."
             properties = ["latitude": latitude, "longitude": longitude,
                           "unit": ["type": "string", "enum": ["celsius", "fahrenheit"]] as Definition,
-                          "hourly_count": ["type": "integer", "minimum": 0, "maximum": 12] as Definition,
-                          "daily_count": ["type": "integer", "minimum": 0, "maximum": 5] as Definition]
+                          "hourly_count": ["type": "integer", "minimum": 0, "maximum": 12,
+                                           "description": "Nombre exact d’heures demandées, entier de 0 à 12. 0 exclut les prévisions horaires et conserve les conditions courantes; ne pas remplacer 0 par 1."] as Definition,
+                          "daily_count": ["type": "integer", "minimum": 0, "maximum": 5,
+                                          "description": "Nombre exact de jours demandés, entier de 0 à 5. 0 exclut les prévisions quotidiennes et conserve les conditions courantes; ne pas remplacer 0 par 1."] as Definition]
             required = ["latitude", "longitude", "unit", "hourly_count", "daily_count"]
         case .contacts_search:
             description = "Chercher au plus cinq contacts. Lecture autorisée uniquement par le système natif; aucune modification ni communication."

@@ -65,7 +65,7 @@ struct DocumentActionsChecks {
             (read, ["status": .string("read"), "inboxId": .string(id), "kind": .string("pdf"), "text": .string("Texte choisi"), "method": .string("pdf_text"), "truncated": .bool(false), "untrusted": .bool(true), "documentState": .string("text")]),
             (export, ["status": .string("exported"), "inboxId": .string(id), "filename": .string("document.pdf")]),
             (preview, ["status": .string("closed"), "inboxId": .string(id)]),
-            (index, ["status": .string("indexed"), "inboxId": .string(id), "expiresAt": .string("2026-10-20T12:00:00Z")]),
+            (index, ["status": .string("indexed"), "inboxId": .string(id), "expiresAt": .string(AssistToolContent.iso(Date().addingTimeInterval(3600)))]),
             (unindex, ["status": .string("unindexed"), "inboxId": .string(id)]),
             (search, ["status": .string("results"), "results": .array([.object(["inboxId": .string(id), "title": .string("Document")])]), "truncated": .bool(false), "untrusted": .bool(true)]),
             (compose, ["status": .string("queued_by_user"), "channel": .string("email"), "deliveryVerified": .bool(false)]),
@@ -81,6 +81,24 @@ struct DocumentActionsChecks {
         for state in ["no_text", "protected_pdf"] {
             let json = try AssistDocumentActionsPolicy.response(read, fields: ["status": .string("read"), "inboxId": .string(id), "kind": .string("pdf"), "text": .string(""), "method": .string("pdf_text"), "truncated": .bool(false), "untrusted": .bool(true), "documentState": .string(state)])
             try expect(AssistDocumentActionsPolicy.validateResult(json, request: read))
+        }
+        let methods = ["text": "utf8", "url": "utf8", "image": "vision_ocr", "pdf": "pdf_text"]
+        for (kind, expected) in methods {
+            for method in ["utf8", "vision_ocr", "pdf_text"] {
+                let fields: [String: AssistToolValue] = ["status": .string("read"), "inboxId": .string(id),
+                    "kind": .string(kind), "text": .string("Fixture"), "method": .string(method),
+                    "truncated": .bool(false), "untrusted": .bool(true), "documentState": .string("text")]
+                if method == expected { _ = try AssistDocumentActionsPolicy.response(read, fields: fields); try expect(true) }
+                else { try rejects { _ = try AssistDocumentActionsPolicy.response(read, fields: fields) } }
+            }
+        }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        for seconds: Double in [-1, 0, 1, 3600, 86_400, 86_401, 8 * 86_400] {
+            let raw = try AssistJSON.encode(AssistToolValue.object(["schemaVersion": .number(1),
+                "requestId": .string(requestId), "action": .string("index"), "status": .string("indexed"),
+                "inboxId": .string(id), "expiresAt": .string(AssistToolContent.iso(now.addingTimeInterval(seconds)))]))
+            if seconds > 0 && seconds <= 86_400 { _ = try AssistDocumentActionsPolicy.result(raw, request: index, now: now); try expect(true) }
+            else { try rejects { _ = try AssistDocumentActionsPolicy.result(raw, request: index, now: now) } }
         }
         try rejects { _ = try AssistDocumentActionsPolicy.response(compose, fields: ["status": .string("delivered"), "channel": .string("email"), "deliveryVerified": .bool(true)]) }
         try rejects { _ = try AssistDocumentActionsPolicy.response(read, fields: ["status": .string("read"), "inboxId": .string(id), "kind": .string("pdf"), "text": .string("<|tool_call>"), "method": .string("pdf_text"), "truncated": .bool(false), "untrusted": .bool(true), "documentState": .string("text")]) }

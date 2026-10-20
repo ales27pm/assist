@@ -385,3 +385,16 @@ export function parseAppleCancellation(json: string): void {
   const row = object(decode(json), ['schemaVersion', 'cancelled']);
   if (row.schemaVersion !== 1 || row.cancelled !== true) return invalid();
 }
+/** Only fixed native messages may replace the generic service error. Never
+ * display arbitrary bridge/provider descriptions, URLs or nested userInfo. */
+export function applePlacesFailureMessage(cause: unknown): string | undefined {
+  if (!cause || typeof cause !== 'object' || !('message' in cause)) return undefined;
+  const native = cause.message;
+  const messages: Record<string, string> = {
+    'Le service Apple est inaccessible sur le réseau pour le moment.': 'Le service Apple est inaccessible sur le réseau pour le moment.',
+    'WeatherKit n’est pas autorisé pour cette build ou ce compte Apple.': 'Le service météo Apple n’autorise pas cette version d’Assist. Aucune prévision n’a été affichée.',
+    'L’attribution Apple Weather n’a pas pu être obtenue ou validée. Aucune prévision n’est affichée.': 'L’attribution Apple Weather n’a pas pu être obtenue ou validée. Aucune prévision n’est affichée.',
+    'Le service Apple n’a pas fourni de résultat utilisable.': 'Le service Apple n’a pas fourni de résultat utilisable.',
+  };
+  return typeof native === 'string' && Object.prototype.hasOwnProperty.call(messages, native) ? messages[native] : undefined;
+}

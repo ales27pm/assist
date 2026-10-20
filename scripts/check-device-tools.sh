@@ -17,6 +17,7 @@ trap 'rm -rf "$ASSIST_DEVICE_TOOLS_CHECK_DIR"' EXIT
   mobile/ios/Assist/Inference/AssistGemmaToolAdapter.swift \
   mobile/ios/Assist/Inference/AssistToolContracts.swift \
   mobile/ios/Assist/Inference/AssistExtendedTools.swift \
+  mobile/ios/Assist/Inference/AssistToolHost.swift \
   mobile/ios/Assist/Inference/AssistDeviceToolAdapter.swift \
   scripts/check-device-tools.swift -o "$ASSIST_DEVICE_TOOLS_CHECK_DIR/check-device-tools"
 "$ASSIST_DEVICE_TOOLS_CHECK_DIR/check-device-tools"

@@ -37,6 +37,17 @@ export type ToolPermission =
   | 'notifications'
   | 'biometrics';
 export type ToolField = { label: string; value: string };
+const toolFailureMessages = {
+  apple_network: 'Le service Apple est inaccessible sur le réseau pour le moment.',
+  weather_authorization: 'Le service météo Apple n’autorise pas cette version d’Assist. Aucune prévision n’a été affichée.',
+  weather_attribution: 'L’attribution Apple Weather n’a pas pu être obtenue ou validée. Aucune prévision n’est affichée.',
+  apple_unavailable: 'Le service Apple n’a pas fourni de résultat utilisable.',
+  invalid_native_result: 'Le résultat natif ne respecte pas le contrat attendu.',
+} as const;
+export type DeviceToolFailure = keyof typeof toolFailureMessages;
+export function toolFailureMessage(failure: DeviceToolFailure): string {
+  return toolFailureMessages[failure];
+}
 export type DeviceToolReceipt = {
   operationId: string;
   tool: DeviceToolName;
@@ -75,6 +86,7 @@ export type DeviceToolTransaction = {
   capability?: ToolPermission;
   receipt?: DeviceToolReceipt;
   weather?: AppleForecast;
+  failure?: DeviceToolFailure;
 };
 export type DeviceToolActivity = {
   schemaVersion: 1;
@@ -234,7 +246,7 @@ export function parseDeviceToolActivity(json: string): DeviceToolActivity {
     !keys(
       row,
       ['id', 'revision', 'tool', 'effect', 'title', 'status', 'preview'],
-      ['confirmationToken', 'capability', 'receipt', 'weather'],
+      ['confirmationToken', 'capability', 'receipt', 'weather', 'failure'],
     ) ||
     !boundedIdentifier(row.id) ||
     !Number.isSafeInteger(row.revision) ||
@@ -270,6 +282,16 @@ export function parseDeviceToolActivity(json: string): DeviceToolActivity {
     throw new Error('Permission outil invalide.');
   if (row.status === 'awaiting_permission' && !row.capability)
     throw new Error('Permission outil absente.');
+  if (row.failure !== undefined) {
+    const appleTool = ['maps_search', 'maps_directions', 'weather_forecast'].includes(String(row.tool));
+    if (
+      row.status !== 'failed_safe' ||
+      typeof row.failure !== 'string' ||
+      !Object.prototype.hasOwnProperty.call(toolFailureMessages, row.failure) ||
+      (row.failure.startsWith('apple_') && !appleTool) ||
+      (row.failure.startsWith('weather_') && row.tool !== 'weather_forecast')
+    ) throw new Error('Échec outil invalide.');
+  }
   if (
     row.receipt !== undefined &&
     (!['success', 'outcome_unknown'].includes(String(row.status)) ||
@@ -360,6 +382,11 @@ export function deviceToolPublicAnswer(
   )
     return 'L’action a peut-être eu lieu, mais son résultat n’est pas confirmé. Vérifie dans l’app concernée avant toute nouvelle création. Aucun nouvel essai automatique.';
   return textValue;
+}
+export function deviceToolFailureMessage(activities: DeviceToolActivity[]): string | undefined {
+  if (activities.some(activity => activity.transaction.status === 'outcome_unknown')) return undefined;
+  const failed = [...activities].reverse().find(activity => activity.transaction.status === 'failed_safe' && activity.transaction.failure);
+  return failed?.transaction.failure ? toolFailureMessage(failed.transaction.failure) : undefined;
 }
 export function parseToolConfirmation(json: string) {
   const value = decode(json);

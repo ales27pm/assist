@@ -6,7 +6,7 @@ import UIKit
 
 /// Stable, user-safe failures from the native transaction broker. Underlying
 /// framework errors are deliberately not forwarded to a model or activity log.
-enum AssistToolTransactionError: Error, LocalizedError, Sendable {
+enum AssistToolTransactionError: Error, LocalizedError, Equatable, Sendable {
     case cancelled
     case confirmationExpired
     case confirmationUnavailable
@@ -18,10 +18,22 @@ enum AssistToolTransactionError: Error, LocalizedError, Sendable {
     case invalidNativeResult
     case rejectedBeforeSubmission
     case cancelledBeforeSubmission
+    case applePlaces(AssistApplePlacesPolicy.Failure)
+
+    var publicFailureCode: String? {
+        switch self {
+        case .applePlaces(.network): "apple_network"
+        case .applePlaces(.weatherAuthorization): "weather_authorization"
+        case .applePlaces(.attributionUnavailable): "weather_attribution"
+        case .applePlaces: "apple_unavailable"
+        case .invalidNativeResult: "invalid_native_result"
+        default: nil
+        }
+    }
 
     var errorDescription: String? {
         switch self {
-        case .cancelled: "L’action a été annulée avant son exécution."
+        case .cancelled: "L’action a été annulée. Aucun nouvel essai automatique."
         case .confirmationExpired: "La confirmation a expiré. Lance une nouvelle action."
         case .confirmationUnavailable: "Cette confirmation n’est plus disponible."
         case .inactive: "L’action exige que l’app soit ouverte au premier plan."
@@ -32,6 +44,7 @@ enum AssistToolTransactionError: Error, LocalizedError, Sendable {
         case .invalidNativeResult: "Le résultat natif ne respecte pas le contrat attendu."
         case .rejectedBeforeSubmission: "L’action a été refusée avant toute modification. Vérifie l’autorisation et les données, puis décide d’une nouvelle demande."
         case .cancelledBeforeSubmission: "Le service natif a confirmé l’annulation sans modification."
+        case .applePlaces(let failure): AssistApplePlacesPolicy.failure(failure).localizedDescription
         }
     }
 }
@@ -78,6 +91,7 @@ private struct AssistToolActivityEnvelope: Encodable, Sendable {
         let capability: String?
         let receipt: AssistToolReceipt?
         let weather: AssistToolValue?
+        let failure: String?
     }
 }
 
@@ -312,6 +326,9 @@ final class AssistToolTransactionCoordinator {
     private let foreground: @MainActor () -> Bool
     private let journal: AssistToolOperationJournal?
     private var journalUnavailable = false
+    // MainActor serializes individual segments, not a perform suspended on
+    // permissions, consent or a native callback. Keep one owner across awaits.
+    private var operationInFlight = false
     private var pending: Pending?
     private var activeToolInteraction = false
     private var activeApplePlaces = false
@@ -354,7 +371,9 @@ final class AssistToolTransactionCoordinator {
         try Task.checkCancellation()
         try admission.check()
         guard foreground() else { throw AssistToolTransactionError.inactive }
-        guard pending == nil else { throw AssistToolTransactionError.busy }
+        guard !operationInFlight, pending == nil else { throw AssistToolTransactionError.busy }
+        operationInFlight = true
+        defer { operationInFlight = false }
 
         let normalized: AssistDeviceToolCall
         do {
@@ -490,14 +509,15 @@ final class AssistToolTransactionCoordinator {
                 )
                 throw AssistToolTransactionError.outcomeUnknown
             }
-            let status: AssistToolTransactionStatus = Self.isCancellation(error) ? .cancelled : .failedSafe
+            let failure = Self.nativeFailure(error)
+            let status: AssistToolTransactionStatus = Self.isCancellation(failure) ? .cancelled : .failedSafe
             Self.emit(
                 requestId: requestId, id: id, call: normalized, status: status,
-                preview: preview, token: nil, capability: Self.capability(for: normalized.name), receipt: nil, revision: 3, to: onActivity
+                preview: preview, token: nil, capability: Self.capability(for: normalized.name), receipt: nil,
+                failure: status == .failedSafe ? failure.publicFailureCode : nil, revision: 3, to: onActivity
             )
-            if Self.isCancellation(error) { throw AssistToolTransactionError.cancelled }
-            if let error = error as? AssistToolTransactionError { throw error }
-            throw AssistToolTransactionError.executionFailed
+            if Self.isCancellation(failure) { throw AssistToolTransactionError.cancelled }
+            throw failure
         }
     }
 
@@ -541,6 +561,13 @@ final class AssistToolTransactionCoordinator {
     /// Cancels the broker-owned confirmation wait only. It never retries a
     /// callback operation and it cannot roll back a side effect already marked
     /// submitted in the durable write journal.
+    func cancelPending(id: UUID) {
+        // A task-cancellation callback may be delivered after its perform has
+        // finished. It owns only its original preview, never a newer request.
+        guard pending?.id == id else { return }
+        cancelPending()
+    }
+
     func cancelPending() {
         guard var current = pending else {
             if activeExtended, activeCallbackGate?.cancel() == true { AssistCapabilityActions.cancel() }
@@ -585,7 +612,7 @@ final class AssistToolTransactionCoordinator {
                 pending = current
             }
         }, onCancel: { [weak self] in
-            Task { @MainActor [weak self] in self?.cancelPending() }
+            Task { @MainActor [weak self] in self?.cancelPending(id: id) }
         })
     }
 
@@ -717,7 +744,7 @@ final class AssistToolTransactionCoordinator {
 
     private func invoke(
         onCancel: @escaping @MainActor @Sendable () -> Void = {},
-        classifyError: @escaping @MainActor @Sendable (NSError) -> AssistToolTransactionError = { _ in .executionFailed },
+        classifyError: @escaping @MainActor @Sendable (NSError) -> AssistToolTransactionError = { AssistToolTransactionCoordinator.nativeFailure($0) },
         onHandoff: @MainActor () -> Void = {},
         _ operation: (@escaping AssistDeviceCapabilities.Completion) -> Void
     ) async throws -> String {
@@ -805,7 +832,8 @@ final class AssistToolTransactionCoordinator {
     ) throws -> AssistToolValue {
         if call.name.isExtended { return try AssistCapabilityActions.project(raw, call: call, operationId: operationId) }
         if call.name.execution == "apple_network" {
-            return try AssistApplePlacesPolicy.toolResult(raw, call: call, operationId: operationId)
+            do { return try AssistApplePlacesPolicy.toolResult(raw, call: call, operationId: operationId) }
+            catch { throw AssistToolTransactionError.invalidNativeResult }
         }
         guard raw.utf8.count <= maximumGatewayJSONBytes,
               let data = raw.data(using: .utf8),
@@ -864,8 +892,10 @@ final class AssistToolTransactionCoordinator {
             return try output(["created": .bool(true), "destination": .string("reminders")])
         case .location_current:
             guard let latitude = number(dictionary["latitude"]), let longitude = number(dictionary["longitude"]),
+                  (-90...90).contains(latitude), (-180...180).contains(longitude),
                   let accuracy = number(dictionary["horizontalAccuracy"]), accuracy >= 0,
-                  let timestamp = boundedString(dictionary["timestampISO"], maximum: 64) else {
+                  let timestamp = boundedString(dictionary["timestampISO"], maximum: 24),
+                  (try? AssistToolContent.timestamp(timestamp)) != nil else {
                 throw AssistToolTransactionError.invalidNativeResult
             }
             return try output(["latitude": .number(latitude), "longitude": .number(longitude),
@@ -874,12 +904,12 @@ final class AssistToolTransactionCoordinator {
             let expectedSource = call.name == .photo_select ? "photoLibrary" : "camera"
             guard dictionary["source"] as? String == expectedSource,
                   let count = number(dictionary["byteCount"]), count > 0,
-                  dictionary["visionAvailable"] as? Bool == true,
+                  boolean(dictionary["visionAvailable"]) == true,
                   let status = dictionary["ocrStatus"] as? String,
                   ["text", "no_text", "failed"].contains(status),
                   let lines = integer(dictionary["ocrLines"]), (0...40).contains(lines),
-                  let truncated = dictionary["ocrTruncated"] as? Bool,
-                  dictionary["ocrReliable"] as? Bool == false else {
+                  let truncated = boolean(dictionary["ocrTruncated"]),
+                  boolean(dictionary["ocrReliable"]) == false else {
                 throw AssistToolTransactionError.invalidNativeResult
             }
             var image: [String: AssistToolValue] = [
@@ -898,29 +928,40 @@ final class AssistToolTransactionCoordinator {
             return try output(image)
         case .notification_schedule:
             guard dictionary["id"] as? String == operationId.uuidString,
-                  dictionary["scheduled"] as? Bool == true else { throw AssistToolTransactionError.invalidNativeResult }
+                  boolean(dictionary["scheduled"]) == true else { throw AssistToolTransactionError.invalidNativeResult }
             return try output(["scheduled": .bool(true), "presentation": .string("scheduled_not_presented")])
         case .biometrics_status:
-            guard let available = dictionary["available"] as? Bool,
+            guard let available = boolean(dictionary["available"]),
                   let type = boundedString(dictionary["type"], maximum: 32),
                   ["faceId", "touchId", "opticId", "none", "unknown"].contains(type) else {
                 throw AssistToolTransactionError.invalidNativeResult
             }
             return try output(["available": .bool(available), "type": .string(type)])
         case .biometrics_authenticate:
-            guard dictionary["authenticated"] as? Bool == true else { throw AssistToolTransactionError.executionFailed }
+            guard boolean(dictionary["authenticated"]) == true else { throw AssistToolTransactionError.executionFailed }
             return try output(["authenticated": .bool(true)])
         case .device_capabilities:
             guard let source = dictionary["capabilities"] as? [String: Any] else { throw AssistToolTransactionError.invalidNativeResult }
-            let known = ["contacts", "calendar", "reminders", "location", "camera", "notifications"]
+            let common: Set<String> = ["notDetermined", "denied", "restricted", "unavailable"]
+            let known: [String: Set<String>] = [
+                "contacts": common.union(["authorized", "limited"]),
+                "calendar": common.union(["authorized", "writeOnly"]),
+                "reminders": common.union(["authorized", "writeOnly"]),
+                "location": common.union(["authorizedAlways", "authorizedWhenInUse"]),
+                "camera": common.union(["authorized"]),
+                "notifications": ["notDetermined", "denied", "unavailable", "authorized", "provisional", "ephemeral"],
+            ]
             var capabilities: [String: AssistToolValue] = [:]
-            for name in known {
-                if let value = boundedString(source[name], maximum: 32) { capabilities[name] = .string(value) }
+            for (name, statuses) in known {
+                guard let value = boundedString(source[name], maximum: 32), statuses.contains(value) else {
+                    throw AssistToolTransactionError.invalidNativeResult
+                }
+                capabilities[name] = .string(value)
             }
             return try output(["capabilities": .object(capabilities)])
         case .native_boundary:
             let feature = call.arguments["feature"]!.stringValue!
-            guard let boundary = dictionary["boundary"] as? [String: Any], boundary["supported"] as? Bool == false else {
+            guard let boundary = dictionary["boundary"] as? [String: Any], boolean(boundary["supported"]) == false else {
                 throw AssistToolTransactionError.invalidNativeResult
             }
             return try output(["feature": .string(feature), "supported": .bool(false)])
@@ -955,12 +996,12 @@ final class AssistToolTransactionCoordinator {
         guard let title = boundedString(row["title"], maximum: 512),
               let start = boundedString(row["startISO"], maximum: 64),
               let end = boundedString(row["endISO"], maximum: 64),
-              let allDay = row["allDay"] as? Bool else { throw AssistToolTransactionError.invalidNativeResult }
+              let allDay = boolean(row["allDay"]) else { throw AssistToolTransactionError.invalidNativeResult }
         return .object(["title": .string(title), "start": .string(start), "end": .string(end), "all_day": .bool(allDay)])
     }
 
     private static func projectReminder(_ row: [String: Any]) throws -> AssistToolValue {
-        guard let title = boundedString(row["title"], maximum: 512), let completed = row["completed"] as? Bool else {
+        guard let title = boundedString(row["title"], maximum: 512), let completed = boolean(row["completed"]) else {
             throw AssistToolTransactionError.invalidNativeResult
         }
         var reminder: [String: AssistToolValue] = ["title": .string(title), "completed": .bool(completed)]
@@ -981,9 +1022,16 @@ final class AssistToolTransactionCoordinator {
         return number.doubleValue
     }
 
+    private static func boolean(_ value: Any?) -> Bool? {
+        // Foundation bridges NSNumber(0/1) through `as? Bool`; a native receipt
+        // must contain an actual JSON boolean rather than a coerced number.
+        guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { return nil }
+        return number.boolValue
+    }
+
     private static func integer(_ value: Any?) -> Int? {
         guard let number = number(value), number.rounded(.towardZero) == number,
-              number >= 0, number <= Double(Int.max) else { return nil }
+              number >= 0, number < Double(Int.max) else { return nil }
         return Int(number)
     }
 
@@ -1098,7 +1146,7 @@ final class AssistToolTransactionCoordinator {
     private static func emit(
         requestId: String, id: UUID, call: AssistDeviceToolCall, status: AssistToolTransactionStatus,
         preview: [AssistToolPreviewField], token: UUID?, capability: String?, receipt: AssistToolReceipt?,
-        weather: AssistToolValue? = nil, revision: Int, to onActivity: @Sendable (String) -> Void
+        weather: AssistToolValue? = nil, failure: String? = nil, revision: Int, to onActivity: @Sendable (String) -> Void
     ) {
         let envelope = AssistToolActivityEnvelope(
             requestId: requestId,
@@ -1106,7 +1154,7 @@ final class AssistToolTransactionCoordinator {
                 id: id.uuidString, revision: revision, tool: call.name.rawValue, effect: call.name.effect.rawValue,
                 title: title(for: call.name), status: status.rawValue, preview: Array(preview.prefix(10)),
                 confirmationToken: status == .awaitingConfirmation ? token?.uuidString : nil,
-                capability: capability, receipt: receipt, weather: weather
+                capability: capability, receipt: receipt, weather: weather, failure: failure
             )
         )
         guard let data = try? JSONEncoder().encode(envelope), let json = String(data: data, encoding: .utf8) else { return }
@@ -1145,6 +1193,23 @@ final class AssistToolTransactionCoordinator {
         case .cancelled, .cancelledBeforeSubmission, .confirmationExpired: return true
         default: return false
         }
+    }
+
+    /// Only our closed error domains and identifiers cross the broker. Framework
+    /// descriptions, userInfo, URLs and credentials never enter model/UI data.
+    private static func nativeFailure(_ error: Error) -> AssistToolTransactionError {
+        if error is CancellationError { return .cancelled }
+        if let known = error as? AssistToolTransactionError { return known }
+        let value = error as NSError
+        if value.domain == "Assist.DeviceCapabilities", value.userInfo["code"] as? String == "E_CANCELLED" {
+            return .cancelled
+        }
+        if value.domain == "Assist.ApplePlaces", let failure = AssistApplePlacesPolicy.Failure(rawValue: value.code) {
+            if failure == .cancelled { return .cancelled }
+            if failure == .busy { return .busy }
+            return .applePlaces(failure)
+        }
+        return .executionFailed
     }
 
     /// These tools expose interactive Apple UI but can create durable effects.

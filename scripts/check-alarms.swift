@@ -77,6 +77,50 @@ import Foundation
         conflict = try AssistAlarmPolicy.request(timerRaw.replacingOccurrences(of: "Thé", with: "Café"), now: now)
         rejected("identity collision") { _ = try journal.previous(conflict) }
         let list = try AssistAlarmPolicy.request(raw("\"action\":\"list\""), now: now)
+        func changed(_ item: AssistAlarmPolicy.Item, _ changes: [String: Any]) throws -> AssistAlarmPolicy.Item {
+            var row = try JSONSerialization.jsonObject(with: JSONEncoder().encode(item)) as! [String: Any]
+            for (key, value) in changes { row[key] = value }
+            return try JSONDecoder().decode(AssistAlarmPolicy.Item.self, from: JSONSerialization.data(withJSONObject: row))
+        }
+        for mutation in [timer, update, cancel,
+            try AssistAlarmPolicy.request(raw("\"action\":\"stop\",\"alarm_id\":\"\(id)\""), now: now)] {
+            let target = AssistAlarmPolicy.Item(request: timer, state: .countdown, uncertain: false)
+            let foreign = try changed(target, ["alarm_id": other])
+            var uncertain = target; uncertain.uncertain = true
+            for items in [[], [foreign], [uncertain]] {
+                rejected("mutation needs its certain target") {
+                    _ = try AssistAlarmPolicy.result(AssistAlarmPolicy.encode(AssistAlarmPolicy.receipt(mutation, status: .succeeded, code: .ok, items: items)), request: mutation)
+                }
+            }
+        }
+        for mutation in [timer, update] {
+            for field in ["title", "duration", "kind"] {
+                let changes: [String: Any] = field == "title" ? ["title": "Café"] : field == "duration" ? ["duration_seconds": 600] :
+                    ["kind": "alarm", "duration_seconds": NSNull(), "date_iso": "2027-01-15T09:00:00Z"]
+                let target = try changed(AssistAlarmPolicy.Item(request: mutation, state: .countdown, uncertain: false), changes)
+                rejected("success cannot change approved \(field)") {
+                    _ = try AssistAlarmPolicy.result(AssistAlarmPolicy.encode(AssistAlarmPolicy.receipt(mutation, status: .succeeded, code: .ok, items: [target])), request: mutation)
+                }
+            }
+        }
+        let validSuccess = try AssistAlarmPolicy.encode(AssistAlarmPolicy.receipt(timer, status: .succeeded, code: .ok,
+            items: [.init(request: timer, state: .countdown, uncertain: false)]))
+        for key in ["status", "st\\u0061tus"] {
+            rejected("duplicate decoded receipt key") {
+                _ = try AssistAlarmPolicy.result("{\"\(key)\":\"failed_safe\"," + validSuccess.dropFirst(), request: timer)
+            }
+        }
+        rejected("duplicate nested decoded title") {
+            _ = try AssistAlarmPolicy.result(validSuccess.replacingOccurrences(of: "\"title\":\"Thé\"",
+                with: "\"t\\u0069tle\":\"Changed\",\"title\":\"Thé\""), request: timer)
+        }
+        let certain = AssistAlarmPolicy.Item(request: timer, state: .countdown, uncertain: false)
+        let multiple = AssistAlarmPolicy.receipt(timer, status: .succeeded, code: .ok,
+            items: [certain, try changed(certain, ["alarm_id": other])])
+        check(try AssistAlarmPolicy.result(AssistAlarmPolicy.encode(multiple), request: timer).items.count == 2,
+              "success may include other app-owned alarms")
+        check(try AssistAlarmPolicy.result(AssistAlarmPolicy.encode(AssistAlarmPolicy.receipt(list,
+            status: .succeeded, code: .ok, items: [])), request: list).items.isEmpty, "empty app-owned list is valid")
         check(list.alarm_id == nil, "list has no permission or mutation args")
         rejected("list with mutation arg") { _ = try AssistAlarmPolicy.request(raw("\"action\":\"list\",\"alarm_id\":\"\(id)\""), now: now) }
         print("\(count) AlarmKit policy checks passed")

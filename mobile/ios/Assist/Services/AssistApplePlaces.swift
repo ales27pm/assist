@@ -199,7 +199,7 @@ final class AssistApplePlaces {
         async let current = service.weather(for: location, including: .current)
         async let hourly = hours(service, location: location, now: now, count: query.hourlyCount)
         async let daily = days(service, location: location, now: now, count: query.dailyCount)
-        async let attribution = service.attribution
+        async let attribution = weatherAttribution(service)
         let (condition, hourValues, dayValues, credit) = try await (current, hourly, daily, attribution)
         try Task.checkCancellation()
         let unit: UnitTemperature = query.unit == "celsius" ? .celsius : .fahrenheit
@@ -207,16 +207,19 @@ final class AssistApplePlaces {
         let provider = credit.serviceName
         guard !provider.isEmpty, provider.utf8.count <= 256,
               !credit.legalAttributionText.isEmpty, credit.legalAttributionText.utf8.count <= 4_096 else {
-            throw AssistApplePlacesPolicy.failure(.unavailable)
+            throw AssistApplePlacesPolicy.failure(.attributionUnavailable)
         }
-        let creditValue: AssistToolValue = .object([
-            "serviceName": .string(provider),
-            "legalPageURL": .string(try AssistApplePlacesPolicy.attributionURL(credit.legalPageURL)),
-            "combinedMarkLightURL": .string(try AssistApplePlacesPolicy.attributionURL(credit.combinedMarkLightURL)),
-            "combinedMarkDarkURL": .string(try AssistApplePlacesPolicy.attributionURL(credit.combinedMarkDarkURL)),
-            // Legal copy is never truncated into an incomplete attribution.
-            "legalAttributionText": .string(credit.legalAttributionText),
-        ])
+        let creditValue: AssistToolValue
+        do {
+            creditValue = .object([
+                "serviceName": .string(provider),
+                "legalPageURL": .string(try AssistApplePlacesPolicy.attributionURL(credit.legalPageURL)),
+                "combinedMarkLightURL": .string(try AssistApplePlacesPolicy.attributionURL(credit.combinedMarkLightURL)),
+                "combinedMarkDarkURL": .string(try AssistApplePlacesPolicy.attributionURL(credit.combinedMarkDarkURL)),
+                // Legal copy is never truncated into an incomplete attribution.
+                "legalAttributionText": .string(credit.legalAttributionText),
+            ])
+        } catch { throw AssistApplePlacesPolicy.failure(.attributionUnavailable) }
         return try AssistApplePlacesPolicy.response([
             "schemaVersion": .number(1), "requestId": .string(query.requestId), "coordinate": query.coordinate.value,
             "temperatureUnit": .string(query.unit), "retrievedAt": .string(timestamp(now)), "attribution": creditValue,
@@ -239,6 +242,19 @@ final class AssistApplePlaces {
         ])
     }
 
+    @concurrent
+    private static func weatherAttribution(_ service: WeatherService) async throws -> WeatherAttribution {
+        do { return try await service.attribution }
+        catch {
+            let classified = safe(error)
+            // Keep actual permission/network/cancellation failures distinct from
+            // an attribution-only failure. No raw service error crosses the bridge.
+            if classified.domain == "Assist.ApplePlaces", classified.code != AssistApplePlacesPolicy.Failure.unavailable.rawValue {
+                throw classified
+            }
+            throw AssistApplePlacesPolicy.failure(.attributionUnavailable)
+        }
+    }
     @concurrent
     private static func hours(_ service: WeatherService, location: CLLocation, now: Date, count: Int) async throws -> [HourWeather] {
         guard count > 0 else { return [] }

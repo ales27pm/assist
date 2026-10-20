@@ -1,4 +1,5 @@
 import { workspaceBytes, workspaceUUID } from './nativeWorkspaceProtocol';
+import { parseUniqueJSON } from './uniqueJSON';
 
 export type DocumentAction =
   | 'scan'
@@ -101,7 +102,7 @@ function inboxId(value: unknown): value is string {
 function decode(json: string): Record<string, unknown> {
   if (typeof json !== 'string' || workspaceBytes(json) > 24 * 1024)
     return invalid();
-  return row(JSON.parse(json));
+  return row(parseUniqueJSON(json));
 }
 export function parseDocumentActionRequest(
   json: string,
@@ -257,8 +258,11 @@ export function parseDocumentActionResult(
       if (
         value.status !== 'read' ||
         value.inboxId !== request.inboxId ||
-        !['text', 'url', 'pdf', 'image'].includes(String(value.kind)) ||
-        !['utf8', 'pdf_text', 'vision_ocr'].includes(String(value.method))
+        !Object.prototype.hasOwnProperty.call(
+          extractionMethods,
+          String(value.kind),
+        ) ||
+        value.method !== extractionMethods[String(value.kind)]
       )
         return invalid();
       extracted(value);
@@ -288,7 +292,10 @@ export function parseDocumentActionResult(
         ) ||
         !Number.isFinite(Date.parse(value.expiresAt)) ||
         new Date(value.expiresAt).toISOString().replace('.000Z', 'Z') !==
-          value.expiresAt
+          value.expiresAt ||
+        Date.parse(value.expiresAt) <= Date.now() ||
+        Date.parse(value.expiresAt) >
+          Date.now() + Number(request.expirationDays) * 86_400_000
       )
         return invalid();
       break;
@@ -337,6 +344,12 @@ export function parseDocumentActionResult(
   }
   return value as DocumentActionResult;
 }
+const extractionMethods: Record<string, string> = {
+  text: 'utf8',
+  url: 'utf8',
+  image: 'vision_ocr',
+  pdf: 'pdf_text',
+};
 function extracted(value: Record<string, unknown>) {
   if (
     !text(value.text, 8192, true) ||

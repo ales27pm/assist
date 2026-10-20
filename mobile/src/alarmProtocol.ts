@@ -1,4 +1,5 @@
 import { workspaceBytes } from './nativeWorkspaceProtocol';
+import { parseUniqueJSON } from './uniqueJSON';
 
 export type AlarmAction = 'list' | 'create' | 'update' | 'stop' | 'cancel';
 export type AlarmItem = {
@@ -72,7 +73,7 @@ export function parseAlarmReceipt(
 ): AlarmReceipt {
   if (typeof raw !== 'string' || workspaceBytes(raw) > 256 * 1024)
     return invalid();
-  const row = object(JSON.parse(raw), [
+  const row = object(parseUniqueJSON(raw), [
     'schemaVersion',
     'requestId',
     'operationId',
@@ -145,6 +146,20 @@ export function parseAlarmReceipt(
       !Number.isInteger(item.duration_seconds) ||
       item.duration_seconds < 1 ||
       item.duration_seconds > 86400
+    )
+      return invalid();
+  }
+  if (row.status === 'succeeded' && request.action !== 'list') {
+    const target = (row.items as AlarmItem[]).find(
+      item => item.alarm_id === request.alarm_id,
+    );
+    if (!target || target.uncertain) return invalid();
+    if (
+      (request.action === 'create' || request.action === 'update') &&
+      (target.kind !== request.kind ||
+        target.title !== request.title ||
+        target.date_iso !== request.date_iso ||
+        target.duration_seconds !== request.duration_seconds)
     )
       return invalid();
   }

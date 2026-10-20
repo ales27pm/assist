@@ -1,7 +1,71 @@
 import Foundation
+import Synchronization
+#if canImport(CoreSpotlight) && !ASSIST_SPOTLIGHT_CALLBACK_TESTS
 import CoreSpotlight
 import UniformTypeIdentifiers
-import Synchronization
+#endif
+
+/// The Objective-C callback properties aren't annotated Sendable by the SDK.
+/// Construct their entrances outside MainActor, with explicit @Sendable types:
+/// a hop *inside* an inherited MainActor closure is too late to prevent a trap.
+/// https://docs.swift.org/latest/documentation/swift-6-concurrency-migration-guide/incrementaladoption/
+enum AssistSpotlightCallbackBoundary {
+    struct Identity: Sendable { let id: String; let domain: String? }
+    final class Query: Sendable {
+        private enum Phase: Sendable { case collecting, completed, cancelled }
+        private struct State: Sendable { var phase = Phase.collecting; var ids: [String] = [] }
+        private let state = Mutex(State())
+        private let allowed: Set<String>
+        private let domain: String
+        private let capacity: Int
+        init(allowed: Set<String>, domain: String, limit: Int) {
+            self.allowed = allowed; self.domain = domain
+            capacity = max(1, min(limit, 10)) + 1 // one extra result proves truncation
+        }
+        /// Returns false when this batch should stop: cancelled, completed, full.
+        func append(_ identity: Identity) -> Bool {
+            state.withLock { value in
+                guard value.phase == .collecting, value.ids.count < capacity else { return false }
+                if identity.domain == domain, allowed.contains(identity.id), !value.ids.contains(identity.id) {
+                    value.ids.append(identity.id)
+                }
+                return value.ids.count < capacity
+            }
+        }
+        func finish(error: (any Error)?) -> Result<[String], any Error>? {
+            state.withLock { value in
+                guard value.phase == .collecting else { return nil }
+                value.phase = .completed
+                return error.map(Result.failure) ?? .success(value.ids)
+            }
+        }
+        func cancel() { state.withLock { $0.phase = .cancelled; $0.ids.removeAll() } }
+    }
+
+    static func foundItems<Item>(query: Query, identify: @escaping @Sendable (Item) -> Identity) -> @Sendable ([Item]) -> Void {
+        { @Sendable items in
+            for item in items { if !query.append(identify(item)) { break } }
+        }
+    }
+    static func completion(query: Query, deliver: @escaping @MainActor @Sendable (Result<[String], any Error>) -> Void) -> @Sendable ((any Error)?) -> Void {
+        { @Sendable error in
+            guard let result = query.finish(error: error) else { return }
+            Task { @MainActor in deliver(result) }
+        }
+    }
+    /// Index/delete also call from framework queues. Resuming a continuation is
+    /// thread safe; the awaiting caller resumes on its own actor. Ignore a late
+    /// duplicate rather than resuming the same continuation twice.
+    static func acknowledgement(_ continuation: CheckedContinuation<Void, any Error>) -> @Sendable ((any Error)?) -> Void {
+        let finished = Mutex(false)
+        return { @Sendable error in
+            guard finished.withLock({ value in if value { return false }; value = true; return true }) else { return }
+            if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+        }
+    }
+}
+
+#if canImport(CoreSpotlight) && !ASSIST_SPOTLIGHT_CALLBACK_TESTS
 
 /// An explicitly selected, protected, on-device index. The protected manifest is
 /// an allowlist: a Spotlight hit alone never authorizes reading an inbox item.
@@ -12,6 +76,8 @@ final class AssistDocumentSpotlight {
     private let index = CSSearchableIndex(name: "AssistSelectedDocuments-v1", protectionClass: .complete)
     private var query: CSSearchQuery?
     private var queryID: UUID?
+    private var queryGate: AssistSpotlightCallbackBoundary.Query?
+    private var queryDeadline: Task<Void, Never>?
     private var queryCompletion: (@MainActor @Sendable (Result<[(String, String)], Error>) -> Void)?
     private var mutating = false
     struct Entry: Codable, Sendable { let inboxId: String; let title: String; let expiresAt: Date }
@@ -47,18 +113,14 @@ final class AssistDocumentSpotlight {
         mutating = true
         defer { mutating = false }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            index.indexSearchableItems([item]) { error in
-                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-            }
+            index.indexSearchableItems([item], completionHandler: AssistSpotlightCallbackBoundary.acknowledgement(continuation))
         }
         guard try load().contains(where: { $0.inboxId == content.item.id }),
               try AssistSharedInbox.appGroup().list().contains(where: { $0.id == content.item.id }) else {
             // Deletion can occur while the OS index submission is suspended.
             // Remove any late publication rather than resurrecting a deleted item.
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                index.deleteSearchableItems(withIdentifiers: [content.item.id]) { error in
-                    if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-                }
+                index.deleteSearchableItems(withIdentifiers: [content.item.id], completionHandler: AssistSpotlightCallbackBoundary.acknowledgement(continuation))
             }
             throw AssistInboxError.missing
         }
@@ -71,9 +133,7 @@ final class AssistDocumentSpotlight {
         // Remove from allowlist first: delayed Spotlight results cannot reopen it.
         var entries = try load(); entries.removeAll { $0.inboxId == inboxId }; try persist(entries)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            index.deleteSearchableItems(withIdentifiers: [inboxId]) { error in
-                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-            }
+            index.deleteSearchableItems(withIdentifiers: [inboxId], completionHandler: AssistSpotlightCallbackBoundary.acknowledgement(continuation))
         }
     }
 
@@ -92,6 +152,8 @@ final class AssistDocumentSpotlight {
     func search(text: String, limit: Int, completion: @escaping @MainActor @Sendable (Result<[(String, String)], Error>) -> Void) {
         guard query == nil, !mutating, CSSearchableIndex.isIndexingAvailable() else { completion(.failure(AssistDocumentActionsPolicy.failure(.busy))); return }
         do {
+            guard (1...10).contains(limit), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  text.utf8.count <= 128 else { throw AssistDocumentActionsPolicy.failure(.invalid) }
             // Exact live inbox ownership, expiration, and user opt-in all apply.
             let live = try AssistSharedInbox.appGroup().list()
             let now = Date()
@@ -104,6 +166,7 @@ final class AssistDocumentSpotlight {
                 try persist(entries)
                 index.deleteSearchableItems(withIdentifiers: Array(removed), completionHandler: nil)
             }
+            guard !entries.isEmpty else { completion(.success([])); return }
             // Escape ALL query metacharacters; no caller-supplied predicate or
             // wildcard may broaden this app-owned, explicitly opted-in domain.
             let escaped = text.reduce(into: "") { output, character in
@@ -116,41 +179,51 @@ final class AssistDocumentSpotlight {
             operation.protectionClasses = [.complete]
             let token = UUID(); queryID = token; query = operation; queryCompletion = completion
             let accepted = Set(entries.map(\.inboxId))
-            let matches = Mutex<[String]>([])
-            operation.foundItemsHandler = { items in
-                matches.withLock { ids in
-                    for item in items where item.domainIdentifier == Self.domain && accepted.contains(item.uniqueIdentifier) {
-                        if ids.count <= limit, !ids.contains(item.uniqueIdentifier) { ids.append(item.uniqueIdentifier) }
+            let gate = AssistSpotlightCallbackBoundary.Query(allowed: accepted, domain: Self.domain, limit: limit)
+            queryGate = gate
+            operation.foundItemsHandler = AssistSpotlightCallbackBoundary.foundItems(query: gate, identify: { @Sendable item in
+                .init(id: item.uniqueIdentifier, domain: item.domainIdentifier)
+            })
+            operation.completionHandler = AssistSpotlightCallbackBoundary.completion(query: gate) { @MainActor [weak self] outcome in
+                guard let self, self.queryID == token, let callback = self.queryCompletion else { return }
+                self.clearQuery()
+                do {
+                    let ids = try outcome.get()
+                    let stillLive = try AssistSharedInbox.appGroup().list()
+                    let allowed = try self.load().filter { row in
+                        row.expiresAt > Date() && stillLive.contains(where: { $0.id == row.inboxId })
                     }
-                }
+                    let results = ids.compactMap { id -> (String, String)? in
+                        guard stillLive.contains(where: { $0.id == id }), let row = allowed.first(where: { $0.inboxId == id }) else { return nil }
+                        return (id, row.title)
+                    }
+                    callback(.success(results))
+                } catch { callback(.failure(error)) }
             }
-            operation.completionHandler = { [weak self] error in
-                let ids = matches.withLock { $0 }
-                Task { @MainActor [weak self] in
-                    guard let self, self.queryID == token, let callback = self.queryCompletion else { return }
-                    self.query = nil; self.queryID = nil; self.queryCompletion = nil
-                    if let error { callback(.failure(error)); return }
-                    do {
-                        let stillLive = try AssistSharedInbox.appGroup().list()
-                        let allowed = try self.load().filter { row in
-                            row.expiresAt > Date() && stillLive.contains(where: { $0.id == row.inboxId })
-                        }
-                        let results = ids.compactMap { id -> (String, String)? in
-                            guard stillLive.contains(where: { $0.id == id }), let row = allowed.first(where: { $0.inboxId == id }) else { return nil }
-                            return (id, row.title)
-                        }
-                        callback(.success(results))
-                    } catch { callback(.failure(error)) }
-                }
+            queryDeadline = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                guard !Task.isCancelled, let self, self.queryID == token else { return }
+                self.cancelSearch(error: NSError(domain: "Assist.DocumentSearch", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "La recherche locale a dépassé son délai. Aucun résultat ancien n’a été accepté."]))
             }
             operation.start()
         } catch { completion(.failure(error)) }
     }
 
     func cancelSearch() {
+        cancelSearch(error: AssistDocumentActionsPolicy.failure(.cancelled))
+    }
+    private func cancelSearch(error: Error) {
         let callback = queryCompletion
-        queryID = nil; queryCompletion = nil; query?.cancel(); query = nil
-        callback?(.failure(AssistDocumentActionsPolicy.failure(.cancelled)))
+        let operation = query
+        // Revoke the gate/identity before CoreSpotlight.cancel can call back.
+        clearQuery()
+        operation?.cancel()
+        callback?(.failure(error))
+    }
+    private func clearQuery() {
+        queryID = nil; queryCompletion = nil; queryGate?.cancel(); queryGate = nil
+        queryDeadline?.cancel(); queryDeadline = nil; query = nil
     }
 
     private static func expiry(_ item: AssistSharedInbox.Item) -> Date {
@@ -191,3 +264,4 @@ final class AssistDocumentSpotlight {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
 }
+#endif

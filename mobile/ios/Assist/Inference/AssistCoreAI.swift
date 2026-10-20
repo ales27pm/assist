@@ -413,7 +413,7 @@ private struct AssistGenerationResult: Encodable, Sendable {
     let contextCapacity: Int
     let modelName: String?
     let requestId: String
-    let text: String
+    var text: String
     let generatedTokens: Int
     let promptTokens: Int
     let elapsedMs: Double
@@ -539,9 +539,8 @@ private actor AssistInferenceCoordinator {
             // Never call the network-enabled pretrained initializer. Complete tokenizer
             // construction before specializing the heavy model, avoiding concurrent peaks.
             let loadedTokenizer = try await AutoTokenizer.from(modelFolder: localTokenizer)
-            // Agent-only compatibility is tied to the inspected canonical
-            // template. Other local templates can still serve ordinary chat,
-            // but cannot silently gain a calendar executor.
+            // Planning and execution use this hash-bound canonical dialect.
+            // An unqualified template cannot silently enter either phase.
             var compatibleAgentTemplate: String?
             if let templateURL = try? AssistInferencePolicy.confinedURL("tokenizer/chat_template.jinja", root: root),
                let data = try? Data(contentsOf: templateURL, options: .mappedIfSafe), data.count <= 64 * 1_024,
@@ -660,7 +659,8 @@ private actor AssistInferenceCoordinator {
         // before the shared operation latch is acquired. No v1 downgrade.
         let selection = try AssistToolHost.selection(from: json)
         return try await startDeviceToolGeneration(
-            selection.request, allowedTools: selection.allowedTools, broker: broker,
+            selection.request, allowedTools: selection.allowedTools,
+            referenceContext: selection.referenceContext, hostProtocolVersion: selection.hostProtocolVersion, broker: broker,
             admission: admission, onToolActivity: onToolActivity)
     }
 
@@ -700,6 +700,10 @@ private actor AssistInferenceCoordinator {
             try await AssistInferencePreparation.perform(check: { try admission.check() }) {
                 try Self.validateAgentTokenizer(tokenizer, request: request, scope: .today(), chatTemplate: agentChatTemplate)
             }
+            let thought = try await prepareThoughtTree(request: request,
+                baseMessages: AssistResearchAdapter.planningMessages(request: request),
+                tools: AssistResearchAdapter.closedToolSchema(), scope: .research,
+                admission: admission, deadline: deadline, chatTemplate: agentChatTemplate)
             let ownedLease = try await service.beginResearch(requestId: request.requestId, admission: admission)
             lease = ownedLease
             let outcome = try await AssistResearchRun.run(request: request, deadline: deadline,
@@ -709,7 +713,8 @@ private actor AssistInferenceCoordinator {
                     try await service.checkResearch(ownedLease)
                     let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
                         let prompt = try tokenizer.applyChatTemplate(
-                            messages: messages, chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
+                            messages: AssistThoughtTree.applySelection(thought, to: messages),
+                            chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
                             truncation: false, maxLength: nil, tools: AssistResearchAdapter.closedToolSchema(),
                             additionalContext: AssistResearchAdapter.additionalContext)
                         let rendered = tokenizer.decode(tokens: prompt, skipSpecialTokens: false)
@@ -741,8 +746,18 @@ private actor AssistInferenceCoordinator {
                     try admission.check()
                     try await service.checkResearch(ownedLease)
                     if decoded.result.finishReason == "cancelled" { throw CancellationError() }
+                    if calls.isEmpty {
+                        let decision = try AssistResearchAdapter.parse(raw: decoded.result.text,
+                            stoppedAtToolResponse: decoded.stoppedToken == 50)
+                        let name: String?
+                        switch decision { case .call(let call): name = call.name.rawValue; case .answer: name = nil }
+                        try AssistThoughtTree.validateFirstAction(thought, toolName: name)
+                    }
                     await monitor.transition(phase: "generating", code: "PHASE_CHANGED")
-                    return AssistAgentModelTurn(rawText: decoded.result.text,
+                    let safeText = decoded.stoppedToken == 50 ? decoded.result.text
+                        : try AssistThoughtTree.publicAnswer(decoded.result.text, selection: thought,
+                            completedEOS: decoded.result.finishReason == "eos")
+                    return AssistAgentModelTurn(rawText: safeText,
                         stoppedAtToolResponse: decoded.stoppedToken == 50,
                         completed: decoded.result.finishReason == "eos", value: decoded.result)
                 }, perform: { call in
@@ -783,6 +798,7 @@ private actor AssistInferenceCoordinator {
 
     private func startDeviceToolGeneration(
         _ request: AssistGenerationRequest, allowedTools: Set<AssistToolName>,
+        referenceContext: AssistDeviceReferenceContext = .empty, hostProtocolVersion: Int = 2,
         broker: AssistToolTransactionCoordinator, admission: AssistAgentAdmission,
         onToolActivity: @escaping @Sendable (String) -> Void
     ) async throws -> String {
@@ -791,7 +807,8 @@ private actor AssistInferenceCoordinator {
         lastError = nil
         let task = Task {
             try await self.runDeviceToolGeneration(
-                request, allowedTools: allowedTools, broker: broker,
+                request, allowedTools: allowedTools, referenceContext: referenceContext,
+                hostProtocolVersion: hostProtocolVersion, broker: broker,
                 admission: admission, onToolActivity: onToolActivity)
         }
         generationTask = task
@@ -799,7 +816,8 @@ private actor AssistInferenceCoordinator {
     }
 
     private func runDeviceToolGeneration(
-        _ request: AssistGenerationRequest, allowedTools: Set<AssistToolName>, broker: AssistToolTransactionCoordinator,
+        _ request: AssistGenerationRequest, allowedTools: Set<AssistToolName>,
+        referenceContext: AssistDeviceReferenceContext, hostProtocolVersion: Int, broker: AssistToolTransactionCoordinator,
         admission: AssistAgentAdmission, onToolActivity: @escaping @Sendable (String) -> Void
     ) async throws -> String {
         defer {
@@ -820,15 +838,21 @@ private actor AssistInferenceCoordinator {
             try admission.check()
             try await AssistInferencePreparation.perform(check: { try admission.check() }) {
                 try Self.validateDeviceToolTokenizer(tokenizer, request: request, chatTemplate: agentChatTemplate,
-                                                     allowedTools: allowedTools)
+                                                     allowedTools: allowedTools, referenceContext: referenceContext)
             }
+            let thought = try await prepareThoughtTree(request: request,
+                baseMessages: AssistDeviceToolAdapter.planningMessages(request: request, referenceContext: referenceContext),
+                tools: AssistDeviceToolAdapter.closedToolSchema(allowedTools: allowedTools), scope: .device,
+                admission: admission, deadline: deadline, chatTemplate: agentChatTemplate)
             let outcome = try await AssistDeviceToolRun.run(
-                request: request, deadline: deadline, allowedTools: allowedTools, model: { messages, requestedBudget, calls in
+                request: request, deadline: deadline, allowedTools: allowedTools,
+                referenceContext: referenceContext, model: { messages, requestedBudget, calls in
                     try Task.checkCancellation()
                     try admission.check()
                     let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
                         let prompt = try tokenizer.applyChatTemplate(
-                            messages: messages, chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
+                            messages: AssistThoughtTree.applySelection(thought, to: messages),
+                            chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
                             truncation: false, maxLength: nil, tools: AssistDeviceToolAdapter.closedToolSchema(allowedTools: allowedTools),
                             additionalContext: AssistGemmaToolAdapter.additionalContext)
                         let rendered = tokenizer.decode(tokens: prompt, skipSpecialTokens: false)
@@ -855,18 +879,41 @@ private actor AssistInferenceCoordinator {
                             modelName: modelName, engine: engine, tokenizer: tokenizer, stopTokens: stops,
                             started: started, monitor: monitor, onProgress: { _ in },
                             emitPublicProgress: false, deadline: deadline, monitorRequestId: passId)
-                    } catch is CancellationError { throw CancellationError() }
-                    catch let policy as AssistInferenceError { throw policy }
-                    catch { throw AssistAgentEngineFailure(cause: error) }
+                    } catch is CancellationError {
+                        await monitor.recordToolPass(passIndex: calls.count, finishReason: "cancelled")
+                        throw CancellationError()
+                    } catch let policy as AssistInferenceError {
+                        await monitor.recordToolPass(passIndex: calls.count, finishReason: "error")
+                        throw policy
+                    } catch {
+                        await monitor.recordToolPass(passIndex: calls.count, finishReason: "error")
+                        throw AssistAgentEngineFailure(cause: error)
+                    }
+                    // Keep only a bounded, closed outcome code before protocol
+                    // validation can reject an empty EOS or malformed proposal.
+                    await monitor.recordToolPass(passIndex: calls.count,
+                        finishReason: decoded.result.finishReason,
+                        stoppedAtToolResponse: decoded.stoppedToken == 50,
+                        generatedTokens: decoded.result.generatedTokens)
                     await monitor.endGeneration(
                         requestId: passId, promptTokens: decoded.result.promptTokens,
                         generatedTokens: decoded.result.generatedTokens, elapsedMs: decoded.result.elapsedMs,
                         ttftMs: decoded.result.ttftMs, finishReason: decoded.result.finishReason)
                     if decoded.result.finishReason == "cancelled" { throw CancellationError() }
+                    if calls.isEmpty {
+                        let decision = try AssistDeviceToolAdapter.parse(raw: decoded.result.text,
+                            stoppedAtToolResponse: decoded.stoppedToken == 50, allowedTools: allowedTools)
+                        let name: String?
+                        switch decision { case .call(let call): name = call.name.rawValue; case .answer: name = nil }
+                        try AssistThoughtTree.validateFirstAction(thought, toolName: name)
+                    }
                     // The engine owner remains occupied during confirmation
                     // and tool execution, even though this model pass ended.
                     await monitor.transition(phase: "generating", code: "PHASE_CHANGED")
-                    return AssistAgentModelTurn(rawText: decoded.result.text,
+                    let safeText = decoded.stoppedToken == 50 ? decoded.result.text
+                        : try AssistThoughtTree.publicAnswer(decoded.result.text, selection: thought,
+                            completedEOS: decoded.result.finishReason == "eos")
+                    return AssistAgentModelTurn(rawText: safeText,
                                                stoppedAtToolResponse: decoded.stoppedToken == 50,
                                                completed: decoded.result.finishReason == "eos", value: decoded.result)
                 }, perform: { call in
@@ -880,22 +927,31 @@ private actor AssistInferenceCoordinator {
                         // Never let a model turn convert an uncertain write to
                         // "done" or propose a duplicate. The journal is truth.
                         return .object(["status": .string("outcome_unknown")])
+                    } catch AssistToolTransactionError.cancelledBeforeSubmission {
+                        return .object(["status": .string("cancelled")])
+                    } catch AssistToolTransactionError.cancelled {
+                        return .object(["status": .string("cancelled")])
                     }
                 }, isCancelled: { admission.isCancelled })
             try Task.checkCancellation()
             try admission.check()
             var result = outcome.value
-            // Only final validated prose crosses the generation boundary.
-            // Broker receipts/journal, never model prose, describe side effects.
+            // Public text is either validated model prose for a data-bearing
+            // read or exact native receipt text for a completed action. Only
+            // broker receipts/journal, never model prose, prove side effects.
             result = AssistGenerationResult(
                 phase: result.phase, contextCapacity: result.contextCapacity, modelName: result.modelName,
                 requestId: result.requestId, text: outcome.visibleText, generatedTokens: result.generatedTokens,
                 promptTokens: result.promptTokens, elapsedMs: result.elapsedMs, ttftMs: result.ttftMs,
-                finishReason: result.finishReason, requestedMaxTokens: result.requestedMaxTokens,
+                finishReason: outcome.cancelled ? "cancelled" : result.finishReason, requestedMaxTokens: result.requestedMaxTokens,
                 effectiveMaxTokens: result.effectiveMaxTokens, peakPhysicalFootprintBytes: result.peakPhysicalFootprintBytes,
                 numericalDiagnostics: nil, agentTools: true,
                 weather: outcome.weather.isEmpty ? nil : outcome.weather)
             await monitor.transition(phase: "ready", code: "PHASE_CHANGED")
+            if hostProtocolVersion == 3 {
+                return try AssistToolHost.resultJSON(result,
+                    referenceContextEligible: outcome.referenceContextEligible && result.finishReason == "eos")
+            }
             return try AssistJSON.encode(result)
         } catch let failure as AssistAgentEngineFailure {
             clearResidentIdentity()
@@ -911,11 +967,11 @@ private actor AssistInferenceCoordinator {
 
     private static func validateDeviceToolTokenizer(
         _ tokenizer: any Tokenizers.Tokenizer, request: AssistGenerationRequest, chatTemplate: String,
-        allowedTools: Set<AssistToolName>
+        allowedTools: Set<AssistToolName>, referenceContext: AssistDeviceReferenceContext = .empty
     ) throws {
         // Same hash-bound canonical dialect as the existing read-only path.
         try validateAgentTokenizer(tokenizer, request: request, scope: .today(), chatTemplate: chatTemplate)
-        let messages = try AssistDeviceToolAdapter.planningMessages(request: request)
+        let messages = try AssistDeviceToolAdapter.planningMessages(request: request, referenceContext: referenceContext)
         func render(_ messages: [[String: any Sendable]]) throws -> String {
             let tokens = try tokenizer.applyChatTemplate(
                 messages: messages, chatTemplate: .literal(chatTemplate), addGenerationPrompt: true,
@@ -958,6 +1014,10 @@ private actor AssistInferenceCoordinator {
             try await AssistInferencePreparation.perform(check: { try admission.check() }) {
                 try Self.validateAgentTokenizer(tokenizer, request: request, scope: scope, chatTemplate: agentChatTemplate)
             }
+            let thought = try await prepareThoughtTree(request: request,
+                baseMessages: AssistGemmaToolAdapter.planningMessages(request: request, scope: scope),
+                tools: AssistGemmaToolAdapter.closedToolSchema(scope: scope), scope: .calendar,
+                admission: admission, deadline: deadline, chatTemplate: agentChatTemplate)
             let outcome = try await AssistAgentRunController.run(
                 request: request, scope: scope, deadline: deadline,
                 model: { messages, requestedBudget, planning in
@@ -965,7 +1025,8 @@ private actor AssistInferenceCoordinator {
                     try admission.check()
                     let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
                         let prompt = try tokenizer.applyChatTemplate(
-                            messages: messages, chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
+                            messages: AssistThoughtTree.applySelection(thought, to: messages),
+                            chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
                             truncation: false, maxLength: nil,
                             tools: AssistGemmaToolAdapter.closedToolSchema(scope: scope),
                             additionalContext: AssistGemmaToolAdapter.additionalContext)
@@ -1009,9 +1070,19 @@ private actor AssistInferenceCoordinator {
                         generatedTokens: decoded.result.generatedTokens, elapsedMs: decoded.result.elapsedMs,
                         ttftMs: decoded.result.ttftMs, finishReason: decoded.result.finishReason)
                     if decoded.result.finishReason == "cancelled" { throw CancellationError() }
+                    if planning {
+                        let decision = try AssistGemmaToolAdapter.parse(raw: decoded.result.text,
+                            stoppedAtToolResponse: decoded.stoppedToken == 50, scope: scope)
+                        let name: String?
+                        switch decision { case .call(let call): name = call.name; case .answer: name = nil }
+                        try AssistThoughtTree.validateFirstAction(thought, toolName: name)
+                    }
                     await monitor.transition(phase: "generating", code: "PHASE_CHANGED")
+                    let safeText = decoded.stoppedToken == 50 ? decoded.result.text
+                        : try AssistThoughtTree.publicAnswer(decoded.result.text, selection: thought,
+                            completedEOS: decoded.result.finishReason == "eos")
                     return AssistAgentModelTurn(
-                        rawText: decoded.result.text, stoppedAtToolResponse: decoded.stoppedToken == 50,
+                        rawText: safeText, stoppedAtToolResponse: decoded.stoppedToken == 50,
                         completed: decoded.result.finishReason == "eos", value: decoded.result)
                 },
                 readCalendar: { scope in
@@ -1107,10 +1178,36 @@ private actor AssistInferenceCoordinator {
             phase = cancellationWaiters > 0 ? .cancelling : (engine == nil ? .failed : .ready)
         }
         guard let engine, let tokenizer else { throw AssistInferenceError.notLoaded }
-        let started = ContinuousClock().now
-        let messages: [Tokenizers.Message] = request.messages.map { ["role": $0.role, "content": $0.content] }
+        guard let agentChatTemplate else {
+            throw AssistInferenceError.invalid("Le template local n’est pas qualifié pour la préparation de la réponse.")
+        }
+        let started = ContinuousClock.now
+        let deadline = started.advanced(by: .seconds(180))
+        let baseMessages: [Tokenizers.Message] = request.messages.map { ["role": $0.role, "content": $0.content] }
+        // Admit the complete original conversation before paying for search.
+        // The final prompt is counted again with its frozen selected guide.
+        let originalPrompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
+            try tokenizer.applyChatTemplate(messages: baseMessages,
+                chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
+                truncation: false, maxLength: nil, additionalContext: ["enable_thinking": false])
+        }
+        _ = try AssistInferencePolicy.outputBudget(promptTokens: originalPrompt.count,
+            capacity: capacity, requested: request.maxTokens)
+        let thought: AssistThoughtTree.Selection
+        do {
+            thought = try await prepareThoughtTree(request: request, baseMessages: baseMessages,
+                tools: [], scope: .conversation, admission: admission, deadline: deadline,
+                chatTemplate: agentChatTemplate)
+        } catch let failure as AssistAgentEngineFailure {
+            clearResidentIdentity()
+            lastError = failure.cause.localizedDescription
+            throw failure.cause
+        }
+        let messages = try AssistThoughtTree.applySelection(thought, to: baseMessages)
         let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
-            try tokenizer.applyChatTemplate(messages: messages)
+            try tokenizer.applyChatTemplate(messages: messages,
+                chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
+                truncation: false, maxLength: nil, additionalContext: ["enable_thinking": false])
         }
         let budget = try AssistInferencePolicy.outputBudget(
             promptTokens: prompt.count, capacity: capacity, requested: request.maxTokens
@@ -1126,19 +1223,114 @@ private actor AssistInferenceCoordinator {
             let decoded = try await Self.consumeGeneration(
                 request: request, prompt: prompt, budget: budget, capacity: capacity,
                 modelName: modelName, engine: engine, tokenizer: tokenizer,
-                stopTokens: stopTokens, started: started, monitor: monitor, onProgress: onProgress
+                stopTokens: stopTokens, started: started, monitor: monitor, onProgress: onProgress,
+                deadline: deadline,
+                publicSnapshotFilter: { try AssistThoughtTree.shouldEmitPublicSnapshot($0, selection: thought) }
             )
-            let result = decoded.result
+            var result = decoded.result
+            result.text = try AssistThoughtTree.publicAnswer(result.text, selection: thought,
+                completedEOS: result.finishReason == "eos")
+            if result.finishReason == "eos", result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw AssistThoughtTree.Failure.invalidPublicOutput
+            }
             await monitor.endGeneration(
                 requestId: request.requestId, promptTokens: result.promptTokens,
                 generatedTokens: result.generatedTokens, elapsedMs: result.elapsedMs,
                 ttftMs: result.ttftMs, finishReason: result.finishReason
             )
             return try AssistJSON.encode(result)
+        } catch let policy as AssistThoughtTree.Failure {
+            await monitor.transition(phase: "ready", code: "GENERATION_REJECTED", severity: "warning")
+            throw policy
+        } catch let policy as AssistToolContractError {
+            await monitor.transition(phase: "ready", code: "GENERATION_REJECTED", severity: "warning")
+            throw policy
+        } catch let policy as AssistInferenceError {
+            await monitor.transition(phase: "ready", code: "GENERATION_REJECTED", severity: "warning")
+            throw policy
         } catch {
             // The one generation task has drained before we discard its resident identity.
             clearResidentIdentity()
             lastError = error.localizedDescription
+            throw error
+        }
+    }
+
+    /// Exactly once per external request, under its existing engine ownership.
+    /// There is no broker, service, tool executor or public progress in this phase.
+    private func prepareThoughtTree(
+        request: AssistGenerationRequest, baseMessages: [Tokenizers.Message],
+        tools: [Tokenizers.Message], scope: AssistThoughtTree.Scope,
+        admission: AssistAgentAdmission, deadline: ContinuousClock.Instant, chatTemplate: String
+    ) async throws -> AssistThoughtTree.Selection {
+        guard let engine, let tokenizer else { throw AssistInferenceError.notLoaded }
+        let capacity = capacity
+        let modelName = modelName
+        let monitor = monitor
+        let stops = stopTokens.union([Int32(50)])
+        let privateRequest = AssistGenerationRequest(requestId: request.requestId,
+            messages: request.messages, temperature: 0, maxTokens: nil)
+        await monitor.recordThoughtTreeStart(requestId: request.requestId)
+        do {
+            let selection = try await AssistThoughtTree.run(baseMessages: baseMessages, tools: tools, scope: scope,
+                deadline: deadline, model: { messages, requestedBudget in
+                    try Task.checkCancellation()
+                    try admission.check()
+                    guard ContinuousClock.now < deadline else {
+                        throw AssistInferenceError.invalid("Le délai de préparation locale est atteint. Aucun accès exécuté.")
+                    }
+                    let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
+                        let prompt = try tokenizer.applyChatTemplate(messages: messages,
+                            chatTemplate: .literal(chatTemplate), addGenerationPrompt: true,
+                            truncation: false, maxLength: nil, additionalContext: ["enable_thinking": false])
+                        guard prompt.allSatisfy({ $0 >= 0 && $0 <= Int(Int32.max) }) else {
+                            throw AssistInferenceError.invalid("Jeton de préparation hors de la plage native.")
+                        }
+                        return prompt
+                    }
+                    let budget = try AssistInferencePolicy.outputBudget(promptTokens: prompt.count,
+                        capacity: capacity, requested: requestedBudget)
+                    // These two fixed suffixes identify only the planning stage,
+                    // never its intent, branches, tools, conditions or text.
+                    let passID = String(request.requestId.prefix(100))
+                        + (requestedBudget == AssistThoughtTree.rootTokenBudget ? ":tree-roots" : ":tree-leaves")
+                    let started = ContinuousClock.now
+                    await monitor.beginGeneration(requestId: passID, promptTokens: prompt.count,
+                        contextCapacity: capacity, elapsedMs: 0)
+                    let decoded: AssistDecodedGeneration
+                    do {
+                        decoded = try await Self.consumeGeneration(request: privateRequest,
+                            prompt: prompt, budget: budget, capacity: capacity, modelName: modelName,
+                            engine: engine, tokenizer: tokenizer, stopTokens: stops, started: started,
+                            monitor: monitor, onProgress: { _ in }, emitPublicProgress: false,
+                            deadline: deadline, monitorRequestId: passID)
+                    } catch is CancellationError { throw CancellationError() }
+                    catch let policy as AssistInferenceError { throw policy }
+                    catch { throw AssistAgentEngineFailure(cause: error) }
+                    await monitor.endGeneration(requestId: passID, promptTokens: decoded.result.promptTokens,
+                        generatedTokens: decoded.result.generatedTokens, elapsedMs: decoded.result.elapsedMs,
+                        ttftMs: decoded.result.ttftMs, finishReason: decoded.result.finishReason)
+                    await monitor.transition(phase: "generating", code: "PHASE_CHANGED")
+                    try Task.checkCancellation()
+                    try admission.check()
+                    if decoded.result.finishReason == "cancelled" { throw CancellationError() }
+                    return AssistThoughtTree.ModelTurn(rawText: decoded.result.text,
+                        completedEOS: decoded.result.finishReason == "eos"
+                            && [Int32(1), Int32(106)].contains(decoded.stoppedToken ?? -1),
+                        stoppedAtToolResponse: decoded.stoppedToken == 50)
+                }, isCancelled: { admission.isCancelled }, cancelModel: { try? await engine.cancel() })
+            await monitor.recordThoughtTreeEnd(requestId: request.requestId, outcome: .ready)
+            return selection
+        } catch is CancellationError {
+            await monitor.recordThoughtTreeEnd(requestId: request.requestId, outcome: .cancelled)
+            await monitor.transition(phase: "ready", code: "GENERATION_REJECTED", severity: "warning")
+            throw CancellationError()
+        } catch let failure as AssistAgentEngineFailure {
+            await monitor.recordThoughtTreeEnd(requestId: request.requestId, outcome: .error)
+            throw failure
+        } catch {
+            await monitor.recordThoughtTreeEnd(requestId: request.requestId, outcome: .rejected)
+            await monitor.transition(phase: "ready", code: "GENERATION_REJECTED", severity: "warning")
             throw error
         }
     }
@@ -1154,7 +1346,35 @@ private actor AssistInferenceCoordinator {
         monitor: AssistRuntimeMonitor,
         onProgress: @escaping @Sendable (String) -> Void,
         emitPublicProgress: Bool = true, deadline: ContinuousClock.Instant? = nil,
-        monitorRequestId: String? = nil
+        monitorRequestId: String? = nil,
+        publicSnapshotFilter: (@Sendable (String) throws -> Bool)? = nil
+    ) async throws -> AssistDecodedGeneration {
+        let operation: @Sendable () async throws -> AssistDecodedGeneration = {
+            try await Self.consumeGenerationStream(request: request, prompt: prompt, budget: budget,
+                capacity: capacity, modelName: modelName, engine: engine, tokenizer: tokenizer,
+                stopTokens: stopTokens, started: started, monitor: monitor, onProgress: onProgress,
+                emitPublicProgress: emitPublicProgress, deadline: deadline,
+                monitorRequestId: monitorRequestId, publicSnapshotFilter: publicSnapshotFilter)
+        }
+        if let deadline {
+            return try await AssistInferenceDeadline.run(until: deadline, operation: operation,
+                cancelOperation: { try? await engine.cancel() },
+                acceptCancelledValue: { emitPublicProgress && $0.result.finishReason == "cancelled" })
+        }
+        return try await operation()
+    }
+
+    /// Keep the SDK's non-Sendable sequence on this one executor. The enclosing
+    /// deadline owns cancellation and cannot return before this stream drains.
+    @concurrent
+    private static func consumeGenerationStream(
+        request: AssistGenerationRequest, prompt: [Int], budget: Int, capacity: Int,
+        modelName: String?, engine: any InferenceEngine, tokenizer: any Tokenizers.Tokenizer,
+        stopTokens: Set<Int32>, started: ContinuousClock.Instant,
+        monitor: AssistRuntimeMonitor,
+        onProgress: @escaping @Sendable (String) -> Void,
+        emitPublicProgress: Bool, deadline: ContinuousClock.Instant?,
+        monitorRequestId: String?, publicSnapshotFilter: (@Sendable (String) throws -> Bool)?
     ) async throws -> AssistDecodedGeneration {
         let clock = ContinuousClock()
         var generated = AssistOutputBuffer()
@@ -1177,6 +1397,9 @@ private actor AssistInferenceCoordinator {
         let monitoringID = monitorRequestId ?? request.requestId
         do {
             try Task.checkCancellation()
+            if let deadline, clock.now >= deadline {
+                throw AssistInferenceError.invalid("Le budget de temps de la consultation locale est atteint.")
+            }
             let stream = try await engine.generate(
                 with: prompt.map(Int32.init),
                 samplingConfiguration: SamplingConfiguration(temperature: request.temperature),
@@ -1208,7 +1431,7 @@ private actor AssistInferenceCoordinator {
                 if generated.count == 1 || Self.milliseconds(lastProgress.duration(to: clock.now)) >= 100 {
                     // Counts remain live while text snapshots use bounded decode work.
                     text = generated.progressSnapshot { tokenizer.decode(tokens: $0) }
-                    if emitPublicProgress {
+                    if emitPublicProgress, try publicSnapshotFilter?(text) ?? true {
                         onProgress(try AssistJSON.encode(AssistProgress(
                             requestId: request.requestId, text: text, generatedTokens: generated.count,
                             promptTokens: prompt.count, elapsedMs: Self.milliseconds(started.duration(to: clock.now))
@@ -1235,7 +1458,7 @@ private actor AssistInferenceCoordinator {
         }
         // Always emit the final whole-prefix snapshot, including cancellation.
         text = generated.snapshot { tokenizer.decode(tokens: $0) }
-        if emitPublicProgress {
+        if emitPublicProgress, try publicSnapshotFilter?(text) ?? true {
             onProgress(try AssistJSON.encode(AssistProgress(
                 requestId: request.requestId, text: text, generatedTokens: generated.count,
                 promptTokens: prompt.count, elapsedMs: Self.milliseconds(started.duration(to: clock.now))

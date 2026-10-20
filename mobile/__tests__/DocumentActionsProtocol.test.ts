@@ -178,6 +178,57 @@ describe('document receipts reject spoofed or unsafe output', () => {
       expect(documentActionReceipt(result)).toMatch(/Aucun texte extrait/);
     }
   });
+  test.each([
+    ['text', 'utf8'],
+    ['url', 'utf8'],
+    ['image', 'vision_ocr'],
+    ['pdf', 'pdf_text'],
+  ])(
+    'binds the %s extraction method to its native format',
+    (kind, expected) => {
+      for (const method of ['utf8', 'vision_ocr', 'pdf_text']) {
+        const parse = () =>
+          parseDocumentActionResult(
+            JSON.stringify({ ...receipt, kind, method }),
+            request,
+          );
+        if (method === expected) expect(parse().status).toBe('read');
+        else expect(parse).toThrow();
+      }
+    },
+  );
+  test('index expiry is within the exact requested duration and permits earlier inbox expiry', () => {
+    const now = Date.parse('2026-10-20T00:00:00Z');
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const index = parseDocumentActionRequest(
+        input('index', { inboxId: id, title: 'Test', expirationDays: 1 }),
+      );
+      const parse = (expiresAt: string) =>
+        parseDocumentActionResult(
+          JSON.stringify({
+            schemaVersion: 1,
+            requestId,
+            action: 'index',
+            status: 'indexed',
+            inboxId: id,
+            expiresAt,
+          }),
+          index,
+        );
+      for (const expiry of ['2026-10-20T01:00:00Z', '2026-10-21T00:00:00Z'])
+        expect(parse(expiry).status).toBe('indexed');
+      for (const expiry of [
+        '2026-10-20T00:00:00Z',
+        '2026-10-19T23:59:59Z',
+        '2026-10-21T00:00:01Z',
+        '2099-01-01T00:00:00Z',
+      ])
+        expect(() => parse(expiry)).toThrow();
+    } finally {
+      clock.mockRestore();
+    }
+  });
   test('never calls an Apple compose receipt delivery proof', () => {
     const compose = parseDocumentActionRequest(
       input('compose', {

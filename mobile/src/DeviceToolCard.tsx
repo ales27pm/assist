@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useAppearance } from './appearance';
-import { DeviceToolTransaction, deviceToolLabels } from './deviceToolProtocol';
+import { DeviceToolTransaction, deviceToolLabels, toolFailureMessage } from './deviceToolProtocol';
 import { ActionButton, Disclosure } from './uiPrimitives';
 import { uiGrammar } from './uiGrammar';
 import { WeatherForecastCard } from './WeatherForecastCard';
@@ -71,6 +71,11 @@ export function DeviceToolCard({
         <Text style={[styles.body, { color: colors.danger }]}>
           L’action a peut-être eu lieu. Vérifie dans l’app concernée avant toute
           nouvelle création. Aucun nouvel essai automatique.
+        </Text>
+      )}
+      {transaction.status === 'failed_safe' && transaction.failure && (
+        <Text style={[styles.body, { color: colors.text }]}>
+          {toolFailureMessage(transaction.failure)}
         </Text>
       )}
       {transaction.weather && transaction.status === 'success' && (

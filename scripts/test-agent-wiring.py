@@ -35,8 +35,51 @@ class AgentWiring(unittest.TestCase):
         phase = project.split('/* Begin PBXSourcesBuildPhase section */', 1)[1].split(
             '/* End PBXSourcesBuildPhase section */', 1)[0]
         for name in ['AssistAgentCalendar', 'AssistGemmaToolAdapter', 'AssistAgentRun',
-                     'AssistToolContracts', 'AssistDeviceToolAdapter', 'AssistToolTransactions', 'AssistDeviceToolRun', 'AssistToolHost']:
+                     'AssistToolContracts', 'AssistDeviceToolAdapter', 'AssistToolTransactions', 'AssistDeviceToolRun', 'AssistToolHost', 'AssistThoughtTree']:
             self.assertEqual(phase.count(f'{name}.swift in Sources'), 1)
+
+    def test_thought_tree_precedes_each_external_run_once_and_not_each_tool_pass(self):
+        source = (ROOT / 'mobile/ios/Assist/Inference/AssistCoreAI.swift').read_text()
+        for method, end, run in [
+                ('runResearchGeneration', 'private func startDeviceToolGeneration', 'AssistResearchRun.run('),
+                ('runDeviceToolGeneration', 'private static func validateDeviceToolTokenizer', 'AssistDeviceToolRun.run('),
+                ('runCalendarGeneration', 'private static func validateAgentTokenizer', 'AssistAgentRunController.run(')]:
+            body = source.split(f'private func {method}(', 1)[1].split(end, 1)[0]
+            self.assertEqual(body.count('prepareThoughtTree('), 1)
+            self.assertLess(body.index('prepareThoughtTree('), body.index(run))
+            self.assertIn('AssistThoughtTree.applySelection(thought, to: messages)', body)
+            self.assertIn('AssistThoughtTree.validateFirstAction(thought, toolName: name)', body)
+        ordinary = source.split('private func runGeneration(', 1)[1].split('private func prepareThoughtTree(', 1)[0]
+        self.assertEqual(ordinary.count('prepareThoughtTree('), 1)
+        self.assertLess(ordinary.index('prepareThoughtTree('), ordinary.index('Self.consumeGeneration('))
+
+    def test_thought_tree_has_no_public_progress_or_executor_and_drains_the_same_engine(self):
+        source = (ROOT / 'mobile/ios/Assist/Inference/AssistCoreAI.swift').read_text()
+        helper = source.split('private func prepareThoughtTree(', 1)[1].split("/// Apple's output", 1)[0]
+        self.assertIn('emitPublicProgress: false', helper)
+        self.assertIn('stoppedAtToolResponse: decoded.stoppedToken == 50', helper)
+        self.assertIn('cancelModel: { try? await engine.cancel() }', helper)
+        self.assertIn('truncation: false, maxLength: nil', helper)
+        for forbidden in ['broker.perform', 'performResearch', 'readCalendarForAgent', 'CoreAIRunner(']:
+            self.assertNotIn(forbidden, helper)
+
+    def test_every_model_stream_uses_the_owned_active_deadline(self):
+        source = (ROOT / 'mobile/ios/Assist/Inference/AssistCoreAI.swift').read_text()
+        wrapper = source.split('private static func consumeGeneration(', 1)[1].split(
+            'private static func consumeGenerationStream(', 1)[0]
+        self.assertIn('AssistInferenceDeadline.run(until: deadline', wrapper)
+        self.assertIn('cancelOperation: { try? await engine.cancel() }', wrapper)
+        self.assertIn('emitPublicProgress && $0.result.finishReason == "cancelled"', wrapper)
+        for method, end in [
+                ('runGeneration', 'private func prepareThoughtTree'),
+                ('runResearchGeneration', 'private func startDeviceToolGeneration'),
+                ('runDeviceToolGeneration', 'private static func validateDeviceToolTokenizer'),
+                ('runCalendarGeneration', 'private static func validateAgentTokenizer'),
+                ('prepareThoughtTree', "/// Apple's output")]:
+            body = source.split(f'private func {method}(', 1)[1].split(end, 1)[0]
+            self.assertIn('Self.consumeGeneration(', body)
+            self.assertIn('deadline: deadline', body)
+            self.assertNotIn('consumeGenerationStream(', body)
 
     def test_admission_is_revoked_before_scheduling_cancel_and_ack_waits_for_drain(self):
         source = (ROOT / 'mobile/ios/Assist/Inference/AssistCoreAI.swift').read_text()
@@ -70,12 +113,13 @@ class AgentWiring(unittest.TestCase):
             self.assertLess(entry.index('AssistValidateGenerationJSON(requestJSON, reject)'),
                             entry.index('dispatch_async(dispatch_get_main_queue()'))
 
-    def test_agent_template_is_hash_bound_and_ordinary_generation_keeps_its_template(self):
+    def test_agent_and_conversation_use_the_qualified_canonical_template(self):
         source = (ROOT / 'mobile/ios/Assist/Inference/AssistCoreAI.swift').read_text()
         self.assertIn('== AssistGemmaToolAdapter.canonicalTemplateSHA256', source)
         self.assertIn('chatTemplate: .literal(agentChatTemplate)', source)
         legacy = source.split('    private func runGeneration(', 1)[1].split('    /// Apple', 1)[0]
-        self.assertIn('applyChatTemplate(messages: messages)', legacy)
+        self.assertIn('chatTemplate: .literal(agentChatTemplate)', legacy)
+        self.assertIn('additionalContext: ["enable_thinking": false]', legacy)
         self.assertNotIn('closedToolSchema', legacy)
 
     def test_calendar_activity_is_a_dedicated_metadata_emitter_gated_on_main(self):
@@ -117,8 +161,11 @@ class AgentWiring(unittest.TestCase):
         self.assertLess(cancel.index('toolBroker?.cancelPending()'), cancel.index('Task { @concurrent'))
         self.assertIn('allowsTransientToolInactivity', source)
         loop = (ROOT / 'mobile/ios/Assist/Inference/AssistDeviceToolRun.swift').read_text()
-        self.assertIn('maximumToolCalls = 4', loop)
-        self.assertIn('maximumWrites = 1', loop)
+        adapter = (ROOT / 'mobile/ios/Assist/Inference/AssistDeviceToolAdapter.swift').read_text()
+        self.assertIn('maximumToolCalls = 4', adapter)
+        self.assertIn('maximumWrites = 1', adapter)
+        self.assertIn('maximumToolCalls = AssistDeviceToolAdapter.maximumToolCalls', loop)
+        self.assertIn('maximumWrites = AssistDeviceToolAdapter.maximumWrites', loop)
         self.assertIn('try Task.checkCancellation()', loop)
 
     def test_tool_host_is_additive_and_uses_the_same_owner_and_broker(self):

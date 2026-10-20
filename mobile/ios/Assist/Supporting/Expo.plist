@@ -11,7 +11,7 @@
     <key>EXUpdatesURL</key>
     <string>https://u.expo.dev/0185078d-6c84-4215-8883-4160acf12d22</string>
     <key>EXUpdatesRuntimeVersion</key>
-    <string>1.0.0-native29</string>
+    <string>1.0.0-native30</string>
     <key>EXUpdatesEnableBsdiffPatchSupport</key>
     <true/>
   </dict>

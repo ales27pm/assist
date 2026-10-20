@@ -209,8 +209,245 @@ struct RuntimeMonitorChecks {
               "Diagnostic arguments never enter snapshots.")
         try await persistenceAndSamplingChecks(root: temporary)
         try await predictionChecks(root: temporary)
+        try await toolPassChecks(root: temporary)
+        try await thoughtTreeChecks(root: temporary)
         try await abruptProcessRecovery(root: temporary)
         print("PASS: runtime monitor finite metrics, CPU units, decode timing, bounded histories, privacy, context, partial diagnostics, sampling and terminal shutdown")
+    }
+
+    static func thoughtTreeChecks(root: URL) async throws {
+        let request = "request-123-456"
+        let roots = request + ":tree-roots"
+        let leaves = request + ":tree-leaves"
+        for suffix in [":tree-roots", ":tree-leaves"] {
+            check(AssistRuntimeMetrics.requestId(request + suffix) == request + suffix,
+                  "Only fixed preparation suffixes preserve an opaque native pass identity.")
+        }
+        for id in [request + ":tree-0", request + ":tree-roots:tree-leaves", "private prompt:tree-roots",
+                   "/private/path:tree-leaves", String(repeating: "9", count: 129) + ":tree-roots"] {
+            check(AssistRuntimeMetrics.requestId(id) == nil, "Unknown pass suffixes and arbitrary caller text remain private.")
+        }
+        var state = AssistRuntimeMonitorState()
+        check(!state.recordThoughtTreeStart(requestId: "private prompt /path", at: 0), "Preparation rejects arbitrary public identities.")
+        check(!state.recordThoughtTreeStart(requestId: roots, at: 0), "An internal pass cannot pretend to be an external request.")
+        check(!state.recordThoughtTreeStart(requestId: request, at: .nan), "The preparation clock must be measured.")
+        check(state.events.count == 0, "Rejected observations do not emit invented events.")
+        check(state.recordThoughtTreeStart(requestId: request, at: 100), "The external preparation timer starts once.")
+        check(!state.recordThoughtTreeStart(requestId: request, at: 900), "A duplicate start cannot reset wall time.")
+        check(!state.recordThoughtTreeStart(requestId: "request-123-999", at: 900), "An overlapping request cannot steal preparation ownership.")
+        check(state.current(at: 100).phase == "idle", "Preparation observation does not change engine admission or phase.")
+        state.beginGeneration(requestId: roots, promptTokens: 11, contextCapacity: 32_768, elapsedMs: 0, at: 200)
+        state.endGeneration(requestId: roots, promptTokens: 11, generatedTokens: 3, elapsedMs: 200,
+                            ttftMs: 100, finishReason: "eos", at: 400)
+        state.beginGeneration(requestId: leaves, promptTokens: 29, contextCapacity: 32_768, elapsedMs: 0, at: 600)
+        state.endGeneration(requestId: leaves, promptTokens: 29, generatedTokens: 7, elapsedMs: 400,
+                            ttftMs: 200, finishReason: "eos", at: 1_000)
+        let currentBeforeSummary = try json(state.current(at: 1_200))
+        check(!state.recordThoughtTreeEnd(requestId: "request-123-999", outcome: .ready, at: 1_200),
+              "A stale completion cannot finalize the current preparation.")
+        check(state.recordThoughtTreeEnd(requestId: request, outcome: .ready, at: 1_200),
+              "Two actual completed EOS passes support a validated controller-ready observation.")
+        check(!state.recordThoughtTreeEnd(requestId: request, outcome: .ready, at: 2_000), "Duplicate completion cannot append a second summary.")
+        check(!state.recordThoughtTreeStart(requestId: request, at: 2_000), "A retired request cannot be restarted by a duplicate callback.")
+        let aggregate = state.generations.values.last!
+        check(state.generations.count == 3 && aggregate.requestId == request && aggregate.finishReason == "tree_ready",
+              "Preparation totals share the bounded generation envelope and have a distinct fixed reason.")
+        check(aggregate.promptTokens == 40 && aggregate.generatedTokens == 10 && aggregate.generationElapsedMs == 1_100,
+              "Totals sum measured passes while wall time also includes tokenization and selection gaps.")
+        check(aggregate.ttftMs == nil && aggregate.decodeTokensPerSecond == nil && aggregate.contextCapacity == nil,
+              "A preparation aggregate cannot invent user TTFT, decode speed or combined context capacity.")
+        let currentAfterSummary = try json(state.current(at: 1_200))
+        check(NSDictionary(dictionary: currentBeforeSummary).isEqual(to: currentAfterSummary),
+              "Appending preparation totals preserves the final native model pass metrics.")
+        check(state.events.values.last?.code == "THOUGHT_TREE_READY", "Ready has a fixed preparation-only event code.")
+
+        for outcome in AssistRuntimeThoughtTreeOutcome.allCases {
+            var incomplete = AssistRuntimeMonitorState()
+            _ = incomplete.recordThoughtTreeStart(requestId: request, at: 100)
+            incomplete.beginGeneration(requestId: roots, promptTokens: 5, contextCapacity: 32_768, elapsedMs: 0, at: 200)
+            incomplete.progress(requestId: roots, promptTokens: 5, generatedTokens: 3, elapsedMs: 100, ttftMs: 50, at: 300)
+            let accepted = incomplete.recordThoughtTreeEnd(requestId: request, outcome: outcome, at: 400)
+            if outcome == .ready {
+                check(!accepted && incomplete.generations.count == 0 &&
+                      !incomplete.events.values.contains { $0.code == "THOUGHT_TREE_READY" },
+                      "A thrown or unended pass cannot invent ready or a successful summary.")
+            } else {
+                let summary = incomplete.generations.values.last!
+                check(accepted && summary.finishReason == outcome.finishReason && summary.generationElapsedMs == 300,
+                      "Rejected, cancelled and failed preparation retain their measured native wall time.")
+                check(summary.promptTokens == nil && summary.generatedTokens == nil,
+                      "A partial active pass cannot be presented as the total consumed token count.")
+            }
+        }
+        for reason in ["length", "cancelled", "error"] {
+            var failed = AssistRuntimeMonitorState()
+            _ = failed.recordThoughtTreeStart(requestId: request, at: 0)
+            for key in [roots, leaves] {
+                failed.beginGeneration(requestId: key, promptTokens: 5, contextCapacity: 32_768, elapsedMs: 0, at: 0)
+                failed.endGeneration(requestId: key, promptTokens: 5, generatedTokens: 2, elapsedMs: 100,
+                                     ttftMs: 50, finishReason: key == roots ? "eos" : reason, at: 100)
+            }
+            check(!failed.recordThoughtTreeEnd(requestId: request, outcome: .ready, at: 200),
+                  "Two summaries with a non-EOS pass cannot establish ready.")
+            check(failed.generations.count == 2, "An invalid ready claim cannot substitute a made-up rejected controller outcome.")
+        }
+        var onePass = AssistRuntimeMonitorState()
+        _ = onePass.recordThoughtTreeStart(requestId: request, at: 100)
+        onePass.beginGeneration(requestId: roots, promptTokens: 5, contextCapacity: 32_768, elapsedMs: 0, at: 200)
+        onePass.endGeneration(requestId: roots, promptTokens: 5, generatedTokens: 2, elapsedMs: 100,
+                              ttftMs: 50, finishReason: "eos", at: 300)
+        check(!onePass.recordThoughtTreeEnd(requestId: request, outcome: .rejected, at: 99), "A backwards clock cannot invent elapsed time.")
+        check(onePass.recordThoughtTreeEnd(requestId: request, outcome: .rejected, at: 400), "A root parsing rejection can finish without launching leaves.")
+        check(onePass.generations.values.last?.promptTokens == 5 && onePass.generations.values.last?.generatedTokens == 2,
+              "A single fully measured pass has an exact observed total, not an assumed second pass.")
+        var retried = AssistRuntimeMonitorState()
+        _ = retried.recordThoughtTreeStart(requestId: request, at: 0)
+        for key in [roots, roots, leaves] {
+            retried.beginGeneration(requestId: key, promptTokens: 5, contextCapacity: 32_768, elapsedMs: 0, at: 0)
+            retried.endGeneration(requestId: key, promptTokens: 5, generatedTokens: 2, elapsedMs: 100,
+                                 ttftMs: 50, finishReason: "eos", at: 100)
+        }
+        _ = retried.recordThoughtTreeEnd(requestId: request, outcome: .rejected, at: 200)
+        check(retried.generations.values.last?.promptTokens == nil && retried.generations.values.last?.generatedTokens == nil,
+              "Repeated pass identities cannot silently undercount a retried preparation.")
+        var malformed = AssistRuntimeMonitorState()
+        _ = malformed.recordThoughtTreeStart(requestId: request, at: 0)
+        for key in [roots, leaves] {
+            malformed.beginGeneration(requestId: key, promptTokens: 5, contextCapacity: 32_768, elapsedMs: 0, at: 0)
+            malformed.endGeneration(requestId: key, promptTokens: 5, generatedTokens: key == roots ? -1 : 2,
+                                     elapsedMs: 100, ttftMs: 50, finishReason: "eos", at: 100)
+        }
+        check(!malformed.recordThoughtTreeEnd(requestId: request, outcome: .ready, at: 200),
+              "A malformed final count cannot become a measured successful preparation.")
+        let longRequest = "request-" + String(repeating: "1", count: 70) + "-" + String(repeating: "2", count: 40)
+        var prefixed = AssistRuntimeMonitorState()
+        _ = prefixed.recordThoughtTreeStart(requestId: longRequest, at: 0)
+        for suffix in [":tree-roots", ":tree-leaves"] {
+            let key = String(longRequest.prefix(100)) + suffix
+            prefixed.beginGeneration(requestId: key, promptTokens: 5, contextCapacity: 32_768, elapsedMs: 0, at: 0)
+            prefixed.endGeneration(requestId: key, promptTokens: 5, generatedTokens: 2, elapsedMs: 100,
+                                    ttftMs: 50, finishReason: "eos", at: 100)
+        }
+        check(prefixed.recordThoughtTreeEnd(requestId: longRequest, outcome: .ready, at: 200) &&
+              prefixed.generations.values.last?.requestId == longRequest,
+              "Aggregation matches the exact bounded pass prefix while preserving the full safe external identity.")
+        var overflow = AssistRuntimeMonitorState()
+        _ = overflow.recordThoughtTreeStart(requestId: request, at: 0)
+        for key in [roots, leaves] {
+            overflow.beginGeneration(requestId: key, promptTokens: Int(Int32.max), contextCapacity: 32_768, elapsedMs: 0, at: 0)
+            overflow.endGeneration(requestId: key, promptTokens: Int(Int32.max), generatedTokens: Int(Int32.max), elapsedMs: 100,
+                                   ttftMs: 50, finishReason: "eos", at: 100)
+        }
+        _ = overflow.recordThoughtTreeEnd(requestId: request, outcome: .ready, at: 200)
+        check(overflow.generations.values.last?.promptTokens == nil && overflow.generations.values.last?.generatedTokens == nil,
+              "Out-of-range sums are unknown rather than overflowing or clamping counters.")
+
+        let directory = root.appendingPathComponent("thought-tree")
+        let fixedNow = ContinuousClock.now
+        let monitor = AssistRuntimeMonitor(directory: directory, clock: { fixedNow })
+        await monitor.start()
+        for index in 0..<110 {
+            let id = "request-321-\(index)"
+            await monitor.recordThoughtTreeStart(requestId: id)
+            for suffix in [":tree-roots", ":tree-leaves"] {
+                await monitor.beginGeneration(requestId: id + suffix, promptTokens: 11,
+                                              contextCapacity: 32_768, elapsedMs: 0)
+                await monitor.endGeneration(requestId: id + suffix, promptTokens: 11, generatedTokens: 3,
+                                            elapsedMs: 200, ttftMs: 100, finishReason: "eos")
+            }
+            await monitor.recordThoughtTreeEnd(requestId: id, outcome: .ready)
+        }
+        await monitor.recordThoughtTreeStart(requestId: "private prompt /path")
+        await monitor.shutdown()
+        let observed = try await report(monitor)
+        check((observed["generations"] as! [Any]).count == 100 && (observed["events"] as! [Any]).count == 200,
+              "Preparation evidence uses the existing fixed-capacity summary and event rings.")
+        let summaries = observed["generations"] as! [[String: Any]]
+        let final = summaries.last!
+        check(final["finishReason"] as? String == "tree_ready" && final["generatedTokens"] as? Int == 6,
+              "Actor snapshots preserve actual preparation totals without extra top-level fields.")
+        check(Set(final.keys) == ["requestId", "promptTokens", "generatedTokens", "generationElapsedMs", "finishReason"],
+              "Preparation summary has no TTFT, branch, prompt, tool, error or new snapshot fields.")
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: observed), as: UTF8.self)
+        check(!encoded.contains("private prompt") && !encoded.contains("/path"), "Caller text never enters preparation evidence.")
+        await monitor.recordThoughtTreeStart(requestId: "request-999-0")
+        await monitor.recordThoughtTreeEnd(requestId: "request-999-0", outcome: .error)
+        let afterShutdown = try await report(monitor)
+        check(NSDictionary(dictionary: observed).isEqual(to: afterShutdown), "Shutdown also retires preparation observation.")
+        let restarted = AssistRuntimeMonitor(directory: directory, clock: { fixedNow })
+        await restarted.start()
+        let previous = try JSONSerialization.jsonObject(with: Data(try await restarted.previousSnapshotJSON().utf8)) as! [String: Any]
+        check((previous["generations"] as! [[String: Any]]).last?["finishReason"] as? String == "tree_ready",
+              "The typed archive accepts bounded preparation summaries after restart.")
+        check((previous["generations"] as! [[String: Any]]).contains { ($0["requestId"] as? String)?.hasSuffix(":tree-leaves") == true },
+              "Only allowlisted preparation pass identities survive archive recovery.")
+        await restarted.shutdown()
+        print("PASS: native preparation wall time and measured counts, distinct no-TTFT aggregates, closed outcomes, incomplete/stale/duplicate/overflow defenses, bounded rings, privacy and archive recovery")
+    }
+
+    static func toolPassChecks(root: URL) async throws {
+        check(AssistRuntimeToolPass.codes.count == 35, "Only five pass indices and seven fixed outcomes are exportable.")
+        var state = AssistRuntimeMonitorState()
+        let cases: [(Int, String, Bool, Int?, String)] = [
+            (1, "eos", false, 0, "TOOL_PASS_1_EOS_EMPTY"),
+            (0, "eos", true, 11, "TOOL_PASS_0_BOUNDARY"),
+            (2, "eos", true, 0, "TOOL_PASS_2_BOUNDARY_EMPTY"),
+            (3, "eos", false, 11, "TOOL_PASS_3_EOS_TOKENS"),
+            (4, "length", false, 11, "TOOL_PASS_4_LENGTH"),
+            (1, "cancelled", false, nil, "TOOL_PASS_1_CANCELLED"),
+            (1, "error", false, nil, "TOOL_PASS_1_ERROR"),
+        ]
+        for (index, reason, boundary, tokens, code) in cases {
+            check(state.recordToolPass(passIndex: index, finishReason: reason, stoppedAtToolResponse: boundary,
+                                       generatedTokens: tokens, at: 100), "Known native tool outcomes are recorded.")
+            check(state.events.values.last?.code == code, "The pass index and empty-EOS/boundary distinction survive encoding.")
+        }
+        let beforeInvalid = state.events.count
+        for (index, reason, tokens) in [(-1, "eos", 0), (5, "eos", 0), (1, "eos", -1),
+                                        (1, "eos", Int.max), (1, "private prompt /path", 0)] {
+            check(!state.recordToolPass(passIndex: index, finishReason: reason, stoppedAtToolResponse: false,
+                                        generatedTokens: tokens, at: 100), "Unknown values cannot become event codes.")
+        }
+        check(!state.recordToolPass(passIndex: 1, finishReason: "eos", stoppedAtToolResponse: false,
+                                    generatedTokens: nil, at: 100), "An unmeasured EOS is not invented as empty.")
+        check(state.events.count == beforeInvalid, "Invalid observations do not append substitute events.")
+        let directory = root.appendingPathComponent("tool-passes")
+        let fixedNow = ContinuousClock.now
+        let monitor = AssistRuntimeMonitor(directory: directory, clock: { fixedNow })
+        await monitor.start()
+        for (index, reason, boundary, tokens, _) in cases {
+            await monitor.recordToolPass(passIndex: index, finishReason: reason, stoppedAtToolResponse: boundary,
+                                         generatedTokens: tokens)
+        }
+        await monitor.recordToolPass(passIndex: 1, finishReason: "private prompt /path", generatedTokens: 0)
+        let observed = try await report(monitor)
+        let events = observed["events"] as! [[String: Any]]
+        let passes = events.filter { ($0["code"] as? String)?.hasPrefix("TOOL_PASS_") == true }
+        check(passes.compactMap { $0["code"] as? String } == cases.map { $0.4 },
+              "Awaited monitoring retains every fixed tool-pass distinction before parsing.")
+        check(passes.first?["severity"] as? String == "warning" && passes[1]["severity"] as? String == "info",
+              "Empty EOS is observable without relabelling a completed tool call as an engine error.")
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: observed), as: UTF8.self)
+        check(!encoded.contains("private prompt") && !encoded.contains("/path"), "Caller strings never enter tool-pass evidence.")
+        check(passes.allSatisfy { Set($0.keys) == ["sequence", "elapsedMs", "observedElapsedMs", "code", "severity", "phase"] },
+              "Tool evidence adds only constant codes to the existing event envelope.")
+        for index in 0..<300 {
+            await monitor.recordToolPass(passIndex: index % 5, finishReason: "eos", generatedTokens: 0)
+        }
+        await monitor.shutdown()
+        let stopped = try await report(monitor)
+        check((stopped["events"] as! [Any]).count == 200, "Tool-pass evidence shares the existing fixed event ring.")
+        await monitor.recordToolPass(passIndex: 0, finishReason: "error")
+        let afterStop = try await report(monitor)
+        check(NSDictionary(dictionary: stopped).isEqual(to: afterStop),
+              "Shutdown also prevents new tool-pass observations.")
+        let restarted = AssistRuntimeMonitor(directory: directory)
+        await restarted.start()
+        let previous = try JSONSerialization.jsonObject(with: Data(try await restarted.previousSnapshotJSON().utf8)) as! [String: Any]
+        check((previous["events"] as! [[String: Any]]).contains { $0["code"] as? String == "TOOL_PASS_4_EOS_EMPTY" },
+              "The existing archive decoder retains allowlisted tool-pass evidence across restart.")
+        await restarted.shutdown()
+        print("PASS: bounded constant native tool-pass events, empty EOS versus boundary, input privacy, unchanged report envelope, shutdown and archive recovery")
     }
 
     static func prediction(_ monitor: AssistRuntimeMonitor, component: String,

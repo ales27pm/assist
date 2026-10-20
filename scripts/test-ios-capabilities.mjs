@@ -11,9 +11,9 @@ function fixture() {
     const entitlements = {'application-identifier': `TEAM123456.${bundle}`, 'com.apple.developer.team-identifier': 'TEAM123456', 'get-task-allow': false,
       'com.apple.security.application-groups': ['group.org.27pm.assist'], ...(index === 0 ? {'com.apple.developer.weatherkit': true} : {})};
     return {name, signatureVerified: true, entitlements,
-      info: {CFBundleIdentifier: bundle, CFBundleVersion: '29', CFBundleShortVersionString: '1.0.0', ...(index === 0 ? {NSAlarmKitUsageDescription: 'Alarmes explicitement créées dans Assist.', NSSupportsLiveActivities: true} : {NSExtension: {NSExtensionPointIdentifier: index === 1 ? 'com.apple.share-services' : 'com.apple.widgetkit-extension'}})},
+      info: {CFBundleIdentifier: bundle, CFBundleVersion: '30', CFBundleShortVersionString: '1.0.0', ...(index === 0 ? {NSAlarmKitUsageDescription: 'Alarmes explicitement créées dans Assist.', NSSupportsLiveActivities: true} : {NSExtension: {NSExtensionPointIdentifier: index === 1 ? 'com.apple.share-services' : 'com.apple.widgetkit-extension'}})},
       profile: {TeamIdentifier: ['TEAM123456'], ApplicationIdentifierPrefix: ['TEAM123456'], Entitlements: structuredClone(entitlements), ExpirationDate: '2027-10-19T12:00:00Z'},
-      ...(index === 0 ? {runtimeVersion: '1.0.0-native29', appIntentsMetadataPresent: true} : {})};
+      ...(index === 0 ? {runtimeVersion: '1.0.0-native30', appIntentsMetadataPresent: true} : {})};
   })};
 }
 test('exact signed product/profile/capability evidence passes without claiming device or Apple acceptance', () => {
@@ -22,12 +22,19 @@ test('exact signed product/profile/capability evidence passes without claiming d
   assert.equal(result.products.length, 3);
   assert.ok(result.limits.some(value => value.includes('iPhone')));
 });
+test('a complete previous release is rejected by the current gate and needs an explicit historical version', () => {
+  const previous = fixture();
+  for (const product of previous.products) product.info.CFBundleVersion = '29';
+  previous.products[0].runtimeVersion = '1.0.0-native29';
+  assert.throws(() => validateCapabilityEvidence(previous, {now}), /build number mismatch/);
+  assert.equal(validateCapabilityEvidence(previous, {buildNumber: '29', now}).buildNumber, '29');
+});
 const cases = {
   'missing signature': f => { f.products[0].signatureVerified = false; },
   'missing extension': f => { f.products.pop(); },
   'unknown extension': f => { f.products[2].name = 'Unknown'; },
   'wrong bundle': f => { f.products[0].info.CFBundleIdentifier += '.other'; },
-  'old build': f => { f.products[1].info.CFBundleVersion = '28'; },
+  'old build': f => { f.products[1].info.CFBundleVersion = '29'; },
   'debug app': f => { f.products[0].entitlements['get-task-allow'] = true; },
   'debug profile': f => { f.products[0].profile.Entitlements['get-task-allow'] = true; },
   'ad-hoc profile': f => { f.products[0].profile.ProvisionedDevices = ['device']; },

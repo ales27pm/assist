@@ -25,6 +25,7 @@ import {
   parseApplePlacesStatus,
   parseAppleSearch,
   validAppleQuery,
+  applePlacesFailureMessage,
 } from './applePlacesProtocol';
 import { WeatherAttribution } from './WeatherAttribution';
 import { WeatherAttributionStatus } from './weatherAttributionProtocol';
@@ -162,12 +163,13 @@ export function ApplePlacesPanel({ blocked }: { blocked: boolean }) {
     setNotice(null);
     try {
       await action(() => current(ticket));
-    } catch {
+    } catch (cause) {
       if (current(ticket)) {
         setSearch(null);
         setDirections(null);
         setForecast(null);
         setError(
+          applePlacesFailureMessage(cause) ??
           'Cartes ou Météo indisponible, non autorisé ou réponse incompatible. Aucun ancien résultat réutilisé.',
         );
       }
