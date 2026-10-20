@@ -63,8 +63,9 @@ enum AssistPrivateServicePolicy {
     }
 
     static func secret(_ input: String) throws -> String {
+        // ICU may match $ before a final newline; consume the complete value.
         guard (32...256).contains(input.utf8.count),
-              input.range(of: #"^[A-Za-z0-9._~+/-]+={0,2}$"#, options: .regularExpression) != nil else {
+              input.range(of: #"^[A-Za-z0-9._~+/-]+={0,2}$"#, options: .regularExpression) == input.startIndex..<input.endIndex else {
             throw invalid()
         }
         return input
@@ -175,7 +176,7 @@ enum AssistPrivateServicePolicy {
     }
 
     private static func identifier(_ value: String) -> Bool {
-        value.utf8.count <= 128 && value.range(of: #"^[A-Za-z0-9][A-Za-z0-9._:-]*$"#, options: .regularExpression) != nil
+        value.utf8.count <= 128 && value.range(of: #"^[A-Za-z0-9][A-Za-z0-9._:-]*$"#, options: .regularExpression) == value.startIndex..<value.endIndex
     }
 
     static func invalid() -> NSError {

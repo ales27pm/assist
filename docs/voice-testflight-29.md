@@ -1,5 +1,8 @@
 # TestFlight 29 — candidat et livraison
 
+État courant : première tentative EAS29 échouée avant Xcode; correctif local
+validé. Aucun IPA29, aucune soumission, aucune relance automatique.
+
 ## Autorisation
 
 Le 19 octobre 2026, Alexis demande explicitement : « Commit, push / Build and
@@ -92,3 +95,53 @@ dans ce document ou ce dépôt. La poursuite attend une réauthentification Appl
 dans `eas credentials:configure-build --platform ios --profile testflight`,
 puis la préparation des trois profils. Aucun lancement EAS payant, upload de
 build ou soumission n’a encore eu lieu.
+
+## Profils prêts puis tentative EAS unique
+
+Après réauthentification par Alexis, le profil principal est régénéré avec
+WeatherKit et `group.org.27pm.assist`; les deux identifiants/extensions et leurs
+profils App Store sont créés avec le même certificat existant. Une lecture des
+trois profils distants confirme App Group, absence de signature debug/ad-hoc et
+expiration au 16 octobre 2027; WeatherKit n’est présent que dans l’app principale.
+
+- Révision envoyée : `0aa03bb8d88e7b13409b845ee73e060864cfac6e`.
+- [Build EAS29](https://expo.dev/accounts/ales27/projects/assist/builds/1735c30f-6b5d-44b6-ad08-a4aa4873210d) :
+  `1735c30f-6b5d-44b6-ad08-a4aa4873210d`, créée le 20 octobre 2026 à
+  00:18:34 UTC, terminée `ERRORED` à 00:21:26 UTC.
+- Profil/canal `testflight`, versions 1.0.0 (29), credentials gelés avec
+  `--freeze-credentials`. Aucun auto-submit ou `--latest`.
+- Les prérequis Apple Silicon/Xcode27.1/SDK27.1 ont passé sur le runner,
+  ainsi que les premiers contrôles natifs. L’archive Xcode n’a pas commencé.
+
+Cause exacte : `check-task-checkpoints.sh` compile désormais
+`AssistExtendedTools.swift`, dont le constructeur de requête utilise
+`AssistJSON.encode`, mais n’incluait pas `InferencePolicy.swift`, qui définit
+ce helper. Le runner s’arrête sur `cannot find 'AssistJSON' in scope`.
+L’erreur ultérieure d’upload des symboles absents est une conséquence, pas la
+cause de l’échec. Aucun IPA ni symbole n’a été produit; aucune soumission Apple.
+
+## Correctif après échec, sans nouvelle build
+
+Le harnais inclut maintenant la vraie source `InferencePolicy.swift`.
+**61 contrôles checkpoints** passent dans le conteneur Swift6.2 en lecture seule
+et sur le Mac. Un audit de toutes les listes de compilation ne trouve pas
+d’autre source manquante; les 16 autres harnais Foundation compilent également.
+
+Les huit hooks à partir des checkpoints sont rejoués sur le Mac : checkpoints61,
+alarmes35, traduction57, documents78, workspace et deux extensions en objets
+simulateur, recherche125, Apple Places69, attribution50 et ImageIO5. Exit0.
+SDK simulateur26.2 seulement : ce rejeu ne remplace pas l’archive CoreAI complète
+sur Xcode27.1, qui reste à obtenir.
+
+Le contrôle privé initial passe déjà sur Darwin, mais son rejeu Linux révèle
+que l’ancrage regex `$` peut accepter un saut de ligne final. Les validateurs
+de clé et d’identifiant exigent maintenant que la plage reconnue couvre toute
+la valeur. Les cas négatifs existants passent sur Linux et macOS : **89 contrôles**
+sur chaque hôte; la boucle recherche est également rejouée avec **125 contrôles**.
+Aucun secret ni requête réelle utilisé dans ces tests.
+
+Logs et reçus privés :
+`/home/ales27pm/.local/share/assist/releases/1.0.0-29-1735c30f/`.
+La prochaine tentative EAS reste soumise à un nouvel accord explicite, selon
+la limite de relance payante automatique fixée par Alexis. Le numéro29 peut
+être conservé : aucun binaire correspondant n’a été transmis à Apple.

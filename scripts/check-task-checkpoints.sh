@@ -13,6 +13,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then ASSIST_CHECKPOINT_TARGET=(-target "$(un
 swiftc -swift-version 6 -strict-concurrency=complete -warnings-as-errors -parse-as-library \
   "${ASSIST_CHECKPOINT_TARGET[@]}" \
   -module-cache-path "$ASSIST_CHECKPOINT_CHECK_DIR/module-cache" \
+  mobile/ios/Assist/Inference/InferencePolicy.swift \
   mobile/ios/Assist/Inference/AssistToolContracts.swift \
   mobile/ios/Assist/Inference/AssistExtendedTools.swift \
   mobile/ios/Assist/Services/AssistTaskCheckpoint.swift \
