@@ -1189,7 +1189,7 @@ private actor AssistInferenceCoordinator {
         let originalPrompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
             try tokenizer.applyChatTemplate(messages: baseMessages,
                 chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
-                truncation: false, maxLength: nil, additionalContext: ["enable_thinking": false])
+                truncation: false, maxLength: nil, tools: [], additionalContext: ["enable_thinking": false])
         }
         _ = try AssistInferencePolicy.outputBudget(promptTokens: originalPrompt.count,
             capacity: capacity, requested: request.maxTokens)
@@ -1207,7 +1207,7 @@ private actor AssistInferenceCoordinator {
         let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
             try tokenizer.applyChatTemplate(messages: messages,
                 chatTemplate: .literal(agentChatTemplate), addGenerationPrompt: true,
-                truncation: false, maxLength: nil, additionalContext: ["enable_thinking": false])
+                truncation: false, maxLength: nil, tools: [], additionalContext: ["enable_thinking": false])
         }
         let budget = try AssistInferencePolicy.outputBudget(
             promptTokens: prompt.count, capacity: capacity, requested: request.maxTokens
@@ -1282,7 +1282,7 @@ private actor AssistInferenceCoordinator {
                     let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
                         let prompt = try tokenizer.applyChatTemplate(messages: messages,
                             chatTemplate: .literal(chatTemplate), addGenerationPrompt: true,
-                            truncation: false, maxLength: nil, additionalContext: ["enable_thinking": false])
+                            truncation: false, maxLength: nil, tools: [], additionalContext: ["enable_thinking": false])
                         guard prompt.allSatisfy({ $0 >= 0 && $0 <= Int(Int32.max) }) else {
                             throw AssistInferenceError.invalid("Jeton de préparation hors de la plage native.")
                         }

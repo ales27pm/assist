@@ -1,6 +1,6 @@
 # Assist 1.0.0 (30) — candidat TestFlight
 
-La demande « Commit, push / Build and submit with EAS » du 20 octobre 2026 autorise cette livraison. Ce document décrit le candidat avant son lancement ; les reçus EAS et Apple seront conservés séparément. Il ne déclare pas encore de compilation distante, de soumission ou de qualification iPhone réussie.
+La demande « Commit, push / Build and submit with EAS » du 20 octobre 2026 autorise cette livraison. Ce document décrit la préparation puis la première tentative ci-dessous ; les reçus EAS et Apple sont conservés séparément. Aucun succès de compilation complète, de soumission ou de qualification iPhone n’est déclaré à ce stade.
 
 ## Périmètre
 
@@ -26,3 +26,13 @@ Après compilation, vérifier l’IPA exporté, les trois produits signés, leur
 La soumission vise TestFlight pour l’app existante. Aucun groupe externe, Beta App Review ou publication App Store de production supplémentaire n’est demandé. Attendre l’état Apple du bon numéro, sans réenvoyer sur sa seule absence initiale.
 
 Les preuves de préparation et de livraison sont dans `/home/ales27pm/.local/share/assist/releases/1.0.0-30-preparation/`. Les preuves scellées des 72 sources précédentes restent dans `/home/ales27pm/.local/share/assist/deeper-tot-20261020/`.
+
+## Première tentative et correctif prêt
+
+Le commit `05071c4d63ef17ee474aafd7a2923e8733842651` a été poussé et sa copie EAS vérifiée : 789 fichiers, archive de 3 374 471 octets. La [build EAS 31c6cd49](https://expo.dev/accounts/ales27/projects/assist/builds/31c6cd49-f7c2-43bb-94e7-700b5ca18b50) a réellement utilisé Apple Silicon, Xcode 27.1 et iPhoneOS SDK 27.1. Pré/post-install et contrôles natifs sont passés. L’archive de l’app a ensuite échoué : trois appels `applyChatTemplate` omettaient `tools` ; les diagnostics répétés donnent six messages. Aucun IPA ni paquet de symboles exporté n’est disponible, et aucune soumission n’a eu lieu.
+
+La classe concrète du tokenizer possède un défaut pour ce paramètre ; le protocole `any Tokenizers.Tokenizer` du pin `eed7264ac5e4ec5dfa6165c6e5c5577364344fe4` ne le possède pas. Les trois appels ordinaires/privés passent désormais explicitement `tools: []`, sans nouveau schéma exécutable. Les parcours d’outils conservent leurs vrais schémas.
+
+Un harnais extrait les expressions réelles avant/après et compile contre les vrais modules épinglés. L’ancien code reproduit les trois erreurs ; le code corrigé compile en Swift 6 strict. Sur cinq fixtures, les IDs complets sont identiques entre défaut concret, protocole avec `nil`, protocole avec `[]` et les trois expressions réelles corrigées. Cette preuve concerne l’API/tokenizer, pas la compilation de l’application ou un résultat de Gemma.
+
+Vingt contrôles Python de câblage et 39 tests Jest des hooks passent, ainsi que le lint ciblé. Le garde de présence de l’argument est maintenant exécuté au début du pré-install EAS, avant le contrôle du SDK et la compilation native. La copie du correctif sera vérifiée depuis un nouveau commit propre. Aucune seconde tentative distante automatique n’est déclenchée ; le numéro 30 n’a pas été envoyé à Apple.

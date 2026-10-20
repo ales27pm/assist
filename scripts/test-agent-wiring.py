@@ -1,12 +1,29 @@
 #!/usr/bin/env python3
 """Source integration guards only: not a Core AI compile or device test."""
 from pathlib import Path
+import json
+import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class AgentWiring(unittest.TestCase):
+    def test_source_guards_run_before_native_compilation_in_release_preflight(self):
+        hook = json.loads((ROOT / 'mobile/package.json').read_text())['scripts']['eas-build-pre-install']
+        self.assertLess(hook.index('python3 ../scripts/test-agent-wiring.py'),
+                        hook.index('bash ../scripts/preflight-ios.sh'))
+
+    def test_pinned_tokenizer_calls_explicitly_supply_the_required_tools_argument(self):
+        source = (ROOT / 'mobile/ios/Assist/Inference/AssistCoreAI.swift').read_text()
+        # The pinned protocol has no tools default on this full overload.
+        # This is a source guard, complemented by real-library compilation.
+        calls = re.findall(r'applyChatTemplate\(([\s\S]*?)additionalContext:', source)
+        self.assertEqual(len(calls), source.count('applyChatTemplate('))
+        self.assertGreaterEqual(len(calls), 9)
+        for arguments in calls:
+            self.assertRegex(arguments, r'\btools:')
+
     def test_dedicated_entrypoint_stays_under_existing_engine_owner(self):
         source = (ROOT / 'mobile/ios/Assist/Inference/AssistCoreAI.swift').read_text()
         self.assertIn('func generateCalendarToday(', source)
