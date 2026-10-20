@@ -75,3 +75,20 @@ préparation, seul le profil principal historique existait, sans App Group ni
 WeatherKit; les profils Partage/Widget manquaient. Il faut préparer les profils
 adaptés avant d’engager une build, plutôt que découvrir cela pendant l’archive.
 Aucune build ou soumission distante n’a été créée par ces contrôles.
+
+Le correctif du parseur est poussé sous `d8b96ba8`; son archive réelle a de
+nouveau été vérifiée avec 775 fichiers. La clé API existante authentifie bien
+la préparation, mais la synchronisation EAS25.1.1 des deux capacités est refusée
+par Apple (HTTP400 : attributs inline de `bundleIdCapabilities` non acceptés).
+Le code EAS indique en outre que la création/association des App Groups exige
+une session Apple avec cookies, et ignore cette étape avec la clé API seule.
+La procédure officielle distingue bien [activation et association du groupe](https://developer.apple.com/help/account/identifiers/enable-app-capabilities/).
+
+Une lecture Apple après le refus, le 20 octobre à 00:14 UTC, confirme : App ID
+principal présent sans WeatherKit ni App Groups, identifiants Partage/Widget
+absents, aucune build Apple29. Aucun état partiel à interpréter comme livraison.
+Les fichiers temporaires de clé ont été supprimés; aucune clé n’est conservée
+dans ce document ou ce dépôt. La poursuite attend une réauthentification Apple
+dans `eas credentials:configure-build --platform ios --profile testflight`,
+puis la préparation des trois profils. Aucun lancement EAS payant, upload de
+build ou soumission n’a encore eu lieu.
