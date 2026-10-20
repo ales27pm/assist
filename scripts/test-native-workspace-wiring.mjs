@@ -12,6 +12,7 @@ const mobile = path.join(root, 'mobile');
 const ios = path.join(mobile, 'ios');
 const require = createRequire(path.join(mobile, 'package.json'));
 const xcode = require('xcode');
+const {IOSConfig} = require('@expo/config-plugins');
 const plist = require('plist');
 const appConfig = require(path.join(mobile, 'app.config.js'));
 const group = 'group.org.27pm.assist';
@@ -272,4 +273,24 @@ test('native intent arrival signal is typed, subscribed before snapshot and emit
   validateIntentSignal(spec, bridge, inbox);
   assert.throws(() => validateIntentSignal(spec.replace('readonly onNativeIntentChanged:', 'readonly unrelatedEvent:'), bridge, inbox));
   assert.throws(() => validateIntentSignal(spec, bridge.replace('addObserverForName:@"AssistIntentDraftChanged"', 'addObserverForName:@"UnrelatedSignal"'), inbox));
+});
+
+// EAS credentials resolution consumes this real Expo target reader. The Xcode
+// parser preserves bare dependency IDs as strings, while Expo destructures
+// {value}; structural graph inspection alone cannot catch that boundary.
+test('installed Expo parser resolves all signable targets and native entitlements before EAS credentials', async () => {
+  const application = await IOSConfig.Target.findApplicationTargetWithDependenciesAsync(mobile, 'Assist');
+  assert.equal(application.name, 'Assist');
+  assert.equal(application.signable, true);
+  const signable = [application, ...(application.dependencies ?? [])].filter(item => item.signable);
+  assert.deepEqual(signable.map(item => item.name).sort(), Object.keys(identities).sort());
+  for (const item of signable) {
+    const settings = IOSConfig.Target.getXCBuildConfigurationFromPbxproj(project, {targetName: item.name, buildConfiguration: 'Release'}).buildSettings;
+    assert.equal(unquote(settings.PRODUCT_BUNDLE_IDENTIFIER), identities[item.name]);
+    const entitlementPath = IOSConfig.Entitlements.getEntitlementsPath(mobile, {targetName: item.name, buildConfiguration: 'Release'});
+    assert.ok(entitlementPath, `Expo cannot resolve native entitlements for ${item.name}`);
+    const entitlements = plist.parse(readFileSync(entitlementPath, 'utf8'));
+    assert.deepEqual(entitlements['com.apple.security.application-groups'], [group]);
+    assert.equal(entitlements['com.apple.developer.weatherkit'], item.name === 'Assist' ? true : undefined);
+  }
 });

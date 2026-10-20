@@ -408,8 +408,8 @@
 			buildRules = (
 			);
 			dependencies = (
-				A57400000000000000000071,
-				A57400000000000000000072,
+				A57400000000000000000071 /* PBXTargetDependency */,
+				A57400000000000000000072 /* PBXTargetDependency */,
 			);
 			name = Assist;
 			productName = Assist;
@@ -856,8 +856,8 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A57400000000000000000061 = {isa = XCConfigurationList; buildConfigurations = (A57400000000000000000081, A57400000000000000000082, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		A57400000000000000000062 = {isa = XCConfigurationList; buildConfigurations = (A57400000000000000000083, A57400000000000000000084, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A57400000000000000000061 = {isa = XCConfigurationList; buildConfigurations = (A57400000000000000000081 /* Debug */, A57400000000000000000082 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A57400000000000000000062 = {isa = XCConfigurationList; buildConfigurations = (A57400000000000000000083 /* Debug */, A57400000000000000000084 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "Assist" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

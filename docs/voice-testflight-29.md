@@ -56,3 +56,22 @@ comme preuves; leur absence dans ce candidat limite la reproductibilité native.
 Aucune build29 n’existait dans la liste EAS consultée avant préparation.
 Le résultat du lancement et les identifiants seront ajoutés après observation.
 La [checklist iPhone](native29-iphone-acceptance.md) reste à exécuter sur le binaire.
+
+## Préparation de signature avant création
+
+Le commit initial `29beae48` est poussé sur la branche de travail. Son archive
+réelle contient 775 fichiers vérifiés; aucun poids ou secret ajouté.
+Le contrôle de credentials EAS a révélé une incompatibilité du parseur Expo :
+les références des nouvelles dépendances/configurations Xcode, valides comme
+IDs nus pour Xcode, devaient porter leurs commentaires pour la représentation
+`{value}` attendue par Expo. Le correctif couvre les deux dépendances et les
+quatre configurations des extensions; une régression utilise le vrai parseur
+installé. **54 contrôles workspace** passent, et le résolveur EAS identifie
+les trois cibles avec leurs entitlements attendus.
+
+La session interactive Apple était expirée. Le service EAS contient déjà une
+clé API de soumission avec issuer; son contenu n’est pas reproduit ici. Avant
+préparation, seul le profil principal historique existait, sans App Group ni
+WeatherKit; les profils Partage/Widget manquaient. Il faut préparer les profils
+adaptés avant d’engager une build, plutôt que découvrir cela pendant l’archive.
+Aucune build ou soumission distante n’a été créée par ces contrôles.
