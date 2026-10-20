@@ -1,9 +1,10 @@
 # TestFlight 29 — candidat et livraison
 
-État courant : trois tentatives EAS29 échouées. La troisième passe les contrôles
-pré-installation, puis s’arrête dans le pont Objective-C++ pendant l’archive Xcode.
-Aucun IPA29 ni soumission; correctifs et contrôles préventifs vérifiés localement,
-sans relance automatique. La compilation complète après correction reste à obtenir.
+État courant : la quatrième tentative produit un IPA29 exporté, dont les signatures
+et capacités sont vérifiées, puis échoue pendant la collecte des dSYM. Le bundle
+dSYM original n’est pas publié; la validation complète des symboles reste
+inachevée. Sur l’instruction explicite « Submit » d’Alexis, cet IPA est ensuite
+soumis sans nouvelle compilation. Le traitement Apple est suivi séparément.
 
 ## Autorisation
 
@@ -237,3 +238,116 @@ de helpers gelées avant la tentative échouée restent intactes; une nouvelle
 tentative devra lier de nouveaux attendus à son propre ID et au nouveau commit.
 Une nouvelle build payante attend un nouvel accord explicite; aucune OTA,
 soumission ou diffusion n’est déclenchée par l’examen préventif.
+
+## Quatrième tentative : IPA produit, collecte des dSYM inachevée
+
+Après le nouvel accord explicite d’Alexis, la tentative utilise le commit propre
+et poussé `b6a7757176e7af1f5e257ea8bbddf9254366aadf`, archive source vérifiée
+de 775 fichiers :
+
+- [Quatrième build EAS29](https://expo.dev/accounts/ales27/projects/assist/builds/f1cbfd7a-4198-45ac-9b37-72ec6a97ae92),
+  créée le 20 octobre à 01:08:41 UTC, terminée `ERRORED` à 01:16:39 UTC.
+- Tous les contrôles pré-installation passent, dont le nouveau consommateur du
+  header Swift sous Xcode27.1. La compilation du vrai pont RCT, l’édition des liens,
+  le bundle de production, les métadonnées AppIntents et l’archive/export aboutissent.
+- L’IPA est uploadé par EAS avant le hook de succès : 24 059 801 octets,
+  SHA-256 `84b00c0450bef49e920dc94a2399cfcfd17de1a0e9dd1b5d5136e5b317b1a895`.
+- Le hook de succès s’arrête ensuite sur `Build product paths must not contain symlinks`.
+  Le ZIP de dSYM est absent des artefacts publiés; aucune soumission Apple n’est lancée.
+
+### Inspection du véritable IPA
+
+L’IPA téléchargé est inspecté sur le Mac, avec contrôle de son empreinte de
+transport et des références gelées. **41 contrôles passent**, ainsi que le vrai
+validateur Linux des profils/capacités :
+
+- signatures `codesign --deep --strict` de l’app, Partage et Widget;
+- profils App Store, App Group exact des trois produits, WeatherKit dans l’app;
+- versions 1.0.0 (29), runtime `1.0.0-native29`, canal `testflight`, SDK iOS27.1,
+  ressources, clé publique des packs et métadonnées AppIntents;
+- déclarations source préservées. Les raisons supplémentaires du manifeste
+  principal proviennent du manifeste ExpoFileSystem58.0.9 embarqué, identique
+  octet pour octet à celui de la dépendance épinglée; aucune collecte ni suivi ajouté.
+
+UUID des exécutables : Assist `73A736DC-6349-3FF8-ACAB-74BDCDDB1851`,
+Partage `96E60432-B622-3679-AE89-DF0F3714D347`, Widget
+`971B9AA1-471F-30BA-8975-6B8E89A13BCB`.
+
+L’IPA contient aussi quatre fichiers Apple `.symbols`, acceptés par l’outil
+Apple et correspondant aux UUID des trois produits et d’ExpoModulesJSI. Ils
+contiennent des fonctions et informations de lignes : notamment 111 592 symboles
+et 424 657 `SourceInfos` pour Assist. Les mentions `Found-dSYM` et chemins DWARF
+affichés sont des métadonnées conservées dans ces fichiers : les chemins originaux
+du runner n’existent pas sur le Mac inspecteur. Ces données utiles ne sont pas le
+bundle dSYM original et son manifeste/hash attendu. Les rapports restent donc
+**`partial=true`, `symbolsVerified=false`, `canSubmit=false`**.
+
+L’API EAS actuelle ne publie pour cet ID que l’IPA et les journaux :
+`buildArtifactsUrl` nul, aucun artefact Workflow ou session SSH. La création
+du ZIP de dSYM par Fastlane sur le runner ne prouve pas sa récupération.
+
+### Correction de la collecte après une vraie archive
+
+Les régressions sur alias du dossier `Products` ou du dSYM reproduisent d’abord
+le raccourci `stat()` qui suivait un lien. La découverte est maintenant bornée
+aux dossiers physiques, et tout refus indique le chemin relatif fautif.
+
+Un essai supplémentaire produit une vraie archive Xcode locale de trois minuscules
+cibles, sans code Assist, dépendances externes ni signature de production. Il
+révèle que l’app est déplacée dans l’archive externe après `ARCHIVE SUCCEEDED` :
+`InstallationBuildProductsLocation` disparaît et le lien voisin pointe vers un
+emplacement disparu. Le collecteur corrigé lit les trois produits de l’IPA exact
+`ios/build/Assist.ipa`, puis lie leurs identités et UUID aux dSYM physiques. Il
+refuse un IPA présent mais invalide, sans revenir aux produits intermédiaires.
+La lecture ZIP est bornée et seuls les six fichiers Info.plist/exécutable attendus
+sont extraits; chemins dangereux, doublons et liens sont refusés.
+
+Le manifeste conserve le SHA-256 et la taille de l’IPA exporté, ainsi que les trois
+SHA-256 exécutables portant explicitement `executableHashStage: exported_ipa`.
+La vérification finale exigera ces mêmes octets, en plus des identités, signatures,
+profils, capacités, ressources, SHA-256 dSYM et UUID. Elle ne confond pas les
+empreintes d’un produit avant signature avec celles de l’IPA exporté.
+
+Preuves après correction :
+
+- **61 tests Node passent**, avec contrôles de syntaxe et `git diff --check`.
+- La vraie archive Xcode locale à trois cibles minimales (SDK26.2, sans signature
+  de production) passe le collecteur et le vérificateur, exit0. Son ZIP dSYM fait
+  875 500 octets, SHA-256 `9cf5a5c8804e7b72290b7638af33ccb3f3f6129be424702d3f99dce755bce03d`.
+- Le lecteur accepte également le véritable IPA de la quatrième tentative, puis
+  refuse les dSYM de la fixture pour UUID différents. Aucun dSYM n’est modifié
+  ni artefact de remplacement produit.
+- Les helpers privés de validation couvrent **20 tests**, dont 19 exécutés sur
+  Linux et 18 sur Mac, les contrôles propres à l’autre hôte étant explicitement
+  ignorés. Le refus couvre notamment un SHA différent à UUID identique, un stade
+  absent et une empreinte ou taille globale d’IPA différente.
+
+Le test local Xcode vérifie le parcours d’archivage; il ne recompile pas Assist
+et ne qualifie pas l’iPhone. Les helpers et attendus gelés de la quatrième
+tentative restent intacts; une prochaine tentative utilisera de nouveaux
+attendus liés à son propre ID et au nouveau commit.
+
+L’IPA, journaux, profils/capacités et symboles embarqués sont conservés hors Git :
+`/home/ales27pm/.local/share/assist/releases/1.0.0-29-f1cbfd7a/`.
+Les preuves du correctif sont conservées séparément sous `post-failure-xcode-symbols/`
+et `post-failure-export-binding/`, avec leurs inventaires d’empreintes.
+Aucune OTA, nouvelle build ou soumission n’est déclenchée automatiquement.
+
+## Soumission de l’IPA existant sur instruction explicite
+
+Alexis demande ensuite « Submit ». Avant l’envoi, la relecture Apple ne trouve
+aucune build29 et les dix dernières soumissions EAS ne montrent ni soumission29
+ni envoi récent non résolu. L’empreinte de l’IPA et les 41 contrôles de son rapport
+partiel sont revérifiés. L’autorisation de soumettre cet IPA existant, avec le
+dSYM original toujours indisponible, est consignée séparément; les rapports
+`partial=true`, `symbolsVerified=false`, `canSubmit=false` restent intacts.
+
+La [soumission EAS29](https://expo.dev/accounts/ales27/projects/assist/submissions/05525496-9daf-4489-801f-5e8d5fd6c19a)
+est créée le 20 octobre à 01:39:47 UTC, depuis le fichier local vérifié, avec
+`--path`, profil `testflight` et `--no-auto-testflight-setup`. Le binaire correspond
+au commit `b6a7757176e7af1f5e257ea8bbddf9254366aadf`; la correction ultérieure
+du collecteur de symboles ne change pas ce binaire. Aucun nouvel essai payant,
+changement de groupes externes, OTA ou envoi App Store de production n’est lancé.
+
+L’upload vers EAS Submit et sa planification sont réussis; l’état Apple final et
+la disponibilité TestFlight ne sont pas encore attestés à ce point du relevé.

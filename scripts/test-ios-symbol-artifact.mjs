@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {
   chmod,
   cp,
@@ -10,6 +11,7 @@ import {
   rename,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
@@ -113,7 +115,7 @@ async function makeFixture({includeDsym = true, extensions = false, partial = fa
   };
 }
 
-async function makeEasArchiveFixture() {
+async function makeEasArchiveFixture({canonicalAlias} = {}) {
   const fixture = await makeFixture({extensions: true});
   // Actual native29 xcode-build.log:5481, 8391 and 8396: archive products are
   // links, the installed app is real, and all three dSYMs share this directory.
@@ -132,7 +134,47 @@ async function makeEasArchiveFixture() {
     await cp(path.join(application, 'PlugIns', `${name}.appex`), uninstalled, {recursive: true});
     await symlink(path.relative(products, uninstalled), path.join(products, `${name}.appex`));
   }
+  const canonical = fixture.products;
+  if (canonicalAlias === 'products') {
+    await rm(path.dirname(canonical), {recursive: true});
+    await symlink(path.relative(path.dirname(path.dirname(canonical)), path.dirname(products)), path.dirname(canonical));
+  } else if (canonicalAlias === 'release') {
+    await rm(canonical, {recursive: true});
+    await symlink(path.relative(path.dirname(canonical), products), canonical);
+  } else if (canonicalAlias === 'dsym') {
+    for (const product of ['Assist.app.dSYM', 'AssistShare.appex.dSYM', 'AssistWidget.appex.dSYM']) {
+      await symlink(path.relative(canonical, path.join(products, product)), path.join(canonical, product));
+    }
+  }
   return {...fixture, products, application};
+}
+
+async function makeExportedIpaFixture() {
+  const fixture = await makeEasArchiveFixture({canonicalAlias: 'products'});
+  const exported = path.join(fixture.root, 'exported');
+  const app = path.join(exported, 'Payload', 'Assist.app');
+  await mkdir(path.dirname(app), {recursive: true});
+  await rename(fixture.application, app);
+  const ipa = path.join(fixture.root, 'ios', 'build', 'Assist.ipa');
+  assert.equal(spawnSync('zip', ['-q', '-r', ipa, 'Payload'], {cwd: exported}).status, 0);
+  return {...fixture, exported, app, ipa};
+}
+
+function ipaDirectory(bytes) {
+  let end = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
+    if (bytes.readUInt32LE(i) === 0x06054b50 && i + 22 + bytes.readUInt16LE(i + 20) === bytes.length) { end = i; break; }
+  }
+  assert.ok(end >= 0);
+  const offset = bytes.readUInt32LE(end + 16);
+  const records = [];
+  let next = offset;
+  for (let i = 0; i < bytes.readUInt16LE(end + 10); i++) {
+    const length = 46 + bytes.readUInt16LE(next + 28) + bytes.readUInt16LE(next + 30) + bytes.readUInt16LE(next + 32);
+    records.push({offset: next, length, name: bytes.subarray(next + 46, next + 46 + bytes.readUInt16LE(next + 28)).toString('utf8'), local: bytes.readUInt32LE(next + 42)});
+    next += length;
+  }
+  return {end, offset, records};
 }
 
 test('release profiles retain the generated symbol archive', async () => {
@@ -327,11 +369,15 @@ test('packages and verifies exactly three matching product symbol identities for
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.build.buildNumber, '29');
   assert.equal(manifest.build.runtimeVersion, '1.0.0-native29');
+  assert.equal(manifest.executableHashStage, 'archive_build_product');
+  assert.match(manifest.executableSHA256, /^[a-f0-9]{64}$/);
+  assert.equal(manifest.exportedIPA, undefined);
   assert.deepEqual(manifest.extensions.map(extension => [extension.product, extension.bundleIdentifier, extension.dSYM.uuids]), [
     ['AssistShare.appex', 'org.27pm.assist.share', [{architecture: 'arm64', uuid: SHARE_UUID}]],
     ['AssistWidget.appex', 'org.27pm.assist.widget', [{architecture: 'arm64', uuid: WIDGET_UUID}]],
   ]);
   assert.ok(manifest.extensions.every(extension => /^[0-9a-f]{64}$/.test(extension.executableSHA256)));
+  assert.ok(manifest.extensions.every(extension => extension.executableHashStage === 'archive_build_product'));
   const entries = spawnSync('unzip', ['-Z1', fixture.artifact], {encoding: 'utf8'}).stdout.trim().split('\n');
   assert.deepEqual([...new Set(entries.map(entry => entry.split('/')[0]))].sort(), [
     'Assist.app.dSYM', 'AssistShare.appex.dSYM', 'AssistWidget.appex.dSYM', 'symbol-identity.json',
@@ -372,6 +418,163 @@ test('packages the real EAS ArchiveIntermediates layout without following produc
   assert.equal(runNode(verifySymbols, [fixture.artifact], fixture.environment).status, 0);
 });
 
+for (const canonicalAlias of ['products', 'release', 'dsym']) {
+  test(`packages physical archive products when canonical ${canonicalAlias} is an alias`, async t => {
+    const fixture = await makeEasArchiveFixture({canonicalAlias});
+    t.after(() => rm(fixture.root, {force: true, recursive: true}));
+    const packaged = packageFixture(fixture);
+    assert.equal(packaged.status, 0, packaged.stderr);
+    const manifest = readManifest(fixture);
+    assert.deepEqual(manifest.extensions.map(row => row.product), ['AssistShare.appex', 'AssistWidget.appex']);
+    assert.equal(runNode(verifySymbols, [fixture.artifact], fixture.environment).status, 0);
+  });
+}
+
+test('uses the exact exported IPA after Xcode moves the archived app outside the build root', async t => {
+  const fixture = await makeExportedIpaFixture();
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  const packaged = packageFixture(fixture);
+  assert.equal(packaged.status, 0, packaged.stderr);
+  const manifest = readManifest(fixture);
+  assert.equal(manifest.executableHashStage, 'exported_ipa');
+  assert.deepEqual(manifest.exportedIPA, {
+    sha256: createHash('sha256').update(await readFile(fixture.ipa)).digest('hex'),
+    bytes: (await readFile(fixture.ipa)).length,
+    executableHashStage: 'exported_ipa',
+  });
+  assert.equal(manifest.executableSHA256, createHash('sha256').update(await readFile(path.join(fixture.app, 'Assist'))).digest('hex'));
+  for (const row of manifest.extensions) {
+    assert.equal(row.executableHashStage, 'exported_ipa');
+    assert.equal(row.executableSHA256, createHash('sha256').update(await readFile(path.join(fixture.app, 'PlugIns', row.product, row.executable))).digest('hex'));
+  }
+  assert.equal(runNode(verifySymbols, [fixture.artifact], fixture.environment).status, 0);
+});
+
+for (const [label, mutate, expected] of [
+  ['duplicate entries', (bytes, directory) => {
+    const duplicate = bytes.subarray(directory.records[0].offset, directory.records[0].offset + directory.records[0].length);
+    const end = Buffer.from(bytes.subarray(directory.end));
+    end.writeUInt16LE(directory.records.length + 1, 8);
+    end.writeUInt16LE(directory.records.length + 1, 10);
+    end.writeUInt32LE(bytes.readUInt32LE(directory.end + 12) + duplicate.length, 12);
+    return Buffer.concat([bytes.subarray(0, directory.end), duplicate, end]);
+  }, /Invalid or duplicate exported IPA entry path/],
+  ['absolute entry paths', (bytes, directory) => {
+    const row = directory.records[0];
+    bytes[row.offset + 46] = 47;
+    bytes[row.local + 30] = 47;
+    return bytes;
+  }, /Invalid or duplicate exported IPA entry path/],
+  ['parent traversal paths', (bytes, directory) => {
+    const row = directory.records[0];
+    assert.equal(row.name, 'Payload/');
+    Buffer.from('../load/').copy(bytes, row.offset + 46);
+    Buffer.from('../load/').copy(bytes, row.local + 30);
+    return bytes;
+  }, /Invalid or duplicate exported IPA entry path/],
+  ['symlink entries', (bytes, directory) => {
+    bytes.writeUInt32LE((0o120777 << 16) >>> 0, directory.records[0].offset + 38);
+    return bytes;
+  }, /Unsupported exported IPA entry, encryption, or symlink/],
+  ['uncompressed quota overflow', (bytes, directory) => {
+    bytes.writeUInt32LE(0xffffffff, directory.records[0].offset + 24);
+    return bytes;
+  }, /exported IPA exceeds its uncompressed size limit/],
+  ['oversized selected metadata', (bytes, directory) => {
+    const row = directory.records.find(row => row.name === 'Payload/Assist.app/Info.plist');
+    bytes.writeUInt32LE(128 * 1024 + 1, row.offset + 24);
+    return bytes;
+  }, /required exported IPA product file is missing or exceeds its size limit/],
+  ['missing required product metadata', (bytes, directory) => {
+    const row = directory.records.find(row => row.name === 'Payload/Assist.app/Info.plist');
+    const replacement = Buffer.from(row.name.replace('Info.plist', 'Lost.plist'));
+    replacement.copy(bytes, row.offset + 46);
+    replacement.copy(bytes, row.local + 30);
+    return bytes;
+  }, /required exported IPA product file is missing or exceeds its size limit/],
+  ['inconsistent local filenames', (bytes, directory) => {
+    bytes[directory.records[0].local + 30] = 88;
+    return bytes;
+  }, /Invalid or inconsistent exported IPA local entry/],
+]) {
+  test(`rejects exported IPA ${label} before extracting product files`, async t => {
+    const fixture = await makeExportedIpaFixture();
+    t.after(() => rm(fixture.root, {force: true, recursive: true}));
+    const bytes = await readFile(fixture.ipa);
+    await writeFile(fixture.ipa, mutate(bytes, ipaDirectory(bytes)));
+    const packaged = packageFixture(fixture);
+    assert.notEqual(packaged.status, 0);
+    assert.match(packaged.stderr, expected);
+  });
+}
+
+test('bounds the compressed exported IPA before reading its directory', async t => {
+  const fixture = await makeExportedIpaFixture();
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  await truncate(fixture.ipa, 512 * 1024 * 1024 + 1);
+  const packaged = packageFixture(fixture);
+  assert.notEqual(packaged.status, 0);
+  assert.match(packaged.stderr, /exported IPA exceeds its compressed size limit/);
+});
+
+for (const [name, relative] of [['main', 'Assist'], ['share', 'PlugIns/AssistShare.appex/AssistShare'], ['widget', 'PlugIns/AssistWidget.appex/AssistWidget']]) {
+  test(`refuses an exported ${name} executable whose UUID does not match its real dSYM`, async t => {
+    const fixture = await makeExportedIpaFixture();
+    t.after(() => rm(fixture.root, {force: true, recursive: true}));
+    await writeFile(path.join(fixture.app, relative), 'unexpected UUID 99999999-9999-9999-9999-999999999999\n');
+    assert.equal(spawnSync('zip', ['-q', '-r', fixture.ipa, 'Payload'], {cwd: fixture.exported}).status, 0);
+    const packaged = packageFixture(fixture);
+    assert.notEqual(packaged.status, 0);
+    assert.match(packaged.stderr, /executable and dSYM UUIDs do not match/);
+  });
+}
+
+test('does not fall back to available legacy products when the exact exported IPA is invalid', async t => {
+  const fixture = await makeFixture({extensions: true});
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  await writeFile(path.join(fixture.root, 'ios', 'build', 'Assist.ipa'), 'invalid IPA');
+  const packaged = packageFixture(fixture);
+  assert.notEqual(packaged.status, 0);
+  assert.match(packaged.stderr, /exported IPA exceeds its compressed size limit or is invalid/);
+});
+
+test('does not follow a linked exported IPA', async t => {
+  const fixture = await makeExportedIpaFixture();
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  const moved = path.join(fixture.root, 'outside.ipa');
+  await rename(fixture.ipa, moved);
+  await symlink(moved, fixture.ipa);
+  const packaged = packageFixture(fixture);
+  assert.notEqual(packaged.status, 0);
+  assert.match(packaged.stderr, /Build product paths must not contain symlinks \(Assist\.ipa\)/);
+});
+
+test('refuses a symlink used as the entire build output root', async t => {
+  const fixture = await makeFixture({extensions: true});
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  const build = path.join(fixture.root, 'ios', 'build');
+  const moved = path.join(fixture.root, 'outside-build');
+  await rename(build, moved);
+  await symlink(moved, build);
+  const packaged = packageFixture(fixture);
+  assert.notEqual(packaged.status, 0);
+  assert.match(packaged.stderr, /Build product paths must not contain symlinks \(\.\)/);
+});
+
+for (const destination of ['inside', 'outside']) {
+  test(`refuses a dSYM link without any physical bundle even when its target is ${destination} the build root`, async t => {
+    const fixture = await makeFixture();
+    t.after(() => rm(fixture.root, {force: true, recursive: true}));
+    const dwarf = path.join(fixture.products, 'Assist.app.dSYM');
+    const moved = path.join(fixture.root, ...(destination === 'inside' ? ['ios', 'build'] : []), 'unselected-symbols');
+    await rename(dwarf, moved);
+    await symlink(moved, dwarf);
+    const packaged = packageFixture(fixture);
+    assert.notEqual(packaged.status, 0);
+    assert.match(packaged.stderr, /No Assist\.app\.dSYM/);
+  });
+}
+
 for (const destination of ['inside', 'outside']) {
   test(`rejects a linked installed EAS application even when its target is ${destination} the build root`, async t => {
     const fixture = await makeEasArchiveFixture();
@@ -381,7 +584,7 @@ for (const destination of ['inside', 'outside']) {
     await symlink(moved, fixture.application);
     const packaged = packageFixture(fixture);
     assert.notEqual(packaged.status, 0);
-    assert.match(packaged.stderr, /Build product paths must not contain symlinks/);
+    assert.match(packaged.stderr, /Build product paths must not contain symlinks \(Build\/Intermediates\.noindex\/ArchiveIntermediates\/Assist\/InstallationBuildProductsLocation\/Applications\/Assist\.app\)/);
   });
 }
 
