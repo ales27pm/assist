@@ -113,6 +113,28 @@ async function makeFixture({includeDsym = true, extensions = false, partial = fa
   };
 }
 
+async function makeEasArchiveFixture() {
+  const fixture = await makeFixture({extensions: true});
+  // Actual native29 xcode-build.log:5481, 8391 and 8396: archive products are
+  // links, the installed app is real, and all three dSYMs share this directory.
+  const archive = path.join(fixture.root, 'ios', 'build', 'Build', 'Intermediates.noindex', 'ArchiveIntermediates', 'Assist');
+  const products = path.join(archive, 'BuildProductsPath', 'Release-iphoneos');
+  const application = path.join(archive, 'InstallationBuildProductsLocation', 'Applications', 'Assist.app');
+  await mkdir(products, {recursive: true});
+  await mkdir(path.dirname(application), {recursive: true});
+  for (const product of ['Assist.app.dSYM', 'AssistShare.appex.dSYM', 'AssistWidget.appex.dSYM']) {
+    await rename(path.join(fixture.products, product), path.join(products, product));
+  }
+  await rename(path.join(fixture.products, 'Assist.app'), application);
+  await symlink(path.relative(products, application), path.join(products, 'Assist.app'));
+  for (const name of ['AssistShare', 'AssistWidget']) {
+    const uninstalled = path.join(archive, 'IntermediateBuildFilesPath', 'UninstalledProducts', 'iphoneos', `${name}.appex`);
+    await cp(path.join(application, 'PlugIns', `${name}.appex`), uninstalled, {recursive: true});
+    await symlink(path.relative(products, uninstalled), path.join(products, `${name}.appex`));
+  }
+  return {...fixture, products, application};
+}
+
 test('release profiles retain the generated symbol archive', async () => {
   const eas = JSON.parse(await readFile(path.join(repositoryRoot, 'mobile', 'eas.json'), 'utf8'));
   const packageJson = JSON.parse(await readFile(path.join(repositoryRoot, 'mobile', 'package.json'), 'utf8'));
@@ -335,6 +357,33 @@ test('packages matching products and symbols from an xcarchive layout', async t 
   assert.equal(packaged.status, 0, packaged.stderr);
   assert.equal(runNode(verifySymbols, [fixture.artifact], fixture.environment).status, 0);
 });
+
+test('packages the real EAS ArchiveIntermediates layout without following product links', async t => {
+  const fixture = await makeEasArchiveFixture();
+  t.after(() => rm(fixture.root, {force: true, recursive: true}));
+  const packaged = packageFixture(fixture);
+  assert.equal(packaged.status, 0, packaged.stderr);
+  const manifest = readManifest(fixture);
+  assert.equal(manifest.dSYM.bundle, 'Assist.app.dSYM');
+  assert.deepEqual(manifest.extensions.map(extension => [extension.product, extension.dSYM.uuids]), [
+    ['AssistShare.appex', [{architecture: 'arm64', uuid: SHARE_UUID}]],
+    ['AssistWidget.appex', [{architecture: 'arm64', uuid: WIDGET_UUID}]],
+  ]);
+  assert.equal(runNode(verifySymbols, [fixture.artifact], fixture.environment).status, 0);
+});
+
+for (const destination of ['inside', 'outside']) {
+  test(`rejects a linked installed EAS application even when its target is ${destination} the build root`, async t => {
+    const fixture = await makeEasArchiveFixture();
+    t.after(() => rm(fixture.root, {force: true, recursive: true}));
+    const moved = path.join(fixture.root, ...(destination === 'inside' ? ['ios', 'build'] : []), 'linked-application.app');
+    await rename(fixture.application, moved);
+    await symlink(moved, fixture.application);
+    const packaged = packageFixture(fixture);
+    assert.notEqual(packaged.status, 0);
+    assert.match(packaged.stderr, /Build product paths must not contain symlinks/);
+  });
+}
 
 for (const [label, relative, expected] of [
   ['missing extension dSYM', 'AssistShare.appex.dSYM', /ENOENT/],

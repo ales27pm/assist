@@ -57,15 +57,18 @@ test('iOS resolves Expo CLI through Expo when the CLI is nested', () => {
 });
 let fixtureRoot;
 let logPath;
+let scriptLogPath;
 
 beforeEach(() => {
   fixtureRoot = mkdtempSync(join(tmpdir(), 'assist-eas-hook-'));
   logPath = join(fixtureRoot, 'calls');
+  scriptLogPath = join(fixtureRoot, 'script-calls');
   for (const command of ['python3', 'node', 'bash']) {
     writeFileSync(
       join(fixtureRoot, command),
       `#!/bin/sh
 printf '%s\\n' '${command}' >> "$ASSIST_HOOK_TEST_LOG"
+printf '%s\\n' "$1" >> "$ASSIST_HOOK_TEST_SCRIPT_LOG"
 if [ "$1" = '../scripts/check-voice-callbacks.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'voice' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-voice-input.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'input' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-voice-speech-queue.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'queue' ]; then exit 1; fi
@@ -89,6 +92,7 @@ if [ "$1" = '../scripts/check-alarms.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'alar
 if [ "$1" = '../scripts/check-translation.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'translation' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-document-actions.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'document-actions' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-native-workspace.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'native-workspace' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-device-bridge-header.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'device-bridge-header' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-research-loop.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'research-loop' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-apple-places.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'apple-places' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-weather-attribution.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'weather-attribution' ]; then exit 1; fi
@@ -109,6 +113,7 @@ function runHook(platform, fail = '') {
       PATH: fixtureRoot,
       EAS_BUILD_PLATFORM: platform,
       ASSIST_HOOK_TEST_LOG: logPath,
+      ASSIST_HOOK_TEST_SCRIPT_LOG: scriptLogPath,
       ASSIST_HOOK_TEST_FAIL: fail,
     },
   });
@@ -121,7 +126,14 @@ test('Android preinstall succeeds without invoking any iOS prerequisites', () =>
 
 test('iOS preinstall verifies launch, voice and closed device-tool agent contracts in order', () => {
   runHook('ios');
-  expect(readFileSync(logPath, 'utf8').trim().split('\n')).toEqual(['python3', 'node', ...Array(27).fill('bash')]);
+  expect(readFileSync(logPath, 'utf8').trim().split('\n')).toEqual(['python3', 'node', ...Array(28).fill('bash')]);
+  expect(readFileSync(scriptLogPath, 'utf8').trim().split('\n').slice(-5)).toEqual([
+    '../scripts/check-native-workspace.sh',
+    '../scripts/check-device-bridge-header.sh',
+    '../scripts/check-research-loop.sh',
+    '../scripts/check-apple-places.sh',
+    '../scripts/check-weather-attribution.sh',
+  ]);
 });
 
 test('iOS preinstall propagates a failed prerequisite and stops subsequent checks', () => {
@@ -173,9 +185,21 @@ test('iOS preinstall propagates fluid-sdk failure', () => {
   expect(readFileSync(logPath, 'utf8')).toBe('python3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
 });
 
-test.each(['inference-admission', 'agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-host', 'device-tool-loop', 'tool-transactions', 'private-service', 'shared-inbox', 'task-checkpoints', 'alarms', 'translation', 'document-actions', 'native-workspace', 'research-loop', 'apple-places', 'weather-attribution'])('iOS preinstall blocks on %s failure', failure => {
+test.each(['inference-admission', 'agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-host', 'device-tool-loop', 'tool-transactions', 'private-service', 'shared-inbox', 'task-checkpoints', 'alarms', 'translation', 'document-actions', 'native-workspace', 'device-bridge-header', 'research-loop', 'apple-places', 'weather-attribution'])('iOS preinstall blocks on %s failure', failure => {
   expect(() => runHook('ios', failure)).toThrow();
   expect(readFileSync(logPath, 'utf8').split('\n').filter(Boolean).length).toBe(
-    12 + ['inference-admission', 'agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-host', 'device-tool-loop', 'tool-transactions', 'private-service', 'shared-inbox', 'task-checkpoints', 'alarms', 'translation', 'document-actions', 'native-workspace', 'research-loop', 'apple-places', 'weather-attribution'].indexOf(failure),
+    12 + ['inference-admission', 'agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-host', 'device-tool-loop', 'tool-transactions', 'private-service', 'shared-inbox', 'task-checkpoints', 'alarms', 'translation', 'document-actions', 'native-workspace', 'device-bridge-header', 'research-loop', 'apple-places', 'weather-attribution'].indexOf(failure),
   );
+});
+
+test('a generated-header failure stops after workspace checks and skips subsequent native checks', () => {
+  expect(() => runHook('ios', 'device-bridge-header')).toThrow();
+  const scripts = readFileSync(scriptLogPath, 'utf8').trim().split('\n');
+  expect(scripts.slice(-2)).toEqual([
+    '../scripts/check-native-workspace.sh',
+    '../scripts/check-device-bridge-header.sh',
+  ]);
+  for (const skipped of ['research-loop', 'apple-places', 'weather-attribution']) {
+    expect(scripts).not.toContain(`../scripts/check-${skipped}.sh`);
+  }
 });

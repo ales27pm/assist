@@ -328,7 +328,14 @@ async function requireRegularPath(buildRoot, candidate, directory = false) {
 
 async function locateApplication(buildRoot, dSYM, required) {
   const parent = path.dirname(dSYM);
-  const candidates = [path.join(parent, 'Assist.app')];
+  const candidates = [];
+  const archiveIntermediates = path.join(buildRoot, 'Build', 'Intermediates.noindex', 'ArchiveIntermediates', 'Assist');
+  if (parent === path.join(archiveIntermediates, 'BuildProductsPath', 'Release-iphoneos')) {
+    // Xcode archive creates a sibling Assist.app symlink here. Select its
+    // documented installed product directly; never resolve an arbitrary link.
+    candidates.push(path.join(archiveIntermediates, 'InstallationBuildProductsLocation', 'Applications', 'Assist.app'));
+  }
+  candidates.push(path.join(parent, 'Assist.app'));
   if (path.basename(parent) === 'dSYMs' && path.dirname(parent).endsWith('.xcarchive')) {
     candidates.push(path.join(path.dirname(parent), 'Products', 'Applications', 'Assist.app'));
   }

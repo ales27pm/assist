@@ -1,8 +1,9 @@
 # TestFlight 29 — candidat et livraison
 
-État courant : deux tentatives EAS29 échouées dans les contrôles pré-installation,
-avant l’archive Xcode; correctifs locaux validés. Aucun IPA29, aucune soumission,
-aucune relance automatique.
+État courant : trois tentatives EAS29 échouées. La troisième passe les contrôles
+pré-installation, puis s’arrête dans le pont Objective-C++ pendant l’archive Xcode.
+Aucun IPA29 ni soumission; correctifs et contrôles préventifs vérifiés localement,
+sans relance automatique. La compilation complète après correction reste à obtenir.
 
 ## Autorisation
 
@@ -188,3 +189,51 @@ et le reçu d’échec restent hors Git dans
 `/home/ales27pm/.local/share/assist/releases/1.0.0-29-fd1d0b0c/`.
 Une nouvelle tentative payante exige un nouvel accord explicite; aucune relance,
 OTA ou soumission n’est déclenchée par ces corrections.
+
+## Troisième tentative autorisée et examen des étapes suivantes
+
+Le nouvel accord d’Alexis autorise la tentative depuis le commit propre et poussé
+`dd44486546b7ce84d3b6e16f80aaa7d5c4903a45` :
+
+- [Troisième build EAS29](https://expo.dev/accounts/ales27/projects/assist/builds/ee7b22d4-b1e2-4d5e-b4cd-5f5f5291866c),
+  créée le 20 octobre à 00:40:25 UTC, terminée `ERRORED` à 00:47:34 UTC.
+- Tous les contrôles pré-installation passent sur Xcode27.1, dont le workspace,
+  les deux extensions, les 49 tests FluidAudio et les checkpoints61.
+- Les extensions Partage et Widget atteignent l’édition des liens, la production
+  des dSYM, l’extraction de métadonnées et la signature. Aucun IPA final n’existe.
+- Le journal Xcode complet contient cinq erreurs, toutes dans le header
+  `Assist-Swift.h` consommé par `RCTNativeAssist.mm` : protocoles et enums
+  MessageUI, et protocole Quick Look inconnus. Les préimports AVFoundation/UIKit/CoreLocation
+  existants ne suffisent pas aux interfaces du nouveau service de documents.
+
+Le pont importe désormais MessageUI, QuickLook et VisionKit avant le header Swift.
+Le harnais inclut les vraies classes de documents et leurs dépendances, puis
+extrait les préimports Apple du pont de production. Sur SDK iPhoneOS26.2 arm64,
+il reproduit les erreurs quand on retire les imports et compile le consommateur
+avec ces imports. Il fait maintenant partie du hook pré-installation EAS; ses
+**35 tests de contrat** prouvent aussi l’arrêt avant les contrôles suivants en cas
+d’échec. Il ne remplace pas la compilation du pont RCT complet sous Xcode27.1.
+
+À la demande d’Alexis, les étapes non atteintes sont aussi examinées avant toute
+nouvelle tentative payante :
+
+| Frontière | Preuve et résultat |
+| --- | --- |
+| Interface du pont | Les 90 méthodes du vrai `AssistSpec.h` généré RN0.88 correspondent au pont; revue des sélecteurs Swift et passages sur l’acteur principal. Aucun autre défaut concret relevé. |
+| Bundle de production | `expo export:embed`, plateforme iOS, production/minification et bytecode Hermes : 681 modules, 1 754 136 octets, en-tête Hermes confirmé sur Linux. Aucun lancement iPhone. |
+| Collecte des symboles | Nouveau blocage reproduit : Xcode crée `BuildProductsPath/Release-iphoneos/Assist.app` comme lien vers `InstallationBuildProductsLocation/Applications/Assist.app`. Le collecteur rejetait ce lien. Il choisit maintenant directement ce chemin réel pour ce seul layout, sans suivre de lien arbitraire. Régression rouge avant correction, 40 tests verts après, dont les refus de liens internes et externes. |
+| Collecte avec outils Apple réels | Sur le Mac/SDK26.2 : trois minuscules exécutables C arm64 et leurs vrais dSYM, même disposition et lien Xcode, `plutil`, `dwarfdump`, ZIP et vérificateur réels : exit0. Ce sont des fixtures, sans compilation Assist ni signature de production. |
+| Déclaration de confidentialité | L’import vocal vérifie l’espace disponible puis refuse visiblement la copie si nécessaire, mais le manifeste principal omettait DiskSpace. Ajout du motif `E174.1` pour cet usage, sans collecte ni suivi supplémentaires, selon les [motifs publiés par Apple](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype). |
+| Empreintes archive/export | Le vérificateur privé comparait le SHA global d’un exécutable archivé à celui de l’IPA exporté. Une fixture de re-signature ad hoc démontre que ce SHA peut changer, malgré signatures strictes valides et UUID/dSYM/sections de code inchangés. Les SHA des deux stades sont maintenant rapportés distinctement, écarts explicites, avec validation du SHA archivé; signatures, profils, entitlements, identités/source/ID, SHA des dSYM et concordance UUID restent exigés. Un UUID ne prouve pas cryptographiquement tous les octets de code. |
+| Source/configuration/artefacts | 129 contrôles Node combinés passent : workspace, capacités, archivage et symboles; lint du test de hook passant. |
+| Fin d’archive et export | Liaison de l’app principale, extraction AppIntents principale, embedding final, export IPA et hook de succès restent à démontrer. Les profils/capacités Apple sont prêts; cela ne prouve pas un IPA signé. |
+
+Les reçus et le journal Xcode complet sont conservés hors Git dans
+`/home/ales27pm/.local/share/assist/releases/1.0.0-29-ee7b22d4/`.
+Les helpers privés de vérification ont aussi leurs tests complémentaires :
+11 passants sur Linux avec le vrai validateur de capacités et 11 sur Mac, avec
+un scénario spécifique à l’autre hôte explicitement sauté sur chacun. Les versions
+de helpers gelées avant la tentative échouée restent intactes; une nouvelle
+tentative devra lier de nouveaux attendus à son propre ID et au nouveau commit.
+Une nouvelle build payante attend un nouvel accord explicite; aucune OTA,
+soumission ou diffusion n’est déclenchée par l’examen préventif.

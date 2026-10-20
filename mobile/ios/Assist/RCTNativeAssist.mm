@@ -5,6 +5,11 @@
 // AssistDeviceCapabilities exposes this delegate in Assist-Swift.h. The
 // Objective-C++ consumer must see Core Location before reading that header.
 #import <CoreLocation/CoreLocation.h>
+// AssistDocumentActions exposes composer, preview and scanner delegate methods
+// in Assist-Swift.h, including framework enum types in their signatures.
+#import <MessageUI/MessageUI.h>
+#import <QuickLook/QuickLook.h>
+#import <VisionKit/VisionKit.h>
 // The generated Assist Swift interface exposes Expo Swift base classes used by
 // AppDelegate, SceneDelegate, and ExpoModulesProvider. Import Expo's generated
 // interface before Assist-Swift.h so Objective-C++ can resolve those classes.
