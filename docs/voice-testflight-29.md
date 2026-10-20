@@ -1,7 +1,8 @@
 # TestFlight 29 — candidat et livraison
 
-État courant : première tentative EAS29 échouée avant Xcode; correctif local
-validé. Aucun IPA29, aucune soumission, aucune relance automatique.
+État courant : deux tentatives EAS29 échouées dans les contrôles pré-installation,
+avant l’archive Xcode; correctifs locaux validés. Aucun IPA29, aucune soumission,
+aucune relance automatique.
 
 ## Autorisation
 
@@ -124,7 +125,7 @@ cause de l’échec. Aucun IPA ni symbole n’a été produit; aucune soumission
 
 Le harnais inclut maintenant la vraie source `InferencePolicy.swift`.
 **61 contrôles checkpoints** passent dans le conteneur Swift6.2 en lecture seule
-et sur le Mac. Un audit de toutes les listes de compilation ne trouve pas
+et sur le Mac. Un audit des listes de compilation Foundation ne trouve pas
 d’autre source manquante; les 16 autres harnais Foundation compilent également.
 
 Les huit hooks à partir des checkpoints sont rejoués sur le Mac : checkpoints61,
@@ -145,3 +146,45 @@ Logs et reçus privés :
 La prochaine tentative EAS reste soumise à un nouvel accord explicite, selon
 la limite de relance payante automatique fixée par Alexis. Le numéro29 peut
 être conservé : aucun binaire correspondant n’a été transmis à Apple.
+
+## Deuxième tentative autorisée et correction des captures Swift
+
+Après le nouvel accord explicite d’Alexis (« Oui »), une seule deuxième tentative
+est lancée depuis le commit propre et poussé
+`408ae6309bf34430820ac380a6ab7ea2f1f2d23f`. Son archive réelle contient toujours
+775 fichiers vérifiés, sans poids ou secret ajouté.
+
+- [Deuxième build EAS29](https://expo.dev/accounts/ales27/projects/assist/builds/fd1d0b0c-2257-4460-8b10-9e5adf2731a1) :
+  `fd1d0b0c-2257-4460-8b10-9e5adf2731a1`, créée le 20 octobre à
+  00:29:09 UTC, terminée `ERRORED` à 00:32:24 UTC.
+- Les checkpoints61 passent désormais sur le runner, ainsi que les contrôles
+  alarmes35, traduction57 et documents78.
+- L’arrêt survient ensuite dans `check-native-workspace.sh` : le compilateur
+  Xcode27.1 signale `ImplicitStrongCapture` dans le callback biométrique de
+  `AssistDeviceCapabilities.swift`. La tâche interne capturait `self` faiblement,
+  tandis que le callback externe le capturait implicitement fortement.
+- Aucun IPA, symbole ou archive Xcode n’a été produit; aucune soumission Apple.
+
+Le callback externe déclare maintenant lui aussi `[weak self]`; la vérification
+du jeton biométrique reste en place. Une revue des 106 captures faibles repère
+le même schéma dans le callback `onTermination` de FluidAudio : sa capture externe
+devient également faible. Le changement est consigné dans `LOCAL-PATCH.diff`,
+sans modifier les empreintes des sources amont dans `UPSTREAM.json`.
+
+Vérifications ciblées après correction sur le Mac :
+
+- Compilation optimisée, concurrence stricte et avertissements traités comme
+  erreurs : sous-ensemble de l’app et les deux extensions sur SDK simulateur26.2.
+- **49 tests FluidAudio / 7 suites** passants, sans modèles, microphone ou réseau.
+- Compilation Swift arm64 sur SDK iPhoneOS26.2 avec émission du vrai header,
+  puis contrôle positif/négatif du consommateur Objective-C++. Ce harnais omettait
+  six sources agent/contrats désormais nécessaires; elles sont ajoutées, sans
+  remplacer les implémentations par des doublures. Il ne compile pas le pont RCT
+  complet et n’est pas un hook EAS.
+
+Ces résultats ne reproduisent pas le diagnostic propre au compilateur27.1 et
+ne prouvent ni archive complète CoreAI ni fonctionnement iPhone. Les journaux
+et le reçu d’échec restent hors Git dans
+`/home/ales27pm/.local/share/assist/releases/1.0.0-29-fd1d0b0c/`.
+Une nouvelle tentative payante exige un nouvel accord explicite; aucune relance,
+OTA ou soumission n’est déclenchée par ces corrections.

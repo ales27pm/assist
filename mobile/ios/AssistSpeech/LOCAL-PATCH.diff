@@ -1,3 +1,14 @@
+--- a/Sources/FluidAudio/ASR/Parakeet/SlidingWindow/SlidingWindowAsrManager.swift
++++ b/Sources/FluidAudio/ASR/Parakeet/SlidingWindow/SlidingWindowAsrManager.swift
+@@ -224,7 +224,7 @@
+         AsyncStream { continuation in
+             self.updateContinuation = continuation
+ 
+-            continuation.onTermination = { @Sendable _ in
++            continuation.onTermination = { @Sendable [weak self] _ in
+                 Task { [weak self] in
+                     await self?.clearUpdateContinuation()
+                 }
 --- a/Sources/FluidAudio/Shared/MLModel+Prediction.swift
 +++ b/Sources/FluidAudio/Shared/MLModel+Prediction.swift
 @@ -7,6 +7,7 @@

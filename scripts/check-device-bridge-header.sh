@@ -64,6 +64,12 @@ xcrun --sdk iphoneos swiftc \
   -warnings-as-errors \
   -target arm64-apple-ios26.0 \
   -sdk "$SDK_PATH" \
+  mobile/ios/Assist/Inference/InferencePolicy.swift \
+  mobile/ios/Assist/Inference/AssistAgentCalendar.swift \
+  mobile/ios/Assist/Inference/AssistGemmaToolAdapter.swift \
+  mobile/ios/Assist/Inference/AssistAgentRun.swift \
+  mobile/ios/Assist/Inference/AssistToolContracts.swift \
+  mobile/ios/Assist/Inference/AssistExtendedTools.swift \
   "$SOURCE" "$CHECK_DIR/AssistHeaderCheckApp.swift"
 
 expected_header='@interface AssistDeviceCapabilities : NSObject <CLLocationManagerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate>'

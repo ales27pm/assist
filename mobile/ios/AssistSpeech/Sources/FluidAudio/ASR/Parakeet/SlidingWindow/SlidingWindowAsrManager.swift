@@ -224,7 +224,7 @@ public actor SlidingWindowAsrManager {
         AsyncStream { continuation in
             self.updateContinuation = continuation
 
-            continuation.onTermination = { @Sendable _ in
+            continuation.onTermination = { @Sendable [weak self] _ in
                 Task { [weak self] in
                     await self?.clearUpdateContinuation()
                 }

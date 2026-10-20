@@ -777,7 +777,7 @@ final class AssistDeviceCapabilities: NSObject, @preconcurrency CLLocationManage
         }
         activeBiometricContext = context
         activeBiometricToken = token
-        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { success, error in
+        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { [weak self] success, error in
             Task { @MainActor [weak self] in
                 guard let self, self.activeBiometricToken == token else { return }
                 self.activeBiometricContext = nil
