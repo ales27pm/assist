@@ -4,7 +4,9 @@
 et capacités sont vérifiées, puis échoue pendant la collecte des dSYM. Le bundle
 dSYM original n’est pas publié; la validation complète des symboles reste
 inachevée. Sur l’instruction explicite « Submit » d’Alexis, cet IPA est ensuite
-soumis sans nouvelle compilation. Le traitement Apple est suivi séparément.
+soumis sans nouvelle compilation : Apple confirme `VALID` et TestFlight interne
+`IN_BETA_TESTING`. Les notes de test fr-CA/en-US sont publiées et relues. Le
+fonctionnement physique iPhone reste à qualifier.
 
 ## Autorisation
 
@@ -30,7 +32,7 @@ scanner/PDF/Quick Look, MessageUI, Spotlight choisi et brouillons App Intents.
 Le pont v1 garde ses 13 outils; aucun permis de mutation n’est créé par Siri,
 Raccourcis ou Spotlight. La passerelle Ubuntu active reste v1, sans lecteur v2.
 
-## Contrôles avant lancement
+## Contrôles avant le premier lancement
 
 - 1 690 tests Jest / 57 suites, TypeScript, lint sans erreur et Codegen passants.
 - 53 contrôles workspace et 25 contrôles de capacités; 31 schémas fermés,
@@ -45,7 +47,7 @@ Raccourcis ou Spotlight. La passerelle Ubuntu active reste v1, sans lecteur v2.
 - Vérifier les trois profils distants, App Group et WeatherKit; ne pas révoquer
   de certificat existant ou réparer un compte sans nécessité identifiée.
 
-## Vérifications avant et après soumission
+## Vérifications prévues avant les tentatives
 
 Attendre le résultat du seul ID EAS lancé. En cas d’échec, conserver son état et
 son diagnostic, sans relance automatique. Si la build réussit : télécharger IPA
@@ -349,5 +351,23 @@ au commit `b6a7757176e7af1f5e257ea8bbddf9254366aadf`; la correction ultérieure
 du collecteur de symboles ne change pas ce binaire. Aucun nouvel essai payant,
 changement de groupes externes, OTA ou envoi App Store de production n’est lancé.
 
-L’upload vers EAS Submit et sa planification sont réussis; l’état Apple final et
-la disponibilité TestFlight ne sont pas encore attestés à ce point du relevé.
+La soumission termine `FINISHED` le 20 octobre à **01:42:19 UTC**. À 01:43 UTC,
+l’API App Store Connect identifie exactement la build
+`77aa94f3-4203-4578-9d93-01ec2ac869d4`, version 1.0.0 (29), plateforme iOS,
+uploadée à 01:41:07 UTC, non expirée et sans chiffrement non exempt :
+
+- traitement Apple **`VALID`**;
+- TestFlight interne **`IN_BETA_TESTING`**;
+- externe `READY_FOR_BETA_SUBMISSION`, sans envoi à la revue externe.
+
+Les notes de test exactes fr-CA et en-US sont ensuite mises à jour, puis relues
+via l’API; les deux locales sont vérifiées. Le helper de publication a 14 tests
+passants et vérifie les vrais reçus de soumission et la build Apple, sans exiger
+ni inventer un statut `FINISHED` pour la build EAS dont le hook a échoué.
+
+Le correctif de collecte est poussé séparément sous `16434f56`; son archive
+hors ligne est vérifiée avec 775 fichiers et aucun upload supplémentaire. Les
+reçus, snapshots Apple/EAS et notes sont conservés dans le dossier privé de cette
+tentative. Le dSYM original reste indisponible et aucun essai physique iPhone
+n’est revendiqué. Toute prochaine compilation destinée à Apple devra utiliser
+un nouveau numéro de build; aucune n’est lancée par cette soumission.
