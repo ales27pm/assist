@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import NativeAssist from '../specs/NativeAssist';
 import { useAppearance } from './appearance';
-import { ActionButton } from './uiPrimitives';
+import { ActionButton, Disclosure } from './uiPrimitives';
 import { uiGrammar } from './uiGrammar';
 import {
   WeatherAttributionData,
@@ -179,7 +179,6 @@ export function WeatherAttribution({
               }}
             />
           )}
-          <Text style={copy}>{credit.legalAttributionText}</Text>
           <ActionButton
             label="Sources et attribution Apple"
             disabled={blocked || !foreground}
@@ -190,6 +189,9 @@ export function WeatherAttribution({
                 });
             }}
           />
+          <Disclosure title="Mentions légales" plain>
+            <Text style={copy}>{credit.legalAttributionText}</Text>
+          </Disclosure>
         </>
       )}
       {status === 'loading' && (

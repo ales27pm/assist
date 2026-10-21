@@ -211,8 +211,54 @@ struct RuntimeMonitorChecks {
         try await predictionChecks(root: temporary)
         try await toolPassChecks(root: temporary)
         try await thoughtTreeChecks(root: temporary)
+        try await thoughtTreeDiagnosticChecks(root: temporary)
         try await abruptProcessRecovery(root: temporary)
         print("PASS: runtime monitor finite metrics, CPU units, decode timing, bounded histories, privacy, context, partial diagnostics, sampling and terminal shutdown")
+    }
+
+    static func thoughtTreeDiagnosticChecks(root: URL) async throws {
+        for (phase, reason) in [("roots", "json"), ("roots", "shape"), ("roots", "boundary"), ("roots", "stop"),
+                                ("roots", "length"), ("leaves", "prompt"), ("leaves", "budget"), ("unknown", "unknown")] {
+            var state = AssistRuntimeMonitorState()
+            _ = state.recordThoughtTreeStart(requestId: "request-321-0", at: 0)
+            check(state.recordThoughtTreeDiagnostic(requestId: "request-321-0", phase: phase, reason: reason, at: 1),
+                  "A known preparation failure keeps its closed phase and reason.")
+            check(state.events.values.last?.code == "THOUGHT_TREE_\(phase.uppercased())_\(reason.uppercased())",
+                  "Invalid roots, token50, length and leaves preparation are distinguishable without raw output.")
+            check(!state.recordThoughtTreeDiagnostic(requestId: "request-321-0", phase: "roots", reason: "json", at: 2),
+                  "A second callback cannot overwrite or duplicate the first classification.")
+            _ = state.recordThoughtTreeEnd(requestId: "request-321-0", outcome: .rejected, at: 3)
+            check(!state.recordThoughtTreeDiagnostic(requestId: "request-321-0", phase: phase, reason: reason, at: 4),
+                  "A retired preparation accepts no late diagnostic.")
+        }
+        var privateState = AssistRuntimeMonitorState()
+        _ = privateState.recordThoughtTreeStart(requestId: "request-321-0", at: 0)
+        for (id, phase, reason, time) in [("request-321-1", "roots", "json", 1.0),
+                                         ("request-321-0", "PRIVATE_ROOT_PLAN", "json", 1.0),
+                                         ("request-321-0", "roots", "/private/document", 1.0),
+                                         ("request-321-0", "roots", "json", -.infinity)] {
+            check(!privateState.recordThoughtTreeDiagnostic(requestId: id, phase: phase, reason: reason, at: time),
+                  "Stale identities, arbitrary text and invalid time cannot enter the event vocabulary.")
+        }
+        check(privateState.events.count == 1, "Invalid diagnostics do not append a substitute event.")
+        let directory = root.appendingPathComponent("thought-tree-rejection")
+        let monitor = AssistRuntimeMonitor(directory: directory)
+        await monitor.start()
+        await monitor.recordThoughtTreeStart(requestId: "request-321-0")
+        await monitor.recordThoughtTreeDiagnostic(requestId: "request-321-0", phase: "roots", reason: "boundary")
+        await monitor.recordThoughtTreeEnd(requestId: "request-321-0", outcome: .rejected)
+        await monitor.shutdown()
+        let snapshot = try await report(monitor)
+        let codes = (snapshot["events"] as! [[String: Any]]).compactMap { $0["code"] as? String }
+        check(codes.contains("THOUGHT_TREE_ROOTS_BOUNDARY") && codes.contains("THOUGHT_TREE_REJECTED"),
+              "The actor exports cause and overall rejection separately in the existing event envelope.")
+        let restarted = AssistRuntimeMonitor(directory: directory)
+        await restarted.start()
+        let previous = try JSONSerialization.jsonObject(with: Data(try await restarted.previousSnapshotJSON().utf8)) as! [String: Any]
+        check((previous["events"] as! [[String: Any]]).contains { $0["code"] as? String == "THOUGHT_TREE_ROOTS_BOUNDARY" },
+              "Closed rejection diagnostics survive the existing archive whitelist and recovery.")
+        await restarted.shutdown()
+        print("PASS: closed roots/leaves rejection diagnostics, EOS-boundary versus JSON/length/prompt, stale/duplicate/privacy guards and archive recovery")
     }
 
     static func thoughtTreeChecks(root: URL) async throws {

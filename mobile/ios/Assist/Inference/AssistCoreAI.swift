@@ -33,7 +33,13 @@ final class AssistCoreAI: NSObject {
         // END CORE ML MONITOR OBSERVER
         // Monitoring starts with the native engine, not with the diagnostics
         // screen. Model loading and blocked JS must not suspend sampling.
-        Task { @concurrent in await monitor.start() }
+        Task { @concurrent in
+            await monitor.start()
+            await AssistDebugDiagnostics.shared.start()
+        }
+        Task { @MainActor in
+            if #available(iOS 27.0, *) { AssistSystemDiagnostics.start() }
+        }
     }
 
     @objc(monitoringSnapshot:)
@@ -494,6 +500,7 @@ private actor AssistInferenceCoordinator {
         operationInFlight = true
         phase = .loading
         await monitor.transition(phase: phase.rawValue, code: "MODEL_LOAD_STARTED")
+        await AssistDebugDiagnostics.shared.record(category: .engine, stage: .modelLoad, outcome: .began)
         lastError = nil
         let loadClock = ContinuousClock()
         let loadStarted = loadClock.now
@@ -570,6 +577,8 @@ private actor AssistInferenceCoordinator {
             afterLoadFootprint = Self.physicalFootprint()
             await monitor.setContextCapacity(capacity)
             await monitor.transition(phase: phase.rawValue, code: "MODEL_LOAD_COMPLETED")
+            await AssistDebugDiagnostics.shared.record(category: .engine, stage: .modelLoad, outcome: .completed,
+                metrics: [.durationMs: loadElapsedMs ?? 0, .contextCapacity: Double(capacity)])
             return try statusJSON()
         } catch {
             clearResidentIdentity()
@@ -579,6 +588,8 @@ private actor AssistInferenceCoordinator {
             afterLoadFootprint = Self.physicalFootprint()
             await monitor.setContextCapacity(nil)
             await monitor.transition(phase: phase.rawValue, code: "MODEL_LOAD_FAILED", severity: "critical")
+            await AssistDebugDiagnostics.shared.record(category: .engine, stage: .modelLoad, outcome: .failed,
+                reason: .engine, metrics: [.durationMs: loadElapsedMs ?? 0])
             throw error
         }
     }
@@ -686,6 +697,8 @@ private actor AssistInferenceCoordinator {
             operationInFlight = false
             phase = cancellationWaiters > 0 ? .cancelling : (engine == nil ? .failed : .ready)
         }
+        await AssistDebugDiagnostics.shared.record(category: .engine, stage: .admission, outcome: .completed,
+            requestId: request.requestId, metrics: [.messageCount: Double(request.messages.count)])
         guard let engine, let tokenizer, let agentChatTemplate else { throw AssistInferenceError.notLoaded }
         let capacity = capacity
         let modelName = modelName
@@ -825,6 +838,8 @@ private actor AssistInferenceCoordinator {
             operationInFlight = false
             phase = cancellationWaiters > 0 ? .cancelling : (engine == nil ? .failed : .ready)
         }
+        await AssistDebugDiagnostics.shared.record(category: .engine, stage: .admission, outcome: .completed,
+            requestId: request.requestId, metrics: [.messageCount: Double(request.messages.count)])
         guard let engine, let tokenizer else { throw AssistInferenceError.notLoaded }
         guard let agentChatTemplate else {
             throw AssistInferenceError.invalid("Le template local n’est pas qualifié pour les outils. Aucun accès exécuté.")
@@ -1000,6 +1015,8 @@ private actor AssistInferenceCoordinator {
             operationInFlight = false
             phase = cancellationWaiters > 0 ? .cancelling : (engine == nil ? .failed : .ready)
         }
+        await AssistDebugDiagnostics.shared.record(category: .engine, stage: .admission, outcome: .completed,
+            requestId: request.requestId, metrics: [.messageCount: Double(request.messages.count)])
         guard let engine, let tokenizer else { throw AssistInferenceError.notLoaded }
         guard let agentChatTemplate else {
             throw AssistInferenceError.invalid("Le template local n’est pas qualifié pour cette consultation. Aucun calendrier lu.")
@@ -1177,6 +1194,8 @@ private actor AssistInferenceCoordinator {
             operationInFlight = false
             phase = cancellationWaiters > 0 ? .cancelling : (engine == nil ? .failed : .ready)
         }
+        await AssistDebugDiagnostics.shared.record(category: .engine, stage: .admission, outcome: .completed,
+            requestId: request.requestId, metrics: [.messageCount: Double(request.messages.count)])
         guard let engine, let tokenizer else { throw AssistInferenceError.notLoaded }
         guard let agentChatTemplate else {
             throw AssistInferenceError.invalid("Le template local n’est pas qualifié pour la préparation de la réponse.")
@@ -1271,25 +1290,61 @@ private actor AssistInferenceCoordinator {
         let privateRequest = AssistGenerationRequest(requestId: request.requestId,
             messages: request.messages, temperature: 0, maxTokens: nil)
         await monitor.recordThoughtTreeStart(requestId: request.requestId)
+        // Ownership was reserved before entering this helper. Observability must
+        // never add a suspension between the admission guard and busy latch.
+        await AssistDebugDiagnostics.shared.record(category: .context, stage: .context, outcome: .completed,
+            requestId: request.requestId, metrics: [.messageCount: Double(baseMessages.count),
+                .inputBytes: Double(baseMessages.reduce(0) { $0 + (($1["content"] as? String)?.utf8.count ?? 0) }),
+                .contextCapacity: Double(capacity)])
         do {
             let selection = try await AssistThoughtTree.run(baseMessages: baseMessages, tools: tools, scope: scope,
                 deadline: deadline, model: { messages, requestedBudget in
+                    let preparationPhase: AssistThoughtTree.PreparationPhase =
+                        requestedBudget == AssistThoughtTree.rootTokenBudget ? .roots : .leaves
                     try Task.checkCancellation()
                     try admission.check()
                     guard ContinuousClock.now < deadline else {
-                        throw AssistInferenceError.invalid("Le délai de préparation locale est atteint. Aucun accès exécuté.")
+                        throw AssistThoughtTree.Rejection(phase: preparationPhase, reason: .deadline,
+                            cause: AssistThoughtTree.Failure.deadline)
                     }
-                    let prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
-                        let prompt = try tokenizer.applyChatTemplate(messages: messages,
-                            chatTemplate: .literal(chatTemplate), addGenerationPrompt: true,
-                            truncation: false, maxLength: nil, tools: [], additionalContext: ["enable_thinking": false])
-                        guard prompt.allSatisfy({ $0 >= 0 && $0 <= Int(Int32.max) }) else {
-                            throw AssistInferenceError.invalid("Jeton de préparation hors de la plage native.")
+                    let preparationStarted = ContinuousClock.now
+                    await AssistDebugDiagnostics.shared.record(category: .context, stage: .tokenization, outcome: .began,
+                        requestId: request.requestId, metrics: [.passIndex: requestedBudget == AssistThoughtTree.rootTokenBudget ? 0 : 1,
+                            .messageCount: Double(messages.count)])
+                    let prompt: [Int]
+                    do {
+                        prompt = try await AssistInferencePreparation.perform(check: { try admission.check() }) {
+                            let prompt = try tokenizer.applyChatTemplate(messages: messages,
+                                chatTemplate: .literal(chatTemplate), addGenerationPrompt: true,
+                                truncation: false, maxLength: nil, tools: [], additionalContext: ["enable_thinking": false])
+                            guard prompt.allSatisfy({ $0 >= 0 && $0 <= Int(Int32.max) }) else {
+                                throw AssistInferenceError.invalid("Jeton de préparation hors de la plage native.")
+                            }
+                            return prompt
                         }
-                        return prompt
+                    } catch is CancellationError {
+                        await AssistDebugDiagnostics.shared.record(category: .context, stage: .tokenization, outcome: .cancelled,
+                            requestId: request.requestId, reason: .cancelRequested)
+                        throw CancellationError()
+                    } catch {
+                        await AssistDebugDiagnostics.shared.record(category: .context, stage: .tokenization, outcome: .failed,
+                            requestId: request.requestId, reason: .prompt)
+                        throw AssistThoughtTree.Rejection(phase: preparationPhase, reason: .prompt, cause: error)
                     }
-                    let budget = try AssistInferencePolicy.outputBudget(promptTokens: prompt.count,
-                        capacity: capacity, requested: requestedBudget)
+                    let budget: Int
+                    do {
+                        budget = try AssistInferencePolicy.outputBudget(promptTokens: prompt.count,
+                            capacity: capacity, requested: requestedBudget)
+                    } catch {
+                        await AssistDebugDiagnostics.shared.record(category: .context, stage: .context, outcome: .rejected,
+                            requestId: request.requestId, reason: .budget,
+                            metrics: [.promptTokens: Double(prompt.count), .contextCapacity: Double(capacity)])
+                        throw AssistThoughtTree.Rejection(phase: preparationPhase, reason: .budget, cause: error)
+                    }
+                    await AssistDebugDiagnostics.shared.record(category: .context, stage: .tokenization, outcome: .completed,
+                        requestId: request.requestId, metrics: [.durationMs: Self.milliseconds(preparationStarted.duration(to: .now)),
+                            .promptTokens: Double(prompt.count), .budgetTokens: Double(budget),
+                            .contextCapacity: Double(capacity)])
                     // These two fixed suffixes identify only the planning stage,
                     // never its intent, branches, tools, conditions or text.
                     let passID = String(request.requestId.prefix(100))
@@ -1317,21 +1372,45 @@ private actor AssistInferenceCoordinator {
                     return AssistThoughtTree.ModelTurn(rawText: decoded.result.text,
                         completedEOS: decoded.result.finishReason == "eos"
                             && [Int32(1), Int32(106)].contains(decoded.stoppedToken ?? -1),
-                        stoppedAtToolResponse: decoded.stoppedToken == 50)
+                        stoppedAtToolResponse: decoded.stoppedToken == 50,
+                        termination: .observed(finishReason: decoded.result.finishReason, stoppedToken: decoded.stoppedToken))
                 }, isCancelled: { admission.isCancelled }, cancelModel: { try? await engine.cancel() })
             await monitor.recordThoughtTreeEnd(requestId: request.requestId, outcome: .ready)
+            await AssistDebugDiagnostics.shared.record(category: .planning, stage: .validation, outcome: .completed,
+                requestId: request.requestId, metrics: [.itemCount: 2])
             return selection
         } catch is CancellationError {
             await monitor.recordThoughtTreeEnd(requestId: request.requestId, outcome: .cancelled)
+            await AssistDebugDiagnostics.shared.record(category: .planning, stage: .cancellation, outcome: .cancelled,
+                requestId: request.requestId, reason: .cancelRequested)
             await monitor.transition(phase: "ready", code: "GENERATION_REJECTED", severity: "warning")
             throw CancellationError()
-        } catch let failure as AssistAgentEngineFailure {
-            await monitor.recordThoughtTreeEnd(requestId: request.requestId, outcome: .error)
-            throw failure
         } catch {
-            await monitor.recordThoughtTreeEnd(requestId: request.requestId, outcome: .rejected)
+            let rejection = AssistThoughtTree.Rejection.wrapping(error, phase: .unknown)
+            let engineFailure = rejection.cause as? AssistAgentEngineFailure
+            let reason: AssistThoughtTree.RejectionReason = engineFailure == nil ? rejection.reason : .engine
+            await monitor.recordThoughtTreeDiagnostic(requestId: request.requestId,
+                phase: rejection.phase.rawValue, reason: reason.rawValue)
+            var details: [AssistDebugDiagnostics.Metric: Double] = [:]
+            if let value = rejection.validation?.branchIndex { details[.branchIndex] = Double(value) }
+            if let value = rejection.validation?.fieldBytes { details[.fieldBytes] = Double(value) }
+            if let value = rejection.validation?.limitBytes { details[.limitBytes] = Double(value) }
+            if let value = rejection.validation?.itemCount { details[.itemCount] = Double(value) }
+            await AssistDebugDiagnostics.shared.record(category: .planning,
+                stage: rejection.phase == .roots ? .roots : (rejection.phase == .leaves ? .leaves : .validation),
+                outcome: engineFailure == nil ? .rejected : .failed, requestId: request.requestId,
+                reason: AssistDebugDiagnostics.Reason(rawValue: rejection.validation?.reason.rawValue ?? reason.rawValue) ?? .unknown,
+                field: rejection.validation.flatMap { AssistDebugDiagnostics.Field(rawValue: $0.field.rawValue) }, metrics: details)
+            await monitor.recordThoughtTreeEnd(requestId: request.requestId,
+                outcome: engineFailure == nil ? .rejected : .error)
+            if let engineFailure {
+                // Keep the SDK cause and the existing engine-owner cleanup and
+                // lastError diagnostics. This is not a policy rejection.
+                throw engineFailure
+            }
+            let publicError = AssistThoughtTree.PreparationError(phase: rejection.phase, reason: reason)
             await monitor.transition(phase: "ready", code: "GENERATION_REJECTED", severity: "warning")
-            throw error
+            throw publicError
         }
     }
 
@@ -1395,7 +1474,19 @@ private actor AssistInferenceCoordinator {
         var processedTokensAtGenerationStart = processedTokensBefore
         var diagnosticSteps: [AssistLogitStep] = []
         let monitoringID = monitorRequestId ?? request.requestId
+        let debugStage: AssistDebugDiagnostics.Stage = monitorRequestId?.hasSuffix(":tree-roots") == true ? .roots
+            : (monitorRequestId?.hasSuffix(":tree-leaves") == true ? .leaves : .generation)
+        let debugCategory: AssistDebugDiagnostics.Category = debugStage == .generation ? .engine : .planning
         do {
+            try Task.checkCancellation()
+            if let deadline, clock.now >= deadline {
+                throw AssistInferenceError.invalid("Le budget de temps de la consultation locale est atteint.")
+            }
+            await AssistDebugDiagnostics.shared.record(category: debugCategory, stage: debugStage, outcome: .began,
+                requestId: request.requestId, metrics: [.promptTokens: Double(prompt.count),
+                    .budgetTokens: Double(budget), .contextCapacity: Double(capacity)])
+            // Recording is an await too: an expired/cancelled operation must
+            // not submit compute after that observation resumes.
             try Task.checkCancellation()
             if let deadline, clock.now >= deadline {
                 throw AssistInferenceError.invalid("Le budget de temps de la consultation locale est atteint.")
@@ -1451,13 +1542,49 @@ private actor AssistInferenceCoordinator {
             try await engine.cancel()
         } catch is CancellationError {
             finishReason = "cancelled"
-            try await engine.cancel()
+            do { try await engine.cancel() }
+            catch {
+                await AssistDebugDiagnostics.shared.record(category: debugCategory, stage: .cancellation, outcome: .failed,
+                    requestId: request.requestId, reason: .engine)
+                throw error
+            }
         } catch {
             try? await engine.cancel()
+            let failureReason: AssistDebugDiagnostics.Reason
+            if error is AssistInferenceError, let deadline, clock.now >= deadline { failureReason = .deadline }
+            else if let policy = error as? AssistThoughtTree.Failure {
+                if case .firstActionMismatch = policy { failureReason = .branch }
+                else { failureReason = .text }
+            } else { failureReason = error is AssistInferenceError ? .unknown : .engine }
+            await AssistDebugDiagnostics.shared.record(category: debugCategory, stage: debugStage, outcome: .failed,
+                requestId: request.requestId, reason: failureReason,
+                metrics: [.durationMs: Self.milliseconds(started.duration(to: clock.now)), .generatedTokens: Double(generated.count)])
             throw error
         }
         // Always emit the final whole-prefix snapshot, including cancellation.
         text = generated.snapshot { tokenizer.decode(tokens: $0) }
+        let stopReason: AssistDebugDiagnostics.Reason
+        if finishReason == "cancelled" { stopReason = .cancelRequested }
+        else {
+            switch stoppedToken {
+            case 1: stopReason = .eos1
+            case 106: stopReason = .turn106
+            case 50: stopReason = .tool50
+            case .some: stopReason = .otherStop
+            case nil: stopReason = .noStop
+            }
+        }
+        await AssistDebugDiagnostics.shared.record(category: debugCategory, stage: debugStage,
+            outcome: finishReason == "cancelled" ? .cancelled : .completed,
+            requestId: request.requestId, reason: stopReason, field: .protocol,
+            metrics: [.durationMs: Self.milliseconds(started.duration(to: clock.now)),
+                .promptTokens: Double(prompt.count), .generatedTokens: Double(generated.count),
+                .outputBytes: Double(text.utf8.count), .budgetTokens: Double(budget), .contextCapacity: Double(capacity)])
+        if finishReason == "length" {
+            await AssistDebugDiagnostics.shared.record(category: debugCategory, stage: debugStage, outcome: .rejected,
+                requestId: request.requestId, reason: .length, field: .output,
+                metrics: [.generatedTokens: Double(generated.count), .budgetTokens: Double(budget)])
+        }
         if emitPublicProgress, try publicSnapshotFilter?(text) ?? true {
             onProgress(try AssistJSON.encode(AssistProgress(
                 requestId: request.requestId, text: text, generatedTokens: generated.count,
@@ -1504,10 +1631,15 @@ private actor AssistInferenceCoordinator {
             if cancellationWaiters == 0, !operationInFlight { phase = engine == nil ? .failed : .ready }
         }
         task.cancel()
+        let cancellationStarted = ContinuousClock.now
+        await AssistDebugDiagnostics.shared.record(category: .engine, stage: .cancellation, outcome: .began,
+            reason: .cancelRequested)
         await monitor.transition(phase: phase.rawValue, code: "CANCELLATION_REQUESTED")
         try await engine?.cancel()
         // Acknowledgement means the operation has stopped, not merely that a flag was set.
         _ = await task.result
+        await AssistDebugDiagnostics.shared.record(category: .engine, stage: .cancellation, outcome: .completed,
+            metrics: [.durationMs: Self.milliseconds(cancellationStarted.duration(to: .now))])
         await monitor.transition(phase: engine == nil ? "failed" : "ready", code: "PHASE_CHANGED")
         return try AssistJSON.encode(AssistStatus(
             phase: engine == nil ? .failed : .ready,

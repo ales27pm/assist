@@ -64,6 +64,38 @@ private enum AssistToolTransactionStatus: String, Sendable {
     case cancelled
 }
 
+/// Content-free observation only. The request key is RAM correlation data;
+/// the installed integration must never persist it verbatim. No arguments,
+/// previews, permissions, confirmation tokens, receipts or errors cross here.
+final class AssistToolTransactionDiagnosticsRelay: @unchecked Sendable {
+    typealias Observer = @Sendable (_ tool: AssistToolName, _ status: String, _ requestId: String) -> Void
+    static let shared = AssistToolTransactionDiagnosticsRelay()
+
+    private let lock = NSLock()
+    // The lock protects every access to this sole mutable field. Observer is
+    // Sendable, and invocation happens after unlocking, permitting replacement
+    // or removal from inside a callback without deadlock.
+    private var observer: Observer?
+
+    private init() {}
+
+    func install(_ observer: Observer?) {
+        lock.lock()
+        self.observer = observer
+        lock.unlock()
+    }
+
+    /// Only this file can emit. Status comes from the closed transaction enum.
+    /// An already copied observer may finish after replacement/removal. Keep
+    /// callbacks bounded and nonblocking; the relay owns no task or event queue.
+    fileprivate func emit(tool: AssistToolName, status: String, requestId: String) {
+        lock.lock()
+        let callback = observer
+        lock.unlock()
+        callback?(tool, status, requestId)
+    }
+}
+
 private struct AssistToolReceipt: Encodable, Equatable, Sendable {
     let operationId: String
     let tool: String
@@ -1159,6 +1191,7 @@ final class AssistToolTransactionCoordinator {
         )
         guard let data = try? JSONEncoder().encode(envelope), let json = String(data: data, encoding: .utf8) else { return }
         onActivity(json)
+        AssistToolTransactionDiagnosticsRelay.shared.emit(tool: call.name, status: status.rawValue, requestId: requestId)
     }
 
     private static func title(for name: AssistToolName) -> String {

@@ -18,6 +18,10 @@ jest.mock('../specs/NativeAssist', () => ({
     cancelWeatherAttribution: jest.fn(),
     cancelApplePlaces: jest.fn(),
     generate: jest.fn(),
+    speak: jest.fn(),
+    beginSpeech: jest.fn(),
+    enqueueSpeech: jest.fn(),
+    finishSpeech: jest.fn(),
   },
 }));
 const native = jest.mocked(NativeAssist!);
@@ -76,7 +80,7 @@ afterEach(() => {
   Object.defineProperty(AppState, 'currentState', original);
   jest.useRealTimers();
 });
-test('official native PNG is displayed at its original aspect ratio, with complete legal text and source link', async () => {
+test('official mark and source link remain visible while complete legal text opens and closes independently of image readiness', async () => {
   const ready = jest.fn();
   await renderAsync(
     <WeatherAttribution attribution={credit} onReady={ready} />,
@@ -88,16 +92,45 @@ test('official native PNG is displayed at its original aspect ratio, with comple
   expect(image).toHaveProp('source', { uri: png });
   expect(image).toHaveStyle({ width: 160, height: (160 * 42) / 231 });
   expect(ready).toHaveBeenLastCalledWith('loading');
+  expect(screen.queryByText(credit.legalAttributionText)).not.toBeOnTheScreen();
+  const legal = screen.getByRole('button', { name: 'Mentions légales' });
+  const sources = screen.getByRole('button', {
+    name: 'Sources et attribution Apple',
+  });
+  expect(legal).toBeCollapsed();
+  expect(sources).toBeOnTheScreen();
+  const readinessCalls = ready.mock.calls.length;
+  const user = userEvent.setup();
+  await user.press(legal);
+  expect(legal).toBeExpanded();
+  expect(screen.getByText(credit.legalAttributionText)).toHaveTextContent(
+    credit.legalAttributionText,
+    { exact: true, normalizer: value => value },
+  );
+  expect(image).toBeOnTheScreen();
+  expect(sources).toBeOnTheScreen();
+  expect(ready).toHaveBeenCalledTimes(readinessCalls);
+  expect(ready).not.toHaveBeenCalledWith('ready');
+  await user.press(legal);
+  expect(legal).toBeCollapsed();
+  expect(screen.queryByText(credit.legalAttributionText)).not.toBeOnTheScreen();
+  expect(ready).toHaveBeenCalledTimes(readinessCalls);
   await fireEventAsync(image, 'load');
   expect(ready).toHaveBeenLastCalledWith('ready');
-  expect(screen.getByText(credit.legalAttributionText)).toBeOnTheScreen();
-  await userEvent
-    .setup()
-    .press(
-      screen.getByRole('button', { name: 'Sources et attribution Apple' }),
-    );
+  expect(screen.queryByText(credit.legalAttributionText)).not.toBeOnTheScreen();
+  const readyCalls = ready.mock.calls.length;
+  await user.press(legal);
+  await user.press(legal);
+  expect(ready).toHaveBeenCalledTimes(readyCalls);
+  expect(native.renderWeatherAttribution).toHaveBeenCalledTimes(1);
+  expect(native.cancelWeatherAttribution).not.toHaveBeenCalled();
+  await user.press(sources);
   expect(Linking.openURL).toHaveBeenCalledWith(credit.legalPageURL);
   expect(native.generate).not.toHaveBeenCalled();
+  expect(native.speak).not.toHaveBeenCalled();
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  expect(native.enqueueSpeech).not.toHaveBeenCalled();
+  expect(native.finishSpeech).not.toHaveBeenCalled();
 });
 test('native or final Image failure never declares the branding ready', async () => {
   const ready = jest.fn();

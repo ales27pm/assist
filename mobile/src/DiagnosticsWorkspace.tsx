@@ -4,6 +4,7 @@ import { useAppearance } from './appearance';
 import { ModelAssetProbePanel } from './ModelAssetProbePanel';
 import { ModelLoadProbePanel } from './ModelLoadProbePanel';
 import { MonitoringPanel } from './MonitoringPanel';
+import { AdvancedDiagnosticsPanel } from './AdvancedDiagnosticsPanel';
 import { SpecializationRepairPanel } from './SpecializationRepairPanel';
 import { Disclosure, ScreenHeading } from './uiPrimitives';
 import { uiGrammar } from './uiGrammar';
@@ -53,6 +54,13 @@ export function DiagnosticsWorkspace({
           plain
         >
           {active && <MonitoringPanel />}
+        </Disclosure>
+        <Disclosure
+          title="Diagnostic avancé"
+          description="Configurer le journal local, analyser ses constats et le partager."
+          plain
+        >
+          {active && <AdvancedDiagnosticsPanel />}
         </Disclosure>
         <Disclosure
           title="Vérifier les fichiers"

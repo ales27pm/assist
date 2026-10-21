@@ -18,7 +18,7 @@ const products = [
 ];
 function exactGroups(value) { assert.deepEqual(value, [group], 'App Group differs from the compiled closed contract'); }
 
-export function validateCapabilityEvidence(evidence, {buildNumber = '30', now = new Date()} = {}) {
+export function validateCapabilityEvidence(evidence, {buildNumber = '31', now = new Date()} = {}) {
   assert.ok(evidence && Array.isArray(evidence.products), 'Missing signed product evidence');
   assert.equal(evidence.products.length, products.length, 'Both signed extensions are required');
   assert.ok(Number.isFinite(now.getTime()), 'Invalid verification clock');

@@ -80,6 +80,23 @@ class AgentWiring(unittest.TestCase):
         for forbidden in ['broker.perform', 'performResearch', 'readCalendarForAgent', 'CoreAIRunner(']:
             self.assertNotIn(forbidden, helper)
 
+    def test_preparation_error_code_is_only_emitted_before_effects_and_keeps_engine_faults(self):
+        source = (ROOT / 'mobile/ios/Assist/Inference/AssistCoreAI.swift').read_text()
+        before, helper = source.split('private func prepareThoughtTree(', 1)
+        helper, after = helper.split("/// Apple's output", 1)
+        self.assertNotIn('AssistThoughtTree.PreparationError(', before + after)
+        self.assertEqual(helper.count('AssistThoughtTree.PreparationError('), 1)
+        self.assertIn('if let engineFailure {', helper)
+        self.assertIn('throw engineFailure', helper)
+        self.assertLess(helper.index('throw engineFailure'), helper.index('AssistThoughtTree.PreparationError('))
+        self.assertNotIn('AssistAgentEngineFailure(cause: publicError)', helper)
+        self.assertIn('termination: .observed(finishReason: decoded.result.finishReason, stoppedToken: decoded.stoppedToken)', helper)
+        self.assertLess(helper.index('recordThoughtTreeDiagnostic('), helper.index('outcome: engineFailure'))
+        self.assertIn('reason: .prompt, cause: error', helper)
+        self.assertIn('reason: .budget, cause: error', helper)
+        research = before.split('private func runResearchGeneration(', 1)[1].split('private func startDeviceToolGeneration', 1)[0]
+        self.assertLess(research.index('prepareThoughtTree('), research.index('service.beginResearch('))
+
     def test_every_model_stream_uses_the_owned_active_deadline(self):
         source = (ROOT / 'mobile/ios/Assist/Inference/AssistCoreAI.swift').read_text()
         wrapper = source.split('private static func consumeGeneration(', 1)[1].split(

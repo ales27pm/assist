@@ -42,6 +42,23 @@ struct AssistRuntimeSample: Codable, Sendable {
     let requestId: String?
 }
 
+/// Optional synchronous metadata observer. Keeping the seam here preserves the
+/// standalone monitor harness and never makes sampling await the debug journal.
+enum AssistRuntimeDiagnosticEvent: Sendable {
+    case sample(AssistRuntimeSample), voice(String), lifecycle(String), pressure(String), thermal(String)
+}
+final class AssistRuntimeDiagnosticRelay: @unchecked Sendable {
+    static let shared = AssistRuntimeDiagnosticRelay()
+    private let lock = NSLock()
+    private var observer: (@Sendable (AssistRuntimeDiagnosticEvent) -> Void)?
+    func install(_ observer: @escaping @Sendable (AssistRuntimeDiagnosticEvent) -> Void) {
+        lock.lock(); self.observer = observer; lock.unlock()
+    }
+    func emit(_ event: AssistRuntimeDiagnosticEvent) {
+        lock.lock(); let callback = observer; lock.unlock(); callback?(event)
+    }
+}
+
 struct AssistRuntimeEvent: Codable, Sendable {
     let sequence: Int
     let elapsedMs: Double
@@ -135,6 +152,21 @@ enum AssistRuntimeThoughtTreeOutcome: String, Sendable, CaseIterable {
     var code: String { "THOUGHT_TREE_" + rawValue.uppercased() }
 }
 
+/// A closed diagnostic vocabulary independent of the model/controller module.
+/// Unknown classifications stay UNKNOWN; arbitrary strings never become events.
+enum AssistRuntimeThoughtTreeDiagnostic {
+    private static let phases = ["roots", "leaves", "unknown"]
+    private static let reasons = ["context", "prompt", "budget", "json", "shape", "branch", "text",
+                                  "distinctness", "unsupported", "boundary", "stop", "length", "deadline", "engine", "unknown"]
+    static let codes = Set(phases.flatMap { phase in reasons.map { reason in
+        "THOUGHT_TREE_\(phase.uppercased())_\(reason.uppercased())"
+    } })
+    static func code(phase: String, reason: String) -> String? {
+        guard phases.contains(phase), reasons.contains(reason) else { return nil }
+        return "THOUGHT_TREE_\(phase.uppercased())_\(reason.uppercased())"
+    }
+}
+
 private struct AssistRuntimeThoughtTree: Sendable {
     let key: String
     let requestId: String
@@ -144,6 +176,7 @@ private struct AssistRuntimeThoughtTree: Sendable {
     var roots: AssistRuntimeGenerationSummary?
     var leaves: AssistRuntimeGenerationSummary?
     var invalid = false
+    var diagnosticRecorded = false
 
     private func passIndex(_ key: String) -> Int? {
         let prefix = String(self.key.prefix(100))
@@ -336,6 +369,7 @@ struct AssistRuntimeMonitorState: Sendable {
         "PHASE_CHANGED", "VOICE_STAGE_CHANGED",
     ]).union(AssistRuntimeToolPass.codes)
         .union(["THOUGHT_TREE_STARTED"] + AssistRuntimeThoughtTreeOutcome.allCases.map(\.code))
+        .union(AssistRuntimeThoughtTreeDiagnostic.codes)
     private static let thermalStates = Set(["nominal", "fair", "serious", "critical", "unknown"])
     private static let pressureStates = Set(["normal", "warning", "critical", "unknown"])
     private var phase = "idle"
@@ -516,6 +550,18 @@ struct AssistRuntimeMonitorState: Sendable {
               AssistRuntimeMetrics.duration(nowMs) != nil else { return false }
         thoughtTree = AssistRuntimeThoughtTree(key: requestId, requestId: safe, startedAtMs: nowMs)
         event(code: "THOUGHT_TREE_STARTED", severity: "info", at: nowMs)
+        return true
+    }
+
+    @discardableResult
+    mutating func recordThoughtTreeDiagnostic(requestId: String, phase: String, reason: String,
+                                             at nowMs: Double) -> Bool {
+        guard var tree = thoughtTree, tree.key == requestId, !tree.diagnosticRecorded,
+              AssistRuntimeMetrics.duration(nowMs) != nil, nowMs >= tree.startedAtMs,
+              let code = AssistRuntimeThoughtTreeDiagnostic.code(phase: phase, reason: reason) else { return false }
+        tree.diagnosticRecorded = true
+        thoughtTree = tree
+        event(code: code, severity: "warning", at: nowMs)
         return true
     }
 
@@ -818,6 +864,7 @@ actor AssistRuntimeMonitor {
     private var predictionVoiceTurn = 0
     private var predictionFirstBegins = Set<String>()
     private var predictions: [String: AssistRuntimePrediction] = [:]
+    private var lastDebugSampleMs: Double?
 
     init(directory: URL? = nil, sampleInterval: Duration = .seconds(1), checkpointInterval: Duration = .seconds(5),
          clock: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }) {
@@ -859,6 +906,7 @@ actor AssistRuntimeMonitor {
             predictionVoiceTurn = min(Int(Int32.max), predictionVoiceTurn + 1)
             predictionFirstBegins.removeAll(keepingCapacity: true)
         }
+        AssistRuntimeDiagnosticRelay.shared.emit(.voice(value))
         checkpointEvent()
     }
 
@@ -945,6 +993,13 @@ actor AssistRuntimeMonitor {
         checkpointEvent()
     }
 
+    /// Closed phase/reason only; no plan, raw JSON, tool name or error text.
+    func recordThoughtTreeDiagnostic(requestId: String, phase: String, reason: String) {
+        guard running(), state.recordThoughtTreeDiagnostic(requestId: requestId, phase: phase, reason: reason,
+                                                          at: elapsed()) else { return }
+        checkpointEvent()
+    }
+
     /// Await after controller validation, or after cancellation has drained.
     /// No branch content, model output, raw error or user-visible TTFT is taken.
     func recordThoughtTreeEnd(requestId: String, outcome: AssistRuntimeThoughtTreeOutcome) {
@@ -1012,6 +1067,10 @@ actor AssistRuntimeMonitor {
         guard stoppedAtMs == nil, foreground else { return false }
         let now = elapsed()
         if state.shouldSample(at: now) { state.sample(Self.readSystem(), at: now) }
+        if now - (lastDebugSampleMs ?? -30_000) >= 30_000 {
+            lastDebugSampleMs = now
+            AssistRuntimeDiagnosticRelay.shared.emit(.sample(state.current(at: now)))
+        }
         let since = now - (lastCheckpointAttemptMs ?? -checkpointIntervalMs)
         if since >= checkpointIntervalMs || (pendingCheckpoint && since >= min(1_000, checkpointIntervalMs)) {
             checkpoint(at: now)
@@ -1135,6 +1194,7 @@ actor AssistRuntimeMonitor {
         state.event(code: code, severity: "info", at: elapsed(observed))
         guard lastLifecycleObserved.map({ observed >= $0 }) ?? true else { checkpointEvent(); return }
         lastLifecycleObserved = observed
+        AssistRuntimeDiagnosticRelay.shared.emit(.lifecycle(code))
         if code == "APP_BACKGROUND" {
             foreground = false
             sampler?.cancel(); sampler = nil
@@ -1148,13 +1208,18 @@ actor AssistRuntimeMonitor {
 
     func memoryPressureChanged(_ level: String, observed: ContinuousClock.Instant = ContinuousClock.now) {
         guard stoppedAtMs == nil else { return }
+        if ["normal", "warning", "critical"].contains(level) {
+            AssistRuntimeDiagnosticRelay.shared.emit(.pressure(level))
+        }
         state.memoryPressure(level, at: elapsed(observed))
         checkpointEvent()
     }
 
     private func thermalChanged(observed: ContinuousClock.Instant) {
         guard stoppedAtMs == nil else { return }
-        state.thermal(Self.thermalState(), at: elapsed(observed))
+        let thermal = Self.thermalState()
+        state.thermal(thermal, at: elapsed(observed))
+        AssistRuntimeDiagnosticRelay.shared.emit(.thermal(thermal))
         checkpointEvent()
     }
 

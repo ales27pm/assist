@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A58100000000000000000003 /* AssistSystemDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A58100000000000000000013 /* AssistSystemDiagnostics.swift */; };
+		A58100000000000000000002 /* AssistDebugIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A58100000000000000000012 /* AssistDebugIntegration.swift */; };
+		A58100000000000000000001 /* AssistDebugDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A58100000000000000000011 /* AssistDebugDiagnostics.swift */; };
 		A58000000000000000000001 /* AssistThoughtTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = A58000000000000000000011 /* AssistThoughtTree.swift */; };
 		A57700000000000000000001 = {isa = PBXBuildFile; fileRef = A57800000000000000000001; };
 		A57700000000000000000002 = {isa = PBXBuildFile; fileRef = A57800000000000000000002; };
@@ -109,6 +112,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A58100000000000000000013 /* AssistSystemDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistSystemDiagnostics.swift; sourceTree = "<group>"; };
+		A58100000000000000000012 /* AssistDebugIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistDebugIntegration.swift; sourceTree = "<group>"; };
+		A58100000000000000000011 /* AssistDebugDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistDebugDiagnostics.swift; sourceTree = "<group>"; };
 		A58000000000000000000011 /* AssistThoughtTree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistThoughtTree.swift; sourceTree = "<group>"; };
 		A57800000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Inference/AssistExtendedTools.swift; sourceTree = "<group>"; };
 		A57800000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Assist/Services/AssistCapabilityActions.swift; sourceTree = "<group>"; };
@@ -298,6 +304,9 @@
 				A55100000000000000000011 /* AssistNumericalProbe.swift */,
 				A55100000000000000000012 /* NumericalProbe */,
 				A55200000000000000000012 /* NumericalProbeFP32 */,
+				A58100000000000000000011 /* AssistDebugDiagnostics.swift */,
+				A58100000000000000000012 /* AssistDebugIntegration.swift */,
+				A58100000000000000000013 /* AssistSystemDiagnostics.swift */,
 				A55300000000000000000011 /* AssistRuntimeMonitor.swift */,
 				A55400000000000000000011 /* AssistModelLoadProbe.swift */,
 				A55500000000000000000011 /* AssistModelAssetProbe.swift */,
@@ -635,6 +644,9 @@
 				A57400000000000000000005,
 				A57400000000000000000006,
 				A55100000000000000000001 /* AssistNumericalProbe.swift in Sources */,
+				A58100000000000000000001 /* AssistDebugDiagnostics.swift in Sources */,
+				A58100000000000000000002 /* AssistDebugIntegration.swift in Sources */,
+				A58100000000000000000003 /* AssistSystemDiagnostics.swift in Sources */,
 				A55300000000000000000001 /* AssistRuntimeMonitor.swift in Sources */,
 				A57000000000000000000001 /* AssistDeviceCapabilities.swift in Sources */,
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
@@ -650,10 +662,10 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		A57400000000000000000081 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistShare/AssistShare.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 30; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistShare/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.share; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		A57400000000000000000082 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistShare/AssistShare.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 30; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistShare/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.share; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
-		A57400000000000000000083 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistWidget/AssistWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 30; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		A57400000000000000000084 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistWidget/AssistWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 30; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		A57400000000000000000081 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistShare/AssistShare.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 31; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistShare/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.share; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		A57400000000000000000082 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistShare/AssistShare.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 31; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistShare/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.share; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		A57400000000000000000083 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistWidget/AssistWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 31; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		A57400000000000000000084 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = AssistWidget/AssistWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 31; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = AssistWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 27.1; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = org.27pm.assist.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-Assist.debug.xcconfig */;
@@ -661,7 +673,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Assist/Assist.entitlements;
-				CURRENT_PROJECT_VERSION = 30;
+				CURRENT_PROJECT_VERSION = 31;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
@@ -694,7 +706,7 @@
 				CODE_SIGN_ENTITLEMENTS = Assist/Assist.entitlements;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 30;
+				CURRENT_PROJECT_VERSION = 31;
 				INFOPLIST_FILE = Assist/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.1;
 				LD_RUNPATH_SEARCH_PATHS = (

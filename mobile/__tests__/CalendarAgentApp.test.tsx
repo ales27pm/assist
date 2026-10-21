@@ -817,19 +817,68 @@ function mockWeatherMark() {
   });
   native.cancelWeatherAttribution.mockResolvedValue('{"schemaVersion":1,"cancelled":true}');
 }
-test('a final native weather receipt survives a lost activity event and gates the answer on attribution', async () => {
+test.each(['text', 'voice'] as const)('a final native weather receipt survives a lost activity event and gates the answer on attribution (%s)', async mode => {
   mockWeatherMark();
+  native.speak.mockResolvedValue(voiceState.replace('idle', 'speaking'));
   const host = exposeAppleToolHost();
   host.generate.mockImplementation(async json => JSON.stringify({ ...JSON.parse(toolsResult(JSON.parse(json).requestId, 'Réponse météo vérifiée.')), weather: [forecastEvidence] }));
   const user = await openToolsChat();
-  await sendToolTask(user, 'Quelle météo à Québec ?');
+  if (mode === 'voice') {
+    await user.press(screen.getByRole('button', { name: 'Mode vocal' }));
+    const sessionId = native.startListening.mock.calls[0][0];
+    await act(async () => voiceEvent({
+      json: JSON.stringify({ sessionId, kind: 'transcript', phase: 'idle',
+        text: 'Quelle météo à Québec ?', isFinal: true }),
+    }));
+  } else {
+    await sendToolTask(user, 'Quelle météo à Québec ?');
+  }
   const mark = await screen.findByLabelText('Marque officielle Apple Weather');
+  const sources = screen.getByRole('button', { name: 'Sources et attribution Apple' });
+  const legal = screen.getByRole('button', { name: 'Mentions légales' });
+  const legalText = forecastEvidence.attribution.legalAttributionText;
+  expect(mark).toBeOnTheScreen();
+  expect(sources).toBeOnTheScreen();
+  expect(legal).toBeCollapsed();
+  expect(screen.queryByText(legalText)).not.toBeOnTheScreen();
   expect(screen.queryByText('Réponse météo vérifiée.')).not.toBeOnTheScreen();
+  expect(screen.queryByText(/7.5 °C/)).not.toBeOnTheScreen();
+  await user.press(legal);
+  expect(legal).toBeExpanded();
+  expect(screen.getByText(legalText)).toHaveTextContent(legalText, {
+    exact: true, normalizer: value => value,
+  });
+  await user.press(legal);
+  expect(legal).toBeCollapsed();
+  expect(screen.queryByText(legalText)).not.toBeOnTheScreen();
+  expect(mark).toBeOnTheScreen();
+  expect(sources).toBeOnTheScreen();
+  expect(screen.queryByText('Réponse météo vérifiée.')).not.toBeOnTheScreen();
+  expect(screen.queryByText(/7.5 °C/)).not.toBeOnTheScreen();
   expect(native.speak).not.toHaveBeenCalled();
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  expect(native.enqueueSpeech).not.toHaveBeenCalled();
+  expect(native.finishSpeech).not.toHaveBeenCalled();
   await act(async () => fireEvent(mark, 'load'));
   expect(await screen.findByText('Réponse météo vérifiée.')).toBeOnTheScreen();
-  expect(screen.getByText('Attribution Apple originale.')).toBeOnTheScreen();
+  expect(screen.getByText(/7.5 °C/)).toBeOnTheScreen();
+  expect(screen.queryByText(legalText)).not.toBeOnTheScreen();
+  if (mode === 'voice') {
+    expect(native.speak).toHaveBeenCalledTimes(1);
+    expect(native.speak).toHaveBeenCalledWith('Réponse météo vérifiée.',
+      JSON.parse(host.generate.mock.calls[0][0]).requestId);
+  } else {
+    expect(native.speak).not.toHaveBeenCalled();
+  }
+  await user.press(legal);
+  expect(screen.getByText(legalText)).toHaveTextContent(legalText, {
+    exact: true, normalizer: value => value,
+  });
+  await user.press(legal);
+  expect(screen.queryByText(legalText)).not.toBeOnTheScreen();
+  expect(native.speak).toHaveBeenCalledTimes(mode === 'voice' ? 1 : 0);
   expect(native.renderWeatherAttribution).toHaveBeenCalledTimes(1);
+  expect(host.generate).toHaveBeenCalledTimes(1);
 });
 test('an unavailable official mark prevents weather prose from being exposed as a successful answer', async () => {
   native.renderWeatherAttribution.mockRejectedValue(new Error('Image unavailable'));

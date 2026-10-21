@@ -228,19 +228,40 @@ test('weather requires touching a selected place and actual attribution logo bef
     hourlyCount: 12,
     dailyCount: 5,
   });
+  const mark = screen.getByLabelText('Marque officielle Apple Weather');
+  const sources = screen.getByRole('button', {
+    name: 'Sources et attribution Apple',
+  });
+  const legal = screen.getByRole('button', { name: 'Mentions légales' });
+  expect(mark).toBeOnTheScreen();
+  expect(sources).toBeOnTheScreen();
+  expect(legal).toBeCollapsed();
+  expect(
+    screen.queryByText('Texte légal exact du fournisseur Apple.'),
+  ).not.toBeOnTheScreen();
+  expect(screen.queryByText(/Maintenant :/)).not.toBeOnTheScreen();
+  await user.press(legal);
+  expect(legal).toBeExpanded();
   expect(
     screen.getByText('Texte légal exact du fournisseur Apple.'),
-  ).toBeOnTheScreen();
-  expect(screen.queryByText(/Maintenant :/)).not.toBeOnTheScreen();
-  await fireEventAsync(
-    screen.getByLabelText('Marque officielle Apple Weather'),
-    'load',
+  ).toHaveTextContent(
+    'Texte légal exact du fournisseur Apple.',
+    { exact: true, normalizer: value => value },
   );
+  await user.press(legal);
+  expect(legal).toBeCollapsed();
+  expect(mark).toBeOnTheScreen();
+  expect(sources).toBeOnTheScreen();
+  expect(screen.queryByText(/Maintenant :/)).not.toBeOnTheScreen();
+  expect(native.renderWeatherAttribution).toHaveBeenCalledTimes(1);
+  expect(native.getAppleForecast).toHaveBeenCalledTimes(1);
+  await fireEventAsync(mark, 'load');
   expect(screen.getByText('Maintenant : 12.0 °C · clear')).toBeOnTheScreen();
   expect(screen.getByText(/Prévisions, pas une garantie/)).toBeOnTheScreen();
-  await user.press(
-    screen.getByRole('button', { name: 'Sources et attribution Apple' }),
-  );
+  expect(
+    screen.queryByText('Texte légal exact du fournisseur Apple.'),
+  ).not.toBeOnTheScreen();
+  await user.press(sources);
   expect(Linking.openURL).toHaveBeenCalledWith(
     'https://weatherkit.apple.com/legal-attribution.html',
   );

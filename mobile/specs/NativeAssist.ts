@@ -96,6 +96,11 @@ export interface Spec extends TurboModule {
   finishSpeech(utteranceId: string): Promise<string>;
   getMonitoringSnapshot(): Promise<string>;
   getPreviousMonitoringSnapshot(): Promise<string>;
+  /** Local metadata-only recorder; these controls never invoke tools or inference. */
+  getDebugDiagnostics(): Promise<string>;
+  configureDebugDiagnostics(json: string): Promise<string>;
+  exportDebugDiagnostics(): Promise<string>;
+  clearDebugDiagnostics(): Promise<string>;
   selectModel(): Promise<string>;
   loadModel(): Promise<string>;
   loadBundledModel(): Promise<string>;

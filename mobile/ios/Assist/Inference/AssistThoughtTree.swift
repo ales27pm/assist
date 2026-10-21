@@ -12,6 +12,80 @@ enum AssistThoughtTree {
 
     enum Scope: String, Sendable { case conversation, device, research, calendar }
     enum Mode: String, Sendable { case answer, clarify, tool }
+    enum PreparationPhase: String, Sendable { case roots, leaves, unknown }
+    enum RejectionReason: String, Error, Sendable {
+        case context, prompt, budget, json, shape, branch, text, distinctness, unsupported
+        case boundary, stop, length, deadline, engine, unknown
+    }
+    /// Closed observations only. No rejected key, value or model text is stored.
+    struct ValidationMetadata: Codable, Equatable, Sendable {
+        enum Field: String, Codable, Sendable {
+            case roots, leaves, id, root, mode, tool, intent, condition, fit, grounding, payload, `protocol`, output
+        }
+        enum Reason: String, Codable, Sendable {
+            case typeMismatch, missingField, unexpectedKeys, integerRange, duplicateID
+            case fieldTooLong, controlCharacter, reservedContent, shape, json, branch, text, distinctness, unsupported
+        }
+        let field: Field
+        let reason: Reason
+        var branchIndex: Int? = nil
+        var fieldBytes: Int? = nil
+        var limitBytes: Int? = nil
+        var itemCount: Int? = nil
+    }
+    /// Internal cause is retained for the engine owner's cleanup, never exported.
+    struct Rejection: Error, Sendable {
+        let phase: PreparationPhase
+        let reason: RejectionReason
+        let cause: any Error
+        let validation: ValidationMetadata?
+        init(phase: PreparationPhase, reason: RejectionReason, cause: any Error,
+             validation: ValidationMetadata? = nil) {
+            self.phase = phase; self.reason = reason; self.cause = cause; self.validation = validation
+        }
+        static func wrapping(_ error: any Error, phase: PreparationPhase) -> Rejection {
+            if let rejection = error as? Rejection { return rejection }
+            let reason: RejectionReason
+            if let known = error as? RejectionReason { reason = known }
+            else if let failure = error as? Failure {
+                switch failure {
+                case .invalidContext: reason = .context
+                case .deadline: reason = .deadline
+                default: reason = .unknown
+                }
+            } else { reason = .unknown }
+            return Rejection(phase: phase, reason: reason, cause: error)
+        }
+    }
+    /// Only prepareThoughtTree may throw this across the bridge. No raw cause,
+    /// JSON, branch content or tool identity is placed in NSError.userInfo.
+    struct PreparationError: Error, CustomNSError, LocalizedError, Sendable {
+        let phase: PreparationPhase
+        let reason: RejectionReason
+        static var errorDomain: String { "Assist.ThoughtTree.Preparation" }
+        var errorCode: Int { 1 }
+        private static let message = "La préparation locale n’a pas abouti. Aucun accès natif n’a été lancé."
+        var errorDescription: String? {
+            Self.message
+        }
+        var errorUserInfo: [String: Any] {
+            ["code": "E_THOUGHT_TREE_PREPARATION", NSLocalizedDescriptionKey: Self.message,
+             "preparationPhase": phase.rawValue, "preparationReason": reason.rawValue]
+        }
+    }
+    enum Termination: Sendable {
+        case eos, toolBoundary, length, otherStop, unknown
+        static func observed(finishReason: String, stoppedToken: Int32?) -> Termination {
+            if finishReason == "length" { return .length }
+            guard finishReason == "eos" else { return .unknown }
+            switch stoppedToken {
+            case 1, 106: return .eos
+            case 50: return .toolBoundary
+            case .some: return .otherStop
+            case nil: return .unknown
+            }
+        }
+    }
     enum Failure: Error, LocalizedError, Sendable {
         case invalidContext, invalidOutput, invalidPublicOutput, firstActionMismatch, deadline
         var errorDescription: String? {
@@ -32,9 +106,12 @@ enum AssistThoughtTree {
         let rawText: String
         let completedEOS: Bool
         let stoppedAtToolResponse: Bool
-        init(rawText: String, completedEOS: Bool, stoppedAtToolResponse: Bool = false) {
+        let termination: Termination
+        init(rawText: String, completedEOS: Bool, stoppedAtToolResponse: Bool = false,
+             termination: Termination? = nil) {
             self.rawText = rawText; self.completedEOS = completedEOS
             self.stoppedAtToolResponse = stoppedAtToolResponse
+            self.termination = termination ?? (stoppedAtToolResponse ? .toolBoundary : (completedEOS ? .eos : .unknown))
         }
     }
 
@@ -122,34 +199,52 @@ enum AssistThoughtTree {
 
     static func roots(from turn: ModelTurn, tools: [Message], scope: Scope) throws -> RootSet {
         let catalogue = try catalogue(tools: tools, scope: scope)
-        let row = try object(turn, key: "roots", count: 2)
+        let row = try object(turn, key: "roots", count: 2, phase: .roots)
         var plans: [Int: Plan] = [:]
-        for value in row {
-            guard let entry = value.objectDictionary,
-                  Set(entry.keys) == ["id", "mode", "tool", "intent", "condition"],
-                  let id = entry["id"]?.integerValue, (0...1).contains(id), plans[id] == nil else { throw Failure.invalidOutput }
-            plans[id] = try plan(entry, allowed: catalogue.names)
+        for (index, value) in row.enumerated() {
+            guard let entry = value.objectDictionary else {
+                throw invalid(.shape, phase: .roots, field: .roots, detail: .typeMismatch, index: index)
+            }
+            try keys(entry, expected: ["id", "mode", "tool", "intent", "condition"], phase: .roots, field: .roots, index: index)
+            let id = try integer(entry["id"], range: 0...1, phase: .roots, field: .id, index: index)
+            guard plans[id] == nil else { throw invalid(.branch, phase: .roots, field: .id, detail: .duplicateID, index: index) }
+            plans[id] = try plan(entry, allowed: catalogue.names, phase: .roots, index: index)
         }
-        guard let first = plans[0], let second = plans[1], first.identity != second.identity else { throw Failure.invalidOutput }
+        guard let first = plans[0], let second = plans[1] else {
+            throw invalid(.branch, phase: .roots, field: .id, detail: .missingField)
+        }
+        guard first.identity != second.identity else {
+            throw invalid(.distinctness, phase: .roots, field: .roots, detail: .distinctness)
+        }
         return RootSet(scope: scope, tools: catalogue.names, plans: [first, second])
     }
 
     static func selection(from turn: ModelTurn, roots: RootSet) throws -> Selection {
-        let rows = try object(turn, key: "leaves", count: 4)
+        let rows = try object(turn, key: "leaves", count: 4, phase: .leaves)
         var leaves: [(id: Int, root: Int, plan: Plan, fit: Int, grounding: Int)] = []
         var ids = Set<Int>()
         var identities = Set<String>()
-        for value in rows {
-            guard let row = value.objectDictionary,
-                  Set(row.keys) == ["id", "root", "mode", "tool", "intent", "condition", "fit", "grounding"],
-                  let id = row["id"]?.integerValue, (0...3).contains(id), ids.insert(id).inserted,
-                  let root = row["root"]?.integerValue, root == id / 2,
-                  let fit = row["fit"]?.integerValue, (0...2).contains(fit),
-                  let grounding = row["grounding"]?.integerValue, (0...2).contains(grounding) else { throw Failure.invalidOutput }
-            let proposed = try plan(row, allowed: roots.tools)
-            guard proposed.mode == roots.plans[root].mode,
-                  proposed.toolName == roots.plans[root].toolName,
-                  identities.insert(proposed.identity).inserted else { throw Failure.invalidOutput }
+        for (index, value) in rows.enumerated() {
+            guard let row = value.objectDictionary else {
+                throw invalid(.shape, phase: .leaves, field: .leaves, detail: .typeMismatch, index: index)
+            }
+            try keys(row, expected: ["id", "root", "mode", "tool", "intent", "condition", "fit", "grounding"], phase: .leaves, field: .leaves, index: index)
+            let id = try integer(row["id"], range: 0...3, phase: .leaves, field: .id, index: index)
+            guard ids.insert(id).inserted else { throw invalid(.branch, phase: .leaves, field: .id, detail: .duplicateID, index: index) }
+            let root = try integer(row["root"], range: 0...1, phase: .leaves, field: .root, index: index)
+            guard root == id / 2 else { throw invalid(.branch, phase: .leaves, field: .root, detail: .integerRange, index: index) }
+            let fit = try integer(row["fit"], range: 0...2, phase: .leaves, field: .fit, index: index)
+            let grounding = try integer(row["grounding"], range: 0...2, phase: .leaves, field: .grounding, index: index)
+            let proposed = try plan(row, allowed: roots.tools, phase: .leaves, index: index)
+            guard proposed.mode == roots.plans[root].mode else {
+                throw invalid(.branch, phase: .leaves, field: .mode, detail: .branch, index: index)
+            }
+            guard proposed.toolName == roots.plans[root].toolName else {
+                throw invalid(.branch, phase: .leaves, field: .tool, detail: .branch, index: index)
+            }
+            guard identities.insert(proposed.identity).inserted else {
+                throw invalid(.distinctness, phase: .leaves, field: .leaves, detail: .distinctness, index: index)
+            }
             leaves.append((id, root, proposed, fit, grounding))
         }
         // Never choose a branch scored as unsupported or unrelated. Scores
@@ -158,11 +253,14 @@ enum AssistThoughtTree {
             if $0.fit + $0.grounding != $1.fit + $1.grounding { return $0.fit + $0.grounding > $1.fit + $1.grounding }
             if $0.grounding != $1.grounding { return $0.grounding > $1.grounding }
             return $0.id < $1.id
-        }).first else { throw Failure.invalidOutput }
+        }).first else { throw RejectionReason.unsupported }
+        // Text validation does not make a model-written instruction trusted.
+        // Only the closed mode/tool decision may enter the final host SYSTEM;
+        // retain free plan fields privately for validation and echo rejection.
         let advice = adviceLabel +
             "Avant le premier résultat réel, respecte le mode et le nom d’outil retenus, avec les mêmes validations, clarifications et consentements natifs. " +
             "Après un reçu réel, adapte la suite dans le registre et le budget natifs. Ne montre jamais ce plan ni ses champs ou scores à l’utilisateur. " +
-            "Plan proposé (données) : " + (try encode(best.plan.value))
+            "Choix fermé : mode=\(best.plan.mode.rawValue); outil=\(best.plan.toolName ?? "aucun")."
         return Selection(rootID: best.root, leafID: best.id, plan: best.plan, fit: best.fit,
                          grounding: best.grounding, advisorySystemText: advice)
     }
@@ -251,18 +349,25 @@ enum AssistThoughtTree {
         try check()
         return try await withThrowingTaskGroup(of: Selection.self) { group in
             group.addTask {
-                try check()
-                let initial = try planningMessages(baseMessages: baseMessages, tools: tools, scope: scope, stage: .roots)
-                try check()
-                let proposed = try await model(initial, rootTokenBudget)
-                try check()
-                let roots = try roots(from: proposed, tools: tools, scope: scope)
-                try check()
-                let expanded = try planningMessages(baseMessages: baseMessages, tools: tools, scope: scope, stage: .leaves(roots))
-                try check()
-                let leaves = try await model(expanded, leafTokenBudget)
-                try check()
-                return try selection(from: leaves, roots: roots)
+                let roots: RootSet
+                do {
+                    try check()
+                    let initial = try planningMessages(baseMessages: baseMessages, tools: tools, scope: scope, stage: .roots)
+                    try check()
+                    let proposed = try await model(initial, rootTokenBudget)
+                    try check()
+                    roots = try Self.roots(from: proposed, tools: tools, scope: scope)
+                } catch is CancellationError { throw CancellationError() }
+                catch { throw Rejection.wrapping(error, phase: .roots) }
+                do {
+                    try check()
+                    let expanded = try planningMessages(baseMessages: baseMessages, tools: tools, scope: scope, stage: .leaves(roots))
+                    try check()
+                    let leaves = try await model(expanded, leafTokenBudget)
+                    try check()
+                    return try selection(from: leaves, roots: roots)
+                } catch is CancellationError { throw CancellationError() }
+                catch { throw Rejection.wrapping(error, phase: .leaves) }
             }
             group.addTask {
                 try await Task.sleep(until: deadline, clock: .continuous)
@@ -283,38 +388,100 @@ enum AssistThoughtTree {
         }
     }
 
-    private static func object(_ turn: ModelTurn, key: String, count: Int) throws -> [AssistToolValue] {
-        guard turn.completedEOS, !turn.stoppedAtToolResponse, turn.rawText.utf8.count <= maximumOutputBytes,
-              let row = try? AssistToolValue.decodeJSON(turn.rawText).objectDictionary,
-              Set(row.keys) == [key], case .array(let values) = row[key], values.count == count else { throw Failure.invalidOutput }
+    private static func invalid(_ reason: RejectionReason, phase: PreparationPhase,
+                                field: ValidationMetadata.Field, detail: ValidationMetadata.Reason,
+                                index: Int? = nil, bytes: Int? = nil, limit: Int? = nil, count: Int? = nil) -> Rejection {
+        Rejection(phase: phase, reason: reason, cause: reason,
+            validation: .init(field: field, reason: detail, branchIndex: index,
+                              fieldBytes: bytes, limitBytes: limit, itemCount: count))
+    }
+
+    private static func keys(_ row: [String: AssistToolValue], expected: Set<String>,
+                             phase: PreparationPhase, field: ValidationMetadata.Field, index: Int? = nil) throws {
+        guard Set(row.keys) == expected else {
+            throw invalid(.shape, phase: phase, field: field,
+                detail: Set(row.keys).subtracting(expected).isEmpty ? .missingField : .unexpectedKeys,
+                index: index, count: row.count)
+        }
+    }
+
+    private static func integer(_ value: AssistToolValue?, range: ClosedRange<Int>,
+                                phase: PreparationPhase, field: ValidationMetadata.Field, index: Int) throws -> Int {
+        guard let value else { throw invalid(.branch, phase: phase, field: field, detail: .missingField, index: index) }
+        guard case .number = value else { throw invalid(.branch, phase: phase, field: field, detail: .typeMismatch, index: index) }
+        guard let number = value.integerValue, range.contains(number) else {
+            throw invalid(.branch, phase: phase, field: field, detail: .integerRange, index: index)
+        }
+        return number
+    }
+
+    private static func object(_ turn: ModelTurn, key: String, count: Int, phase: PreparationPhase) throws -> [AssistToolValue] {
+        if turn.stoppedAtToolResponse { throw RejectionReason.boundary }
+        switch turn.termination {
+        case .length: throw RejectionReason.length
+        case .toolBoundary: throw RejectionReason.boundary
+        case .otherStop: throw RejectionReason.stop
+        case .unknown: throw RejectionReason.unknown
+        case .eos: break
+        }
+        guard turn.completedEOS else { throw RejectionReason.unknown }
+        guard turn.rawText.utf8.count <= maximumOutputBytes else {
+            throw invalid(.text, phase: phase, field: .payload, detail: .fieldTooLong,
+                bytes: turn.rawText.utf8.count, limit: maximumOutputBytes)
+        }
+        let value: AssistToolValue
+        do { value = try AssistToolValue.decodeJSON(turn.rawText) }
+        catch AssistToolContractError.unsafeContent { throw invalid(.text, phase: phase, field: .payload, detail: .reservedContent) }
+        catch AssistToolContractError.oversizedValue { throw invalid(.shape, phase: phase, field: .payload, detail: .shape) }
+        catch { throw invalid(.json, phase: phase, field: .payload, detail: .json) }
+        guard let row = value.objectDictionary else { throw invalid(.shape, phase: phase, field: .payload, detail: .typeMismatch) }
+        let field: ValidationMetadata.Field = phase == .roots ? .roots : .leaves
+        try keys(row, expected: [key], phase: phase, field: field)
+        guard case .array(let values) = row[key] else { throw invalid(.shape, phase: phase, field: field, detail: .typeMismatch) }
+        guard values.count == count else { throw invalid(.shape, phase: phase, field: field, detail: .shape, count: values.count) }
         return values
     }
 
-    private static func plan(_ row: [String: AssistToolValue], allowed: Set<String>) throws -> Plan {
-        guard let modeName = row["mode"]?.stringValue, let mode = Mode(rawValue: modeName),
-              let tool = row["tool"], let intent = row["intent"]?.stringValue,
-              let condition = row["condition"]?.stringValue else { throw Failure.invalidOutput }
+    private static func plan(_ row: [String: AssistToolValue], allowed: Set<String>,
+                             phase: PreparationPhase, index: Int) throws -> Plan {
+        guard let modeName = row["mode"]?.stringValue else { throw invalid(.branch, phase: phase, field: .mode, detail: .typeMismatch, index: index) }
+        guard let mode = Mode(rawValue: modeName) else { throw invalid(.branch, phase: phase, field: .mode, detail: .branch, index: index) }
+        guard let tool = row["tool"] else { throw invalid(.branch, phase: phase, field: .tool, detail: .missingField, index: index) }
+        guard let intent = row["intent"]?.stringValue else { throw invalid(.branch, phase: phase, field: .intent, detail: .typeMismatch, index: index) }
+        guard let condition = row["condition"]?.stringValue else { throw invalid(.branch, phase: phase, field: .condition, detail: .typeMismatch, index: index) }
         let name: String?
         if mode == .tool {
-            guard let value = tool.stringValue, allowed.contains(value) else { throw Failure.invalidOutput }
+            guard let value = tool.stringValue, allowed.contains(value) else {
+                throw invalid(.unsupported, phase: phase, field: .tool,
+                    detail: tool.stringValue == nil ? .typeMismatch : .unsupported, index: index)
+            }
             name = value
         } else {
-            guard tool == .null else { throw Failure.invalidOutput }
+            guard tool == .null else { throw invalid(.branch, phase: phase, field: .tool, detail: .branch, index: index) }
             name = nil
         }
-        return Plan(mode: mode, toolName: name, intent: try text(intent), condition: try text(condition))
+        return Plan(mode: mode, toolName: name,
+            intent: try text(intent, phase: phase, field: .intent, index: index),
+            condition: try text(condition, phase: phase, field: .condition, index: index))
     }
 
-    private static func text(_ value: String) throws -> String {
-        guard value.utf8.count <= 72,
-              value.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else { throw Failure.invalidOutput }
+    private static func text(_ value: String, phase: PreparationPhase,
+                             field: ValidationMetadata.Field, index: Int) throws -> String {
+        guard value.utf8.count <= 72 else {
+            throw invalid(.text, phase: phase, field: field, detail: .fieldTooLong, index: index, bytes: value.utf8.count, limit: 72)
+        }
+        guard value.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+            throw invalid(.text, phase: phase, field: field, detail: .controlCharacter, index: index)
+        }
         let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { throw Failure.invalidOutput }
-        do { try AssistToolContent.validate(text) } catch { throw Failure.invalidOutput }
+        guard !text.isEmpty else { throw invalid(.text, phase: phase, field: field, detail: .text, index: index) }
+        do { try AssistToolContent.validate(text) } catch { throw invalid(.text, phase: phase, field: field, detail: .reservedContent, index: index) }
         let forbidden = [#"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b"#,
                          #"(?:file|content)://|(?:^|\s)/(?:[^\s/]+/)*[^\s]+|[a-z]:\\"#,
                          #"\b(?:confirmationToken|tool_calls|tool_responses|operationId|requestId)\b"#]
-        guard forbidden.allSatisfy({ text.range(of: $0, options: [.regularExpression, .caseInsensitive]) == nil }) else { throw Failure.invalidOutput }
+        guard forbidden.allSatisfy({ text.range(of: $0, options: [.regularExpression, .caseInsensitive]) == nil }) else {
+            throw invalid(.text, phase: phase, field: field, detail: .reservedContent, index: index)
+        }
         return text
     }
 

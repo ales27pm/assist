@@ -1,8 +1,14 @@
 import React from 'react';
-import { renderAsync, screen, userEvent } from '@testing-library/react-native';
-import { Share } from 'react-native';
+import {
+  act,
+  renderAsync,
+  screen,
+  userEvent,
+} from '@testing-library/react-native';
+import { AppState, Share } from 'react-native';
 import NativeAssist from '../specs/NativeAssist';
 import { DiagnosticsWorkspace } from '../src/DiagnosticsWorkspace';
+import { debugCategories } from '../src/debugDiagnostics';
 import {
   repairTargets,
   specializationRepairMeasurementMethods,
@@ -14,6 +20,10 @@ jest.mock('../specs/NativeAssist', () => ({
     repairNumericalProbe: jest.fn(),
     repairModelLoadProbe: jest.fn(),
     getLastSpecializationRepair: jest.fn(),
+    getDebugDiagnostics: jest.fn(),
+    configureDebugDiagnostics: jest.fn(),
+    exportDebugDiagnostics: jest.fn(),
+    clearDebugDiagnostics: jest.fn(),
   },
 }));
 jest.useFakeTimers();
@@ -150,4 +160,73 @@ test('keeps the full repair qualification available to share after collapsing an
   expect(JSON.parse(share.mock.calls[0][0].message!)).toEqual(qualification);
   expect(native.getLastSpecializationRepair).toHaveBeenCalledTimes(1);
   expect(native.repairNumericalProbe).toHaveBeenCalledTimes(1);
+});
+
+test('advanced diagnostics mount only in the opened active workspace and stay independent of probe admission', async () => {
+  Object.defineProperty(AppState, 'currentState', {
+    configurable: true,
+    value: 'active',
+  });
+  native.getDebugDiagnostics.mockResolvedValue(
+    JSON.stringify({
+      schemaVersion: 1,
+      kind: 'assistDebugStatus',
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      revision: 0,
+      mode: 'standard',
+      detailExpiresAt: null,
+      recordCount: 0,
+      omittedRecords: 0,
+      rejectedRecords: 0,
+      previousSessionCount: 0,
+      persistence: 'notAttempted',
+      records: [],
+      findings: [],
+      coverage: debugCategories.map(category => ({
+        category,
+        state: 'unavailable',
+      })),
+      limits: {
+        maxRecords: 512,
+        maxSessionBytes: 262144,
+        maxPreviousSessions: 2,
+        detailedSeconds: 900,
+      },
+      privacy: { contentCaptured: false, automaticUpload: false },
+    }),
+  );
+  const perform = jest.fn(async (action: () => Promise<void>) => action());
+  const user = userEvent.setup();
+  const workspace = (active: boolean) => (
+    <DiagnosticsWorkspace
+      selected={false}
+      selectionVersion={0}
+      busy
+      ready
+      active={active}
+      perform={perform}
+    >
+      {null}
+    </DiagnosticsWorkspace>
+  );
+  await renderAsync(workspace(false));
+  await user.press(screen.getByRole('button', { name: 'Diagnostic avancé' }));
+  expect(native.getDebugDiagnostics).not.toHaveBeenCalled();
+  await screen.rerenderAsync(workspace(true));
+  expect(screen.getByText('Niveau confirmé : Standard')).toBeOnTheScreen();
+  expect(native.getDebugDiagnostics).toHaveBeenCalledTimes(1);
+  expect(
+    screen.getByRole('button', { name: 'Activer le niveau détaillé (15 min)' }),
+  ).toBeEnabled();
+  expect(native.configureDebugDiagnostics).not.toHaveBeenCalled();
+  expect(native.exportDebugDiagnostics).not.toHaveBeenCalled();
+  expect(native.clearDebugDiagnostics).not.toHaveBeenCalled();
+  expect(native.repairNumericalProbe).not.toHaveBeenCalled();
+  expect(perform).not.toHaveBeenCalled();
+  await user.press(screen.getByRole('button', { name: 'Diagnostic avancé' }));
+  const reads = native.getDebugDiagnostics.mock.calls.length;
+  await act(async () => {
+    jest.advanceTimersByTime(3000);
+  });
+  expect(native.getDebugDiagnostics).toHaveBeenCalledTimes(reads);
 });

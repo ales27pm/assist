@@ -72,7 +72,7 @@ import { VoiceConversationScreen } from './src/VoiceConversationScreen';
 import { VoiceConversationController } from './src/VoiceConversationController';
 import type { ConversationVoiceResult, ConversationVoiceState } from './src/VoiceConversationController';
 import { useVoicePreferences } from './src/useVoicePreferences';
-import { ResponseSpeechStream } from './src/responseSpeech';
+import { ResponseSpeechStream, type ResponseSpeechStreamOptions } from './src/responseSpeech';
 import {
   AssistantMark,
   ConversationIntro,
@@ -97,6 +97,8 @@ import {
 
 const calendarTodayPrompt =
   'Consulte mon calendrier d’aujourd’hui et résume les événements retournés, sans supposer que la liste est complète.';
+const thoughtTreePreparationMessage =
+  'La préparation locale n’a pas abouti. Aucun outil n’a été lancé pour cette demande. Reformule ou réessaie explicitement.';
 type DisplayMessage = Message & {
   displayOnly?: true;
   toolTransaction?: CalendarToolTransaction;
@@ -108,6 +110,29 @@ type DisplayMessage = Message & {
 type DeviceToolTransport =
   | Readonly<{ kind: 'v1' }>
   | Readonly<{ kind: 'v2'; selection: ToolHostSelection }>;
+type ResponseSpeech = Pick<ResponseSpeechStream, 'push' | 'finish' | 'cancel'>;
+
+/** Private preparation must not open a native speech session before public text. */
+function responseSpeechOnText(options: ResponseSpeechStreamOptions): ResponseSpeech {
+  let stream: ResponseSpeechStream | undefined;
+  let active = true;
+  return {
+    push(text) {
+      if (!active || !text.trim()) return;
+      stream ??= new ResponseSpeechStream(options);
+      stream.push(text);
+    },
+    finish(text) {
+      if (!active || !text.trim()) return Promise.resolve();
+      stream ??= new ResponseSpeechStream(options);
+      return stream.finish(text);
+    },
+    cancel() {
+      active = false;
+      stream?.cancel();
+    },
+  };
+}
 
 /** A stopped ordinary turn may expose its own interrupted prefix as UI only. */
 function ordinaryStoppedPrefix(json: string, requestId: string): GenerationResult | null {
@@ -435,7 +460,7 @@ export function AssistantScreen() {
   );
   const speechIntent = useRef(0);
   const spokenRequest = useRef<string | null>(null);
-  const responseSpeech = useRef<ResponseSpeechStream | null>(null);
+  const responseSpeech = useRef<ResponseSpeech | null>(null);
   const voice = useLocalVoice({
     enabled: tab === 'chat' && speechMode,
     onTranscript: () => undefined,
@@ -933,6 +958,7 @@ export function AssistantScreen() {
     const readThisResponse =
       !calendarToday && fromVoice && readResponsesEnabled.current;
     let completed: (GenerationResult & { spoken: boolean }) | undefined;
+    let preparationFailure: string | undefined;
     await perform(async () => {
       if (!generationCurrent() || (nativeAgent && !calendarCurrent())) return;
       const maxTokens = outputBudget(budget);
@@ -995,9 +1021,9 @@ export function AssistantScreen() {
         setAgentPhase('consulting');
       }
       let speechFailed = false;
-      const stream: ResponseSpeechStream | null =
+      const stream: ResponseSpeech | null =
         !nativeAgent && spokenRequest.current && voice.streamingSupported
-          ? new ResponseSpeechStream({
+          ? responseSpeechOnText({
               begin: () => voice.beginSpeech(requestId),
               enqueue: chunk => voice.enqueueSpeech(chunk, requestId),
               finish: () => voice.finishSpeech(requestId),
@@ -1192,12 +1218,35 @@ export function AssistantScreen() {
         }
       } catch (cause) {
         if (!generationCurrent()) return;
+        const activities = messagesRef.current.flatMap(message =>
+          message.deviceTool?.requestId === requestId ? [message.deviceTool] : [],
+        );
+        const hasCurrentEvidence = messagesRef.current.some(message =>
+          message.deviceTool?.requestId === requestId ||
+          (message.weatherForecast && message.weatherTask === requestId) ||
+          (message.toolTransaction?.id === requestId &&
+            (message.toolTransaction.lastSequence !== undefined || message.toolTransaction.receipt ||
+              message.toolTransaction.scope || message.toolTransaction.status !== 'proposed')),
+        );
+        // Only the closed native pre-execution code can establish this phase.
+        // A local calendar placeholder is not activity; any native metadata or
+        // receipt contradicts the code and retains conservative error handling.
+        const preparationRejected = !hasCurrentEvidence && !!cause && typeof cause === 'object' &&
+          'code' in cause && cause.code === 'E_THOUGHT_TREE_PREPARATION';
+        if (preparationRejected && (!nativeAgent || calendarCurrent())) {
+          if (calendarToday) {
+            messagesRef.current = messagesRef.current.filter(message => message.toolTransaction?.id !== requestId);
+            setMessages(messagesRef.current);
+          }
+          preparationFailure = thoughtTreePreparationMessage;
+          throw new Error(thoughtTreePreparationMessage);
+        }
         if (withDeviceTools) {
-          if (calendarCurrent())
-            throw new Error(
-              deviceToolFailureMessage(messagesRef.current.flatMap(message => message.deviceTool?.requestId === requestId ? [message.deviceTool] : [])) ??
-              'La tâche outils n’a pas été finalisée. Vérifie les reçus et toute action incertaine avant une nouvelle création. Aucun nouvel essai automatique.',
-            );
+          if (calendarCurrent()) {
+            const message = deviceToolFailureMessage(activities) ??
+              'La tâche outils n’a pas été finalisée. Vérifie les reçus et toute action incertaine avant une nouvelle création. Aucun nouvel essai automatique.';
+            throw new Error(message);
+          }
           return;
         }
         if (!calendarToday) throw cause;
@@ -1214,7 +1263,9 @@ export function AssistantScreen() {
             ),
           );
           throw new Error(
-            'La consultation du calendrier n’a pas abouti. Vérifie son autorisation dans les Outils de l’appareil, puis réessaie explicitement. Aucune nouvelle tentative automatique.',
+            permission
+              ? 'La consultation du calendrier n’a pas abouti. Vérifie son autorisation dans les Outils de l’appareil, puis réessaie explicitement. Aucune nouvelle tentative automatique.'
+              : 'La consultation du calendrier n’a pas abouti. Les reçus déjà affichés restent la référence. Aucun nouvel essai automatique.',
           );
         }
       } finally {
@@ -1276,6 +1327,9 @@ export function AssistantScreen() {
         active.current = null;
       }
     }, fromVoice);
+    // The voice controller owns its error view; forward only this fixed,
+    // classified message while its original request is still current.
+    if (fromVoice && preparationFailure && generationCurrent()) throw new Error(preparationFailure);
     return completed;
   }
 
@@ -1667,7 +1721,7 @@ export function AssistantScreen() {
     ? toolTransport.current.selection.hostProtocolVersion === 2
       ? 'Cette version iOS traite chaque demande d’outils séparément. Reformule les références nécessaires.'
       : referenceContext.current.omittedTurns > 0
-      ? 'Certaines références précédentes ont été écartées. Précise le contexte si nécessaire.'
+      ? 'Certains échanges ne sont pas réutilisés comme contexte. Précise les références nécessaires.'
       : ''
     : '';
   const nativeIntentBanner = <NativeIntentBanner key="native-intent" blocked={busy} toolsAvailable={toolsAvailable} onDraft={(text, needsTools) => {

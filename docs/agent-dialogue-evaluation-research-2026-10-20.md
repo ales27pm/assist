@@ -1,0 +1,75 @@
+# Évaluer les dialogues naturels et les outils d’Assist
+
+Revue du 20 octobre 2026. Décision visée : déterminer si le candidat répond à des demandes françaises naturelles, demande une précision utile, choisit un accès admissible et rapporte fidèlement son résultat, avec une latence mesurée. Une compilation, un oracle préparé ou un appel syntaxiquement correct ne suffit pas. **Les deux passes ToT restent prévues pour chaque requête admise**, avec un seul moteur et le contexte complet 32K ; cette note ne change aucun code, budget, modèle, dépendance ou service.
+
+## Méthode et sources
+
+Compétences consultées : **LLM Agent Builder 0.1.0**, son `llm-agent-builder/SKILL.md` et `references/llm_agent_evaluation_framework.md`, puis **Exa Search 4.0.1** avec ses références recherche de papiers, qualité et synthèse. Les principes appliqués sont l’évaluation par couche, les critères fixés avant mesure, les oracles déterministes et la séparation des observations réelles et des simulations.
+
+Trois recherches Exa, cinq résultats demandés chacune : **`sources_reviewed = 5 + 5 + 5 = 15`**. Ce compteur inclut les résultats redondants ou écartés ; il ne signifie pas quinze articles lus intégralement. **Cinq URL primaires distinctes ont été ouvertes via Exa** : article officiel BFCL, début du papier τ-bench, notice ACL MASSIVE-Agents et notices arXiv ToT/Latency. Les extractions étaient bornées à 14 000 caractères ; les résumés et extraits de recherche complètent ces lectures. La date de τ-bench a été recoupée sur la même notice arXiv. Aucun résultat ultérieur au 20 octobre 2026 n’est utilisé comme preuve. Les découvertes 2026 non relues ne fondent aucune recommandation chiffrée ici.
+
+### Travaux fondateurs
+
+| Source primaire et date vérifiée | Résultat méthodologique utile | Limite pour Assist |
+| --- | --- | --- |
+| Yao et al., **Tree of Thoughts: Deliberate Problem Solving with Large Language Models**, arXiv v1 du **17 mai 2023**, NeurIPS 2023 ; v2 du 3 décembre 2023. [Notice](https://arxiv.org/abs/2305.10601) | Exploration de chemins et évaluation de candidats, au-delà d’une simple consigne de réflexion. | Les expériences portent notamment sur Game of 24, écriture et mots croisés. Elles ne prouvent ni la fiabilité des outils iOS ni un gain de notre petit modèle français. |
+| Yao, Shinn, Razavi et Narasimhan, **τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains**, **17 juin 2024**. [Papier](https://arxiv.org/abs/2406.12045) | Conversation avec utilisateur simulé, outils et règles ; vérification de l’état final et répétitions pour étudier la fiabilité (`pass^k`). | Simulateur et domaines de service client ; une conversation simulée réussie ne qualifie pas une interface iPhone ou un consentement tactile. |
+| Mao et al., **BFCL V3: Multi-Turn & Multi-Step Function Calling**, publication officielle du **19 septembre 2024**, mise à jour du 10 décembre 2024. [Méthode](https://gorilla.cs.berkeley.edu/blogs/13_bfcl_v3_multi_turn.html) | Distingue plusieurs étapes d’un tour et plusieurs tours ; cas à paramètres manquants, fonctions absentes et contexte long. Les vérifications d’état et de trajectoire complètent les appels structurés. | La composition du classement présentée est signalée obsolète sur la page. Nous réutilisons la méthode, aucun classement courant ni taux transféré à Assist. |
+
+### Travaux complémentaires
+
+| Source primaire et date vérifiée | Apport et conséquence proposée |
+| --- | --- |
+| Kulkarni, Mazzia, Gaspers, Hench et FitzGerald, **MASSIVE-Agents: A Benchmark for Multilingual Function-Calling in 52 Languages**, *Findings of EMNLP*, **novembre 2025**, p. 20193–20215. [ACL](https://aclanthology.org/2025.findings-emnlp.1099/) | Compare sélection, AST, langues, modèles et latence. Les écarts linguistiques et les difficultés des petits modèles justifient de mesurer séparément français, structure et arguments. Cela ne constitue pas une mesure de Gemma 4, du français québécois oral ou de notre dialogue avec clarification. La date bibliographique ACL prévaut sur le « janvier 2025 » renvoyé par les métadonnées de recherche. |
+| Huang, Damani, El-Kurdi, Astudillo et Sun, **Latency and Token-Aware Test-Time Compute**, arXiv v1 du **11 septembre 2025**. [Notice](https://arxiv.org/abs/2509.09864) | Traite conjointement coût en jetons et latence murale dans l’allocation du calcul. **Déduction d’ingénierie pour Assist** : comparer les budgets à deux passes constantes avant d’adapter leur taille. Aucun gain de leurs tâches de raisonnement n’est présumé sur iPhone. |
+
+## Audit du corpus local
+
+Lecture des [12 dialogues initiaux](evals/device-tools-natural-dialogues-v1.json), de l’[extension de quatre dialogues](evals/device-tools-natural-dialogues-extension-v1.json), du [feuillet](device-tools-evening-acceptance.md) et du [grader](../scripts/evaluate-device-tools.mjs). Les deux JSON portent `prepared_not_run_model` et les cas `provenance.result: not_run`.
+
+| Inventaire préparé | Portée exacte |
+| --- | --- |
+| 16 dialogues, 51 tours | 37 tours initiaux + 14 dans l’extension. Aucun résultat Gemma obtenu par cet inventaire. |
+| 18 `selection_only` | Évaluent réponse, clarification ou absence d’accès selon l’oracle ; aucune preuve d’exécution native. |
+| 33 `scenario_requires_fixture_executor` | Nécessitent des observations du propriétaire de fixture ; 29 cas déclarent des résultats natifs attendus et neuf des liens entre résultat et arguments suivants. |
+| 31 noms dans `toolCoverage` | Couverture des **branches admissibles**. Les alternatives vides de `dialogue15.t1` et `dialogue16.t1` peuvent être correctes sans exercer respectivement recherche de contact ou limite native. |
+| 59 cas techniques référencés | Vérifient d’autres contrats ; ils ne s’ajoutent pas au dénominateur des 51 tours naturels et ne prouvent pas leur qualité. |
+
+Le grader utilise la vraie capsule admise et son epoch, les textes réellement enregistrés, les règles TS de production et un rapport Swift lié aux entrées. Il sépare propositions, sous-ensembles de résultats et liens de cibles. Les SHA lient les artefacts ; ils n’authentifient pas à eux seuls leur auteur ou un appareil. Les critères qualitatifs restent incomplets sans revue liée à son sujet exact. Ces limites sont explicitement conservées dans ses sorties.
+
+Les scénarios couvrent déjà intention indirecte, changement de sujet, anaphore, correction, résultat incertain, sélecteur annulé et refus de téléchargement. Leur nom ne prouve pas que chaque branche a été effectivement parcourue : notification proposée puis refusée ≠ notification présentée ; minuteur arrêté sans sonnerie ≠ arrêt d’une sonnerie ; composeur annulé ≠ envoi ou livraison ; aperçu ≠ lecture du document. Le feuillet distingue horloge UTC fixe du grader et jour/fuseau réel du téléphone.
+
+### Manques concrets à traiter dans les observations
+
+- La météo préparée (`dialogue08.t1`) fournit déjà la ville et l’unité. Elle ne reproduit pas la demande réelle brève « Quel temps fait-il ? ». Ajouter cette entrée naturelle, puis une réponse à la clarification réellement posée ; ne jamais fournir le nom d’un outil, des coordonnées ou une réponse d’assistant attendue dans le prompt.
+- L’[incident natif30](native30-tree-rejection-2026-10-20.md) localise un arrêt après roots, avant génération leaves visible. La télémétrie ancienne ne distingue pas la règle roots rejetée d’une préparation leaves échouée. Le nouveau diagnostic fermé doit être observé avant de nommer la cause ; absence de carte seule ≠ preuve d’absence d’effet.
+- Le corpus français préparé n’est pas un test audio. Accents, dictée des heures, hésitations, variantes québécoises et correction d’une transcription doivent avoir des observations séparées, avec la transcription effectivement admise.
+- Une tentative par dialogue n’établit pas la répétabilité. Permission refusée, indisponibilité de langue et `outcome_unknown` restent des branches non exercées si l’environnement réel ne les produit pas. Les pannes contrôlées restent chez le propriétaire de fixture ; aucune injection destructive sur téléphone.
+
+## Plan d’acceptation proposé, à figer avant les essais
+
+Ce plan prépare une décision ; aucun essai modèle ou appareil n’est lancé par cette note. Les seuils suivants sont des choix d’ingénierie proposés, pas des exigences ou performances publiées.
+
+1. **Sceller le candidat et le périmètre.** Relever commit, binaire/runtime, modèle sélectionné et capacité détectée, template, catalogue, paramètres, horloge/fuseau et état réseau. Définir le profil d’outils réellement admis. Une identité de dossier ou un écran Ready ne constitue pas une vérification cryptographique des poids. Conserver les oracles hors des entrées modèle.
+2. **Distinguer trois campagnes.** (A) tests déterministes du contrôleur/host avec sorties scriptées ; (B) vrai Gemma avec propriétaires de fixtures et sans effets OS ; (C) iPhone avec états et reçus réellement observés. Aucun score A n’est publié comme B ou C. Aucun assistant préparé ni reçu synthétique ne remplit un trou de B/C.
+3. **Enregistrer la frontière de chaque échec.** Admission → préparation roots → préparation leaves → proposition → confirmation/permission → exécution → validation du reçu → présentation/finalisation. En cas de rejet, conserver la première frontière établie et son motif fermé, sans exporter le plan privé. Un rejet roots ne devient pas une erreur de choix météo, réseau ou WeatherKit. Une étape non observée reste inconnue.
+4. **Juger le tour sans imposer la stratégie dans la phrase utilisateur.** Même catalogue normal et demande littérale ; alternatives admises et valeurs attendues restent dans l’oracle. Vérifier contraintes critiques, cibles issues des résultats autorisés, accord courant et absence d’appel inutile. Puis vérifier le reçu et l’état final indépendamment lorsque possible. Une proposition valide n’est pas une action réussie. Pour le grader existant, la revue humaine renseigne `clarification`, `requiredFactsPresent` et `forbiddenClaimsAbsent` selon les critères applicables, avec `caseId`, `criteriaSHA256` et `subjectSHA256` exacts ; preuve ou jugement manquant reste incomplet. Gemma ne devient pas son propre arbitre de réussite.
+5. **Juger le dialogue complet.** Les 51 tours doivent avoir chacun une issue explicite : passé, échoué, incomplet ou non exécuté. Un échec amont ne fournit pas une fausse réponse pour alimenter le tour suivant. Réponse courte après annulation/échec ne ressuscite pas l’ancien but ; un nouveau but complet peut repartir. Une indisponibilité correctement expliquée peut réussir son propre scénario, sans compter la branche positive comme exercée.
+6. **Fixer les portes qualité.** Zéro effet sans accord, reçu inventé, cible étrangère, double effet après issue inconnue, fuite de plan privé ou relance automatique après Stop. Pour accepter la cohorte fonctionnelle déclarée, chacun des 16 dialogues de cette cohorte doit passer sa branche annoncée ; un prérequis absent donne incomplet, jamais passé par défaut. Publier séparément outils proposés, exécutés et confirmés, avec les noms non exercés. Le corpus actuel ne justifie pas encore « tous les outils fiables ».
+7. **Répéter sans multiplier les effets personnels.** Pour B, prévoir cinq essais indépendants de chacun des 16 dialogues : 80 épisodes, au plus 255 tours planifiés. Reset et fixtures propres par épisode ; échec d’un prérequis = tours dépendants non exécutés, sans fabriquer 255 observations. Rapporter réussite de tous les essais d’un épisode et dispersion, sans appeler cela une réplication chiffrée de τ-bench. Pour C, une campagne distincte avec fixtures ciblées, état initial/final et nettoyage vérifié ; aucune répétition automatique d’écriture.
+
+La météo brève ajoute un scénario de régression distinct des 51 tours gelés : demande vague → clarification utile si le lieu n’est pas établi → réponse utilisateur réellement adaptée à cette question → accès admissible après accord → résultat fidèle. Si la préparation échoue, arrêter cette branche, noter l’échec à sa frontière et tester la reprise avec une nouvelle demande complète. Ne pas remplacer la clarification réelle par un dialogue idéal préécrit.
+
+## Mesures de latence, annulation et réseau
+
+| Mesure | Définition et porte de comparaison |
+| --- | --- |
+| Latence totale p50/p95 | Temps monotone entre admission utilisateur et état terminal visible ; calcul p-quantile au rang `ceil(p × n)` dans la série triée. Inclure attente humaine et échecs ; publier aussi les strates succès/rejet/annulation et leur `n`. Ne pas calculer un p95 convaincant sur quelques observations : si `n < 20`, afficher les valeurs et marquer le quantile descriptif. |
+| Première sortie publique | Premier texte ou carte visible utile, pas premier jeton roots. La durée de préparation et celle de génération finale restent distinctes ; l’agrégat `tree_*` n’est pas la durée totale du tour. L’attribution météo fait partie de la présentation. |
+| Calcul ToT | Passes réellement démarrées/terminées, entrée/sortie mesurées roots/leaves, durée et issue. Deux passes complètes pour une préparation acceptée ; rejet roots peut arrêter avant leaves, sans retry ni succès de substitution. Le contrôleur est invoqué sur chaque requête admise ; aucun routage ne désactive ToT. |
+| Annulation p50/p95 | Stop/barge-in/background → acquittement natif drainé, puis UI terminale, mesurés séparément. Aucun EOS tardif réutilisé, aucune nouvelle capture/TTS, aucun accès supplémentaire. Les reçus déjà confirmés restent visibles ; annuler la suite n’annule pas un effet passé. |
+| Réseau et attente native | Nombre d’accès réellement observés par fournisseur, statuts, durée native et attente de consentement séparées du total. Sans instrumentation, DNS/TLS, octets et retries internes restent inconnus, jamais zéro déduit de l’absence de log. Résultat de fixture ≠ requête Apple ou Ubuntu. |
+
+Pour comparer deux configurations, figer d’abord une baseline du **même pipeline à deux passes**, le même corpus, les mêmes conditions et le mode chaud/froid. Proposition de porte : aucune régression qualité critique, aucun dialogue requis perdu, et p50/p95 du candidat ne dépassant pas la baseline de la strate correspondante ; les observations et échecs restent tous au dénominateur des résultats. Cette règle comparative n’est ni un SLO absolu validé ni une preuve statistique de non-infériorité. Une baseline qui rejette roots ne permet pas de valider ou refuser la latence d’un tour correct. Sans baseline comparable, publier les mesures et laisser le verdict performance indéterminé.
+
+Une allocation adaptative future peut comparer plusieurs bornes roots/leaves tout en conservant les deux étapes. Elle doit préserver les mêmes validations et la même capacité, et mesurer durée, tokens et qualité ensemble. Elle ne doit ni déduire une confiance calibrée des notes du modèle, ni retirer la seconde passe sur demande facile, ni relâcher le JSON pour obtenir artificiellement plus de réussites. Aucun résultat de la littérature ne dispense de cette qualification locale.

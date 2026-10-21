@@ -118,6 +118,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
     AssistReject(reject, AssistError(@"E_INVALIDATED", @"Le module a été fermé."));
     return NO;
   }
+  [AssistDebugIntegration install];
   if (!_engine) { _engine = [AssistCoreAI new]; }
   if (!_picker) { _picker = [AssistModelDirectoryPicker new]; }
   return YES;
@@ -164,35 +165,38 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
     AssistReject(reject, AssistError(@"E_INVALIDATED", @"Le module a été fermé."));
     return NO;
   }
+  [AssistDebugIntegration install];
   if (!_deviceCapabilities) { _deviceCapabilities = [AssistDeviceCapabilities new]; }
   return YES;
 }
 
 - (void)performWorkspace:(void (^)(AssistNativeServices *, AssistCompletion))operation
+                  category:(NSString *_Nullable)category
                   resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepare:reject]) { return; }
-    operation(AssistNativeServices.shared, AssistPromise(resolve, reject));
+    AssistCompletion done = AssistPromise(resolve, reject);
+    operation(AssistNativeServices.shared, category ? [AssistDebugDiagnosticsBridge trace:category completion:done] : done);
   });
 }
 
 - (void)executeAlarms:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service executeAlarms:requestJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service executeAlarms:requestJSON completion:done]; } category:@"alarms" resolve:resolve reject:reject];
 }
 - (void)cancelAlarms:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelAlarms:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelAlarms:done]; } category:@"alarms" resolve:resolve reject:reject];
 }
 - (void)executeTranslation:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service executeTranslation:requestJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service executeTranslation:requestJSON completion:done]; } category:@"translation" resolve:resolve reject:reject];
 }
 - (void)cancelTranslation:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelTranslation:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelTranslation:done]; } category:@"translation" resolve:resolve reject:reject];
 }
 - (void)executeDocumentAction:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service executeDocumentAction:requestJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service executeDocumentAction:requestJSON completion:done]; } category:@"documents" resolve:resolve reject:reject];
 }
 - (void)cancelDocumentActions:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelDocumentActions:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelDocumentActions:done]; } category:@"documents" resolve:resolve reject:reject];
 }
 - (void)getPendingNativeIntent:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) {
@@ -206,16 +210,16 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
       }];
     }
     [service pendingNativeIntent:done];
-  } resolve:resolve reject:reject];
+  } category:nil resolve:resolve reject:reject];
 }
 - (void)dismissNativeIntent:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service dismissNativeIntent:requestJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service dismissNativeIntent:requestJSON completion:done]; } category:@"bridge" resolve:resolve reject:reject];
 }
 - (void)getPrivateServiceStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service privateServiceStatus:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service privateServiceStatus:done]; } category:nil resolve:resolve reject:reject];
 }
 - (void)presentPrivateServiceSetup:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service presentPrivateServiceSetup:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service presentPrivateServiceSetup:done]; } category:@"network" resolve:resolve reject:reject];
 }
 - (void)disconnectPrivateService:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) {
@@ -224,61 +228,61 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
         [self cancelEngineWithCompletion:^(NSString *value, NSError *cancelError) { done(json, error ?: cancelError); }];
       } else { done(json, error); }
     }];
-  } resolve:resolve reject:reject];
+  } category:@"network" resolve:resolve reject:reject];
 }
 - (void)searchPrivateService:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service searchPrivateService:requestJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service searchPrivateService:requestJSON completion:done]; } category:@"network" resolve:resolve reject:reject];
 }
 - (void)openPrivateSearchResult:(NSString *)requestId resultId:(NSString *)resultId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service openPrivateSearchResult:requestId resultId:resultId completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service openPrivateSearchResult:requestId resultId:resultId completion:done]; } category:@"network" resolve:resolve reject:reject];
 }
 - (void)getDocumentStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service documentStatus:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service documentStatus:done]; } category:nil resolve:resolve reject:reject];
 }
 - (void)getApplePlacesStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service applePlacesStatus:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service applePlacesStatus:done]; } category:nil resolve:resolve reject:reject];
 }
 - (void)searchApplePlaces:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service searchApplePlaces:requestJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service searchApplePlaces:requestJSON completion:done]; } category:@"apple" resolve:resolve reject:reject];
 }
 - (void)getAppleDirections:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service appleDirections:requestJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service appleDirections:requestJSON completion:done]; } category:@"apple" resolve:resolve reject:reject];
 }
 - (void)getAppleForecast:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service appleForecast:requestJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service appleForecast:requestJSON completion:done]; } category:@"apple" resolve:resolve reject:reject];
 }
 - (void)openApplePlace:(NSString *)requestId resultId:(NSString *)resultId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service openApplePlace:requestId resultId:resultId completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service openApplePlace:requestId resultId:resultId completion:done]; } category:@"apple" resolve:resolve reject:reject];
 }
 - (void)cancelApplePlaces:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelApplePlaces:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelApplePlaces:done]; } category:@"apple" resolve:resolve reject:reject];
 }
 - (void)renderWeatherAttribution:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service renderWeatherAttribution:requestJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service renderWeatherAttribution:requestJSON completion:done]; } category:@"apple" resolve:resolve reject:reject];
 }
 - (void)cancelWeatherAttribution:(NSString *)requestId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelWeatherAttribution:requestId completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service cancelWeatherAttribution:requestId completion:done]; } category:@"apple" resolve:resolve reject:reject];
 }
 - (void)importDocument:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service importDocument:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service importDocument:done]; } category:@"documents" resolve:resolve reject:reject];
 }
 - (void)getDocumentInbox:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service documentInbox:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service documentInbox:done]; } category:nil resolve:resolve reject:reject];
 }
 - (void)readDocument:(NSString *)itemId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service readDocument:itemId completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service readDocument:itemId completion:done]; } category:@"documents" resolve:resolve reject:reject];
 }
 - (void)removeDocument:(NSString *)itemId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service removeDocument:itemId completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service removeDocument:itemId completion:done]; } category:@"documents" resolve:resolve reject:reject];
 }
 - (void)exportDocumentText:(NSString *)payloadJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service exportDocumentText:payloadJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service exportDocumentText:payloadJSON completion:done]; } category:@"documents" resolve:resolve reject:reject];
 }
 - (void)getTaskCheckpoints:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service taskCheckpoints:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service taskCheckpoints:done]; } category:nil resolve:resolve reject:reject];
 }
 - (void)updateTaskCheckpoint:(NSString *)requestJSON resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
-  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service updateTaskCheckpoint:requestJSON completion:done]; } resolve:resolve reject:reject];
+  [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) { [service updateTaskCheckpoint:requestJSON completion:done]; } category:@"storage" resolve:resolve reject:reject];
 }
 - (void)cancelNativeWorkspace:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   [self performWorkspace:^(AssistNativeServices *service, AssistCompletion done) {
@@ -287,7 +291,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
         [self cancelEngineWithCompletion:^(NSString *value, NSError *cancelError) { done(json, error ?: cancelError); }];
       } else { done(json, error); }
     }];
-  } resolve:resolve reject:reject];
+  } category:nil resolve:resolve reject:reject];
 }
 
 - (void)getDeviceCapabilityStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
@@ -301,7 +305,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
                        resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
-    [self->_deviceCapabilities requestCapability:capability completion:AssistPromise(resolve, reject)];
+    [self->_deviceCapabilities requestCapability:capability completion:[AssistDebugDiagnosticsBridge trace:@"consent" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -309,7 +313,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
                resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
-    [self->_deviceCapabilities searchContacts:query limit:limit completion:AssistPromise(resolve, reject)];
+    [self->_deviceCapabilities searchContacts:query limit:limit completion:[AssistDebugDiagnosticsBridge trace:@"tools" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -318,7 +322,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
     [self->_deviceCapabilities listCalendarEvents:calendarIdentifier startISO:startISO endISO:endISO
-                                             limit:limit completion:AssistPromise(resolve, reject)];
+                                             limit:limit completion:[AssistDebugDiagnosticsBridge trace:@"tools" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -326,7 +330,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
                     resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
-    [self->_deviceCapabilities createCalendarEvent:payloadJSON completion:AssistPromise(resolve, reject)];
+    [self->_deviceCapabilities createCalendarEvent:payloadJSON completion:[AssistDebugDiagnosticsBridge trace:@"tools" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -335,7 +339,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
     [self->_deviceCapabilities listReminders:includeCompleted startISO:startISO endISO:endISO
-                                       limit:limit completion:AssistPromise(resolve, reject)];
+                                       limit:limit completion:[AssistDebugDiagnosticsBridge trace:@"tools" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -343,28 +347,28 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
                resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
-    [self->_deviceCapabilities createReminder:payloadJSON completion:AssistPromise(resolve, reject)];
+    [self->_deviceCapabilities createReminder:payloadJSON completion:[AssistDebugDiagnosticsBridge trace:@"tools" completion:AssistPromise(resolve, reject)]];
   });
 }
 
 - (void)getCurrentLocation:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
-    [self->_deviceCapabilities currentLocation:AssistPromise(resolve, reject)];
+    [self->_deviceCapabilities currentLocation:[AssistDebugDiagnosticsBridge trace:@"tools" completion:AssistPromise(resolve, reject)]];
   });
 }
 
 - (void)selectPhoto:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
-    [self->_deviceCapabilities selectPhoto:AssistPromise(resolve, reject)];
+    [self->_deviceCapabilities selectPhoto:[AssistDebugDiagnosticsBridge trace:@"tools" completion:AssistPromise(resolve, reject)]];
   });
 }
 
 - (void)capturePhoto:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
-    [self->_deviceCapabilities capturePhoto:AssistPromise(resolve, reject)];
+    [self->_deviceCapabilities capturePhoto:[AssistDebugDiagnosticsBridge trace:@"tools" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -372,7 +376,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
                           resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
-    [self->_deviceCapabilities scheduleLocalNotification:payloadJSON completion:AssistPromise(resolve, reject)];
+    [self->_deviceCapabilities scheduleLocalNotification:payloadJSON completion:[AssistDebugDiagnosticsBridge trace:@"tools" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -387,7 +391,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
                            resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareDeviceCapabilities:reject]) { return; }
-    [self->_deviceCapabilities authenticateWithBiometrics:reason completion:AssistPromise(resolve, reject)];
+    [self->_deviceCapabilities authenticateWithBiometrics:reason completion:[AssistDebugDiagnosticsBridge trace:@"tools" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -448,7 +452,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)importAdvancedVoicePack:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     [self withAdvancedVoiceResourcesReleased:^{
-      [[AssistAdvancedVoiceResources shared] importPack:AssistPromise(resolve, reject)];
+      [[AssistAdvancedVoiceResources shared] importPack:[AssistDebugDiagnosticsBridge trace:@"storage" completion:AssistPromise(resolve, reject)]];
     } reject:reject];
   });
 }
@@ -456,7 +460,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)restorePreviousAdvancedVoicePack:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     [self withAdvancedVoiceResourcesReleased:^{
-      [[AssistAdvancedVoiceResources shared] restorePreviousPack:AssistPromise(resolve, reject)];
+      [[AssistAdvancedVoiceResources shared] restorePreviousPack:[AssistDebugDiagnosticsBridge trace:@"storage" completion:AssistPromise(resolve, reject)]];
     } reject:reject];
   });
 }
@@ -465,7 +469,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
                        resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     [self withAdvancedVoiceResourcesReleased:^{
-      [[AssistAdvancedVoiceResources shared] setBackend:backend variant:variant completion:AssistPromise(resolve, reject)];
+      [[AssistAdvancedVoiceResources shared] setBackend:backend variant:variant completion:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
     } reject:reject];
   });
 }
@@ -473,7 +477,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)setSpeechVoice:(NSString *)voiceId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
-    [self->_voice setSpeechVoice:voiceId completion:AssistPromise(resolve, reject)];
+    [self->_voice setSpeechVoice:voiceId completion:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -481,14 +485,14 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
                   resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
-    [self->_voice previewSpeechVoice:voiceId segmentsJSON:segmentsJSON sessionId:sessionId completion:AssistPromise(resolve, reject)];
+    [self->_voice previewSpeechVoice:voiceId segmentsJSON:segmentsJSON sessionId:sessionId completion:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
   });
 }
 
 - (void)stopSpeechVoicePreview:(NSString *)sessionId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
-    [self->_voice stopSpeechVoicePreview:sessionId completion:AssistPromise(resolve, reject)];
+    [self->_voice stopSpeechVoicePreview:sessionId completion:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -502,28 +506,28 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)setVoicePreferences:(BOOL)readResponses resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
-    [self->_voice setVoicePreferences:readResponses completion:AssistPromise(resolve, reject)];
+    [self->_voice setVoicePreferences:readResponses completion:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
   });
 }
 
 - (void)startListening:(NSString *)sessionId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
-    [self->_voice startListening:sessionId completion:AssistPromise(resolve, reject)];
+    [self->_voice startListening:sessionId completion:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
   });
 }
 
 - (void)stopListening:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
-    [self->_voice stopListening:AssistPromise(resolve, reject)];
+    [self->_voice stopListening:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
   });
 }
 
 - (void)cancelVoice:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
-    [self->_voice cancel:AssistPromise(resolve, reject)];
+    [self->_voice cancel:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -531,14 +535,14 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
       resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
-    [self->_voice speak:text utteranceId:utteranceId completion:AssistPromise(resolve, reject)];
+    [self->_voice speak:text utteranceId:utteranceId completion:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
   });
 }
 
 - (void)beginSpeech:(NSString *)utteranceId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
-    [self->_voice beginSpeech:utteranceId completion:AssistPromise(resolve, reject)];
+    [self->_voice beginSpeech:utteranceId completion:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -553,7 +557,7 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
 - (void)finishSpeech:(NSString *)utteranceId resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepareVoice:reject]) { return; }
-    [self->_voice finishSpeech:utteranceId completion:AssistPromise(resolve, reject)];
+    [self->_voice finishSpeech:utteranceId completion:[AssistDebugDiagnosticsBridge trace:@"voice" completion:AssistPromise(resolve, reject)]];
   });
 }
 
@@ -651,6 +655,37 @@ static AssistCompletion AssistPromise(RCTPromiseResolveBlock resolve, RCTPromise
   dispatch_async(dispatch_get_main_queue(), ^{
     if (![self prepare:reject]) { return; }
     [self->_engine previousMonitoringSnapshot:AssistPromise(resolve, reject)];
+  });
+}
+
+// No inference admission: diagnostics remain accessible while the engine is busy.
+// The native bridge exposes only four closed local controls, never an eval/RPC API.
+- (void)getDebugDiagnostics:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (self->_invalidated) { AssistReject(reject, AssistError(@"E_INVALIDATED", @"Le module a été fermé.")); return; }
+    [AssistDebugIntegration install];
+    [[AssistDebugDiagnosticsBridge new] snapshot:AssistPromise(resolve, reject)];
+  });
+}
+- (void)configureDebugDiagnostics:(NSString *)json resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (self->_invalidated) { AssistReject(reject, AssistError(@"E_INVALIDATED", @"Le module a été fermé.")); return; }
+    [AssistDebugIntegration install];
+    [[AssistDebugDiagnosticsBridge new] configure:json completion:AssistPromise(resolve, reject)];
+  });
+}
+- (void)exportDebugDiagnostics:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (self->_invalidated) { AssistReject(reject, AssistError(@"E_INVALIDATED", @"Le module a été fermé.")); return; }
+    [AssistDebugIntegration install];
+    [[AssistDebugDiagnosticsBridge new] exportBundle:AssistPromise(resolve, reject)];
+  });
+}
+- (void)clearDebugDiagnostics:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (self->_invalidated) { AssistReject(reject, AssistError(@"E_INVALIDATED", @"Le module a été fermé.")); return; }
+    [AssistDebugIntegration install];
+    [[AssistDebugDiagnosticsBridge new] clear:AssistPromise(resolve, reject)];
   });
 }
 

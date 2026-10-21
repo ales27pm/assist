@@ -672,6 +672,31 @@ test.each(['close', 'settings'] as const)(
   },
 );
 
+test('a speaking event before public text cannot start speech or arm monitoring', async () => {
+  const generation = deferred<string>();
+  native.generate.mockReturnValueOnce(generation.promise);
+  await renderAsync(<AssistantScreen />);
+  const captureId = await enter();
+  await final(captureId, 'Question avec préparation privée.');
+  const requestId = JSON.parse(native.generate.mock.calls[0][0]).requestId;
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  await event({ sessionId: requestId, kind: 'state', phase: 'speaking', monitoring: true });
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  expect(native.enqueueSpeech).not.toHaveBeenCalled();
+  expect(screen.queryByText('Micro actif pendant la réponse.')).not.toBeOnTheScreen();
+  expect(native.startListening).toHaveBeenCalledTimes(1);
+
+  await act(async () => progressEvent({ json: JSON.stringify({ requestId, text: 'Réponse publique. La suite.', generatedTokens: 8, promptTokens: 10, elapsedMs: 200 }) }));
+  expect(native.beginSpeech).toHaveBeenCalledWith(requestId);
+  await event({ sessionId: requestId, kind: 'state', phase: 'speaking', monitoring: true });
+  expect(screen.getByText('Micro actif pendant la réponse.')).toBeOnTheScreen();
+  await act(async () => generation.resolve(result(requestId, 'Réponse publique. La suite.')));
+  expect(native.finishSpeech).toHaveBeenCalledWith(requestId);
+  await event({ sessionId: requestId, kind: 'state', phase: 'idle' });
+  expect(native.startListening).toHaveBeenCalledTimes(2);
+  await press('Fermer le mode vocal');
+});
+
 test.each(['cancel-first', 'generation-first'] as const)(
   'spoken barge-in preserves the first words, old user intent and draft: %s',
   async order => {
@@ -684,9 +709,11 @@ test.each(['cancel-first', 'generation-first'] as const)(
     const captureId = await enter();
     await final(captureId, 'Planifie le rendez-vous demain.');
     const firstId = JSON.parse(native.generate.mock.calls[0][0]).requestId;
+    expect(native.beginSpeech).not.toHaveBeenCalled();
+    await act(async () => progressEvent({ json: JSON.stringify({ requestId: firstId, text: 'D’accord. Je prépare le rendez-vous.', generatedTokens: 8, promptTokens: 10, elapsedMs: 200 }) }));
+    expect(native.beginSpeech).toHaveBeenCalledWith(firstId);
     await event({ sessionId: firstId, kind: 'state', phase: 'speaking', monitoring: true });
     expect(screen.getByText('Micro actif pendant la réponse.')).toBeOnTheScreen();
-    await act(async () => progressEvent({ json: JSON.stringify({ requestId: firstId, text: 'D’accord. Je prépare le rendez-vous.', generatedTokens: 8, promptTokens: 10, elapsedMs: 200 }) }));
     native.cancel.mockReturnValueOnce(cancellation.promise);
     native.cancelVoice.mockClear();
     await event({ kind: 'interruption', sessionId: firstId, captureSessionId: 'promoted-1', phase: 'listening' });

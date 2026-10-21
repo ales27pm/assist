@@ -3,7 +3,7 @@ import { Alert, AppState, AppStateStatus, Platform } from 'react-native';
 import { act, fireEvent, renderAsync, screen, userEvent } from '@testing-library/react-native';
 import { AssistantScreen } from '../App';
 import NativeAssist from '../specs/NativeAssist';
-import { legacyDeviceToolNames } from '../src/deviceToolProtocol';
+import { legacyDeviceToolNames, toolFailureMessage } from '../src/deviceToolProtocol';
 
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default);
 jest.mock('../specs/NativeAssist', () => ({ __esModule: true, default: {
@@ -11,6 +11,7 @@ jest.mock('../specs/NativeAssist', () => ({ __esModule: true, default: {
   getAgentCapabilities: jest.fn(), getDeviceToolCapabilities: jest.fn(),
   getToolHostCapabilities: jest.fn(), generateWithToolHost: jest.fn(), generate: jest.fn(),
   getToolOperations: jest.fn(), confirmToolAction: jest.fn(), onToolActivity: jest.fn(),
+  generateCalendarToday: jest.fn(), onCalendarActivity: jest.fn(),
   getVoiceStatus: jest.fn(), onVoiceEvent: jest.fn(), cancelVoice: jest.fn(),
   startListening: jest.fn(), stopListening: jest.fn(), speak: jest.fn(),
   beginSpeech: jest.fn(), enqueueSpeech: jest.fn(), finishSpeech: jest.fn(),
@@ -21,6 +22,7 @@ const ready = '{"phase":"ready","contextCapacity":8192}';
 const originalAppState = Object.getOwnPropertyDescriptor(AppState, 'currentState')!;
 let lifecycle: (state: AppStateStatus) => void;
 let activity: (event: { json: string }) => void;
+let calendarActivity: (event: { json: string }) => void;
 let progress: (event: { json: string }) => void;
 let voiceEvent: (event: { json: string }) => void;
 const voiceState = '{"available":true,"recognitionAvailable":true,"synthesisAvailable":true,"locale":"fr-CA","phase":"idle"}';
@@ -55,6 +57,7 @@ beforeEach(() => {
   native.getToolHostCapabilities.mockResolvedValue(capabilities());
   native.getToolOperations.mockResolvedValue('{"schemaVersion":1,"operations":[]}');
   native.onToolActivity.mockImplementation(listener => { activity = listener; return { remove: jest.fn() }; });
+  native.onCalendarActivity.mockImplementation(listener => { calendarActivity = listener; return { remove: jest.fn() }; });
   native.onProgress.mockImplementation(listener => { progress = listener; return { remove: jest.fn() }; });
   native.onVoiceEvent.mockImplementation(listener => { voiceEvent = listener; return { remove: jest.fn() }; });
   native.generate.mockImplementation(async json => result(JSON.parse(json).requestId, 'Le lieu retenu est Québec.'));
@@ -256,8 +259,193 @@ test('a rejected native generation does not preserve a failed pair', async () =>
   native.generateWithToolHost.mockRejectedValueOnce(new Error('provider failed'));
   const user = await openChat();
   await send(user, 'Première demande.');
+  expect(screen.getByText(/La tâche outils n’a pas été finalisée/)).toBeOnTheScreen();
+  expect(screen.queryByText('provider failed')).not.toBeOnTheScreen();
   await send(user, 'Question indépendante.');
   expect(lastRequest().referenceContext).toEqual({ schemaVersion: 1, turns: [], omittedTurns: 1 });
+});
+
+const preparationFailureMessage = 'La préparation locale n’a pas abouti. Aucun outil n’a été lancé pour cette demande. Reformule ou réessaie explicitement.';
+const referenceOmissionNotice = 'Certains échanges ne sont pas réutilisés comme contexte. Précise les références nécessaires.';
+function rejectedPreparation() {
+  return Object.assign(new Error('PRIVATE_ROOT_PLAN: {"roots":[]}'), { code: 'E_THOUGHT_TREE_PREPARATION' });
+}
+
+test('a native preparation rejection before any current activity is shown without an uncertain-action claim, retry or speech', async () => {
+  native.generateWithToolHost.mockRejectedValueOnce(rejectedPreparation());
+  const user = await openChat();
+  await send(user, 'Quel temps fait-il ?');
+  expect(screen.getByText(preparationFailureMessage)).toBeOnTheScreen();
+  expect(screen.queryByText(/La tâche outils n’a pas été finalisée/)).not.toBeOnTheScreen();
+  expect(screen.queryByText(/PRIVATE_ROOT_PLAN/)).not.toBeOnTheScreen();
+  expect(screen.queryByText(/Certaines références précédentes ont été écartées/)).not.toBeOnTheScreen();
+  expect(screen.getByText(referenceOmissionNotice)).toBeOnTheScreen();
+  expect(native.generateWithToolHost).toHaveBeenCalledTimes(1);
+  expect(native.confirmToolAction).not.toHaveBeenCalled();
+  expect(native.speak).not.toHaveBeenCalled();
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  expect(native.enqueueSpeech).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Message')).toHaveDisplayValue('Quel temps fait-il ?');
+  await send(user, 'Question indépendante.');
+  expect(lastRequest().referenceContext).toEqual({ schemaVersion: 1, turns: [], omittedTurns: 1 });
+});
+
+test.each([undefined, 'E_THOUGHT_TREE_PREPARATION_EXTRA'])('an unrecognized error code %p cannot establish a pre-execution failure from private prose', async code => {
+  native.generateWithToolHost.mockRejectedValueOnce(Object.assign(
+    new Error('E_THOUGHT_TREE_PREPARATION PRIVATE_ROOT_PLAN'), { code },
+  ));
+  const user = await openChat();
+  await send(user, 'Quel temps fait-il ?');
+  expect(screen.getByText(/La tâche outils n’a pas été finalisée/)).toBeOnTheScreen();
+  expect(screen.queryByText(preparationFailureMessage)).not.toBeOnTheScreen();
+  expect(screen.queryByText(/PRIVATE_ROOT_PLAN/)).not.toBeOnTheScreen();
+  expect(native.generateWithToolHost).toHaveBeenCalledTimes(1);
+});
+
+test('a voice preparation rejection neither speaks private planning nor restarts capture or generation', async () => {
+  native.startListening.mockImplementation(async id => {
+    voiceEvent({ json: JSON.stringify({ sessionId: id, kind: 'state', phase: 'listening' }) });
+    return voiceState.replace('idle', 'listening');
+  });
+  native.generateWithToolHost.mockRejectedValueOnce(rejectedPreparation());
+  const user = await openChat();
+  await user.press(screen.getByRole('button', { name: 'Mode vocal' }));
+  const sessionId = native.startListening.mock.calls[0][0];
+  await act(async () => voiceEvent({ json: JSON.stringify({ sessionId, kind: 'transcript', phase: 'idle',
+    text: 'Quel temps fait-il ?', isFinal: true }) }));
+  expect(await screen.findByText(preparationFailureMessage)).toBeOnTheScreen();
+  expect(screen.queryByText(/La tâche outils n’a pas été finalisée/)).not.toBeOnTheScreen();
+  expect(screen.queryByText(/La réponse locale ne s’est pas terminée/)).not.toBeOnTheScreen();
+  expect(screen.queryByText(/PRIVATE_ROOT_PLAN/)).not.toBeOnTheScreen();
+  expect(native.generateWithToolHost).toHaveBeenCalledTimes(1);
+  expect(native.startListening).toHaveBeenCalledTimes(1);
+  expect(native.confirmToolAction).not.toHaveBeenCalled();
+  expect(native.speak).not.toHaveBeenCalled();
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  expect(native.enqueueSpeech).not.toHaveBeenCalled();
+});
+
+test('an ordinary voice preparation rejection keeps the fixed diagnostic with tools disabled', async () => {
+  native.startListening.mockImplementation(async id => {
+    voiceEvent({ json: JSON.stringify({ sessionId: id, kind: 'state', phase: 'listening' }) });
+    return voiceState.replace('idle', 'listening');
+  });
+  native.generate.mockRejectedValueOnce(rejectedPreparation());
+  const user = await openChat(false);
+  await user.press(screen.getByRole('button', { name: 'Mode vocal' }));
+  const sessionId = native.startListening.mock.calls[0][0];
+  await act(async () => voiceEvent({ json: JSON.stringify({ sessionId, kind: 'transcript', phase: 'idle',
+    text: 'Explique-moi simplement la météo.', isFinal: true }) }));
+  expect(await screen.findByText(preparationFailureMessage)).toBeOnTheScreen();
+  expect(screen.queryByText(/La réponse locale ne s’est pas terminée/)).not.toBeOnTheScreen();
+  expect(screen.queryByText(/PRIVATE_ROOT_PLAN/)).not.toBeOnTheScreen();
+  expect(native.generate).toHaveBeenCalledTimes(1);
+  expect(native.generateWithToolHost).not.toHaveBeenCalled();
+  expect(native.startListening).toHaveBeenCalledTimes(1);
+  expect(native.speak).not.toHaveBeenCalled();
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  expect(native.enqueueSpeech).not.toHaveBeenCalled();
+});
+
+test.each([0, 1, 2, 3])('a calendar preparation error with %i native activity events preserves the actual evidence without inventing a permission failure', async eventCount => {
+  native.getAgentCapabilities.mockResolvedValue('{"schemaVersion":1,"calendarReadOnly":true,"protocolVersion":1}');
+  native.generateCalendarToday.mockImplementationOnce(async json => {
+    const requestId = JSON.parse(json).requestId;
+    const scope = { startISO: '2026-10-20T04:00:00.000Z', endISO: '2026-10-21T04:00:00.000Z', timeZoneIdentifier: 'America/Toronto' };
+    for (let sequence = 1; sequence <= eventCount; sequence++) {
+      calendarActivity({ json: JSON.stringify({ schemaVersion: 1, requestId, sequence,
+        phase: ['planning', 'executing', 'observing'][sequence - 1], scope,
+        ...(sequence === 3 ? { receipt: { schemaVersion: 1, tool: 'calendar.list', callId: 'observed-calendar',
+          scope, returnedCount: 1, possiblyTruncated: false } } : {}),
+      }) });
+    }
+    throw rejectedPreparation();
+  });
+  const user = await openChat(false);
+  const button = await screen.findByRole('button', { name: 'Consulter mon calendrier aujourd’hui', disabled: false });
+  await user.press(button);
+  if (eventCount === 0) {
+    expect(screen.getByText(preparationFailureMessage)).toBeOnTheScreen();
+    expect(screen.queryByText('Consultation non terminée')).not.toBeOnTheScreen();
+    expect(screen.queryByText('Préparation')).not.toBeOnTheScreen();
+  } else {
+    expect(screen.queryByText(preparationFailureMessage)).not.toBeOnTheScreen();
+    expect(screen.getByText(/^La consultation du calendrier n’a pas abouti\./)).toBeOnTheScreen();
+    expect(screen.getByText(eventCount === 3 ? 'Réponse non finalisée' : 'Consultation non terminée')).toBeOnTheScreen();
+  }
+  if (eventCount === 3) expect(screen.getByText('Lecture confirmée')).toBeOnTheScreen();
+  else expect(screen.queryByText('Lecture confirmée')).not.toBeOnTheScreen();
+  expect(screen.queryByText(/Vérifie son autorisation/)).not.toBeOnTheScreen();
+  expect(screen.queryByText('Accès calendrier requis')).not.toBeOnTheScreen();
+  expect(screen.queryByText(/PRIVATE_ROOT_PLAN/)).not.toBeOnTheScreen();
+  expect(native.generateCalendarToday).toHaveBeenCalledTimes(1);
+  expect(native.generate).not.toHaveBeenCalled();
+  expect(native.generateWithToolHost).not.toHaveBeenCalled();
+  expect(native.confirmToolAction).not.toHaveBeenCalled();
+  expect(native.speak).not.toHaveBeenCalled();
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  expect(native.enqueueSpeech).not.toHaveBeenCalled();
+});
+
+test('a preparation rejection retires an earlier clarification goal while preserving its visible conversation', async () => {
+  const question = 'À quelle heure souhaites-tu cet appel ?';
+  native.generateWithToolHost.mockImplementationOnce(async json => result(JSON.parse(json).requestId, question,
+    { agentTools: true, referenceContextEligible: true }));
+  native.generateWithToolHost.mockRejectedValueOnce(rejectedPreparation());
+  const user = await openChat();
+  await send(user, 'Planifie un appel demain.');
+  await send(user, 'Demain à 10 h.');
+  expect(lastRequest().referenceContext.turns).toEqual([{ user: 'Planifie un appel demain.', assistant: question }]);
+  expect(screen.getByText('Planifie un appel demain.')).toBeOnTheScreen();
+  expect(screen.getByText(question)).toBeOnTheScreen();
+  expect(screen.getByText(preparationFailureMessage)).toBeOnTheScreen();
+  expect(native.generateWithToolHost).toHaveBeenCalledTimes(2);
+  await send(user, 'À 10 h.');
+  expect(lastRequest().referenceContext).toEqual({ schemaVersion: 1, turns: [], omittedTurns: 2 });
+  expect(lastRequest().messages).toEqual([{ role: 'user', content: 'À 10 h.' }]);
+  expect(native.confirmToolAction).not.toHaveBeenCalled();
+});
+
+test('cards belonging to an earlier request do not hide a current preparation rejection', async () => {
+  native.generateWithToolHost.mockImplementationOnce(async json => {
+    const requestId = JSON.parse(json).requestId;
+    photoEvent(requestId, 'success');
+    return result(requestId, 'Le texte extrait est Bonjour.', { agentTools: true, referenceContextEligible: true });
+  });
+  native.generateWithToolHost.mockRejectedValueOnce(rejectedPreparation());
+  const user = await openChat();
+  await send(user, 'Lis une photo.');
+  await send(user, 'Quel temps fait-il ?');
+  expect(screen.getByText('Résultat confirmé')).toBeOnTheScreen();
+  expect(screen.getByText(preparationFailureMessage)).toBeOnTheScreen();
+  expect(native.generateWithToolHost).toHaveBeenCalledTimes(2);
+});
+
+test.each(['success', 'outcome_unknown', 'failed_safe', 'executing'] as const)('current %s activity takes precedence over an inconsistent preparation error code', async status => {
+  native.generateWithToolHost.mockImplementationOnce(async json => {
+    const requestId = JSON.parse(json).requestId;
+    activity({ json: JSON.stringify({ schemaVersion: 1, requestId, transaction: {
+      id: 'current-write', revision: status === 'executing' ? 2 : 3,
+      tool: 'calendar_create', effect: 'write', status, title: 'Créer un événement', preview: [],
+      ...(status === 'failed_safe' ? { failure: 'invalid_native_result' } : {}),
+      ...(['success', 'outcome_unknown'].includes(status) ? { receipt: { operationId: 'current-write', tool: 'calendar_create', status,
+        completedAt: '2026-10-20T12:00:00Z', summary: [{ label: 'Résultat', value: status === 'success' ? 'Événement confirmé' : 'À vérifier dans Calendrier' }] } } : {}),
+    } }) });
+    throw rejectedPreparation();
+  });
+  const user = await openChat();
+  await send(user, 'Crée un événement.');
+  expect(screen.queryByText(preparationFailureMessage)).not.toBeOnTheScreen();
+  expect(screen.queryByText(/PRIVATE_ROOT_PLAN/)).not.toBeOnTheScreen();
+  if (status === 'success') expect(screen.getByText('Résultat : Événement confirmé')).toBeOnTheScreen();
+  else if (status === 'failed_safe') expect(screen.getAllByText(toolFailureMessage('invalid_native_result')).length).toBeGreaterThan(0);
+  else expect(screen.getByText('Vérification requise')).toBeOnTheScreen();
+  if (status !== 'failed_safe') expect(screen.getByText(/La tâche outils n’a pas été finalisée/)).toBeOnTheScreen();
+  expect(native.generateWithToolHost).toHaveBeenCalledTimes(1);
+  expect(native.confirmToolAction).not.toHaveBeenCalled();
+  expect(native.speak).not.toHaveBeenCalled();
+  expect(native.beginSpeech).not.toHaveBeenCalled();
+  expect(native.enqueueSpeech).not.toHaveBeenCalled();
 });
 
 test('background clears reusable references before returning to the foreground', async () => {

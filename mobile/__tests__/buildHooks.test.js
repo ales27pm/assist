@@ -15,7 +15,7 @@ test('native update runtimes match the current native build', () => {
   const strings = readFileSync(join(mobileRoot, 'android/app/src/main/res/values/strings.xml'), 'utf8');
   const xcodeProject = readFileSync(join(mobileRoot, 'ios/Assist.xcodeproj/project.pbxproj'), 'utf8');
   const buildNumbers = [...xcodeProject.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map(match => match[1]);
-  expect([...new Set(buildNumbers)]).toEqual(['30']);
+  expect([...new Set(buildNumbers)]).toEqual(['31']);
   expect(typeof config.runtimeVersion).toBe('string');
   expect(config.runtimeVersion).toBe(`1.0.0-native${buildNumbers[0]}`);
   expect(expoPlist.match(/<key>EXUpdatesRuntimeVersion<\/key>\s*<string>([^<]+)<\/string>/)?.[1]).toBe(config.runtimeVersion);
@@ -69,6 +69,9 @@ beforeEach(() => {
       `#!/bin/sh
 printf '%s\\n' '${command}' >> "$ASSIST_HOOK_TEST_LOG"
 printf '%s\\n' "$1" >> "$ASSIST_HOOK_TEST_SCRIPT_LOG"
+if [ "$1" = '../scripts/test-debug-diagnostics-wiring.py' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'debug-wiring' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-debug-diagnostics.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'debug-diagnostics' ]; then exit 1; fi
+if [ "$1" = '../scripts/check-debug-projections.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'debug-projections' ]; then exit 1; fi
 if [ "$1" = '../scripts/test-agent-wiring.py' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'agent-wiring' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-voice-callbacks.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'voice' ]; then exit 1; fi
 if [ "$1" = '../scripts/check-voice-input.sh' ] && [ "$ASSIST_HOOK_TEST_FAIL" = 'input' ]; then exit 1; fi
@@ -129,7 +132,7 @@ test('Android preinstall succeeds without invoking any iOS prerequisites', () =>
 
 test('iOS preinstall verifies launch, voice and closed device-tool agent contracts in order', () => {
   runHook('ios');
-  expect(readFileSync(logPath, 'utf8').trim().split('\n')).toEqual(['python3', 'python3', 'node', ...Array(30).fill('bash')]);
+  expect(readFileSync(logPath, 'utf8').trim().split('\n')).toEqual(['python3', 'python3', 'node', 'python3', ...Array(32).fill('bash')]);
   expect(readFileSync(scriptLogPath, 'utf8').trim().split('\n').slice(-5)).toEqual([
     '../scripts/check-native-workspace.sh',
     '../scripts/check-device-bridge-header.sh',
@@ -154,52 +157,52 @@ test('iOS preinstall propagates a failed prerequisite and stops subsequent check
 
 test('iOS preinstall blocks a release when the native callback regression fails', () => {
   expect(() => runHook('ios', 'voice')).toThrow();
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\npython3\nbash\nbash\n');
 });
 
 test('iOS preinstall stops before the speech queue when input checks fail', () => {
   expect(() => runHook('ios', 'input')).toThrow();
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\nbash\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\npython3\nbash\nbash\nbash\n');
 });
 
 test('iOS preinstall propagates speech queue check failures', () => {
   expect(() => runHook('ios', 'queue')).toThrow();
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\nbash\nbash\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\npython3\nbash\nbash\nbash\nbash\n');
 });
 
 
 test('iOS preinstall propagates duplex regression failures', () => {
   expect(() => runHook('ios', 'duplex')).toThrow();
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\nbash\nbash\nbash\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\npython3\nbash\nbash\nbash\nbash\nbash\n');
 });
 
 test('iOS preinstall blocks a release when voice comparison contracts fail', () => {
   expect(() => runHook('ios', 'speech-voices')).toThrow();
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\npython3\nbash\nbash\nbash\nbash\nbash\nbash\n');
 });
 
 
 test('iOS preinstall propagates fluid-voice failure', () => {
   expect(() => runHook('ios', 'fluid-voice')).toThrow();
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\npython3\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
 });
 
 
 test('iOS preinstall propagates advanced-voice-files failure', () => {
   expect(() => runHook('ios', 'advanced-voice-files')).toThrow();
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\npython3\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
 });
 
 
 test('iOS preinstall propagates fluid-sdk failure', () => {
   expect(() => runHook('ios', 'fluid-sdk')).toThrow();
-  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
+  expect(readFileSync(logPath, 'utf8')).toBe('python3\npython3\nnode\npython3\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\nbash\n');
 });
 
-test.each(['inference-admission', 'agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-host', 'thought-tree', 'device-tool-loop', 'tool-transactions', 'private-service', 'shared-inbox', 'task-checkpoints', 'alarms', 'translation', 'document-actions', 'spotlight-callbacks', 'native-workspace', 'device-bridge-header', 'research-loop', 'apple-places', 'weather-attribution'])('iOS preinstall blocks on %s failure', failure => {
+test.each(['inference-admission', 'agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-host', 'debug-diagnostics', 'debug-projections', 'thought-tree', 'device-tool-loop', 'tool-transactions', 'private-service', 'shared-inbox', 'task-checkpoints', 'alarms', 'translation', 'document-actions', 'spotlight-callbacks', 'native-workspace', 'device-bridge-header', 'research-loop', 'apple-places', 'weather-attribution'])('iOS preinstall blocks on %s failure', failure => {
   expect(() => runHook('ios', failure)).toThrow();
   expect(readFileSync(logPath, 'utf8').split('\n').filter(Boolean).length).toBe(
-    13 + ['inference-admission', 'agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-host', 'thought-tree', 'device-tool-loop', 'tool-transactions', 'private-service', 'shared-inbox', 'task-checkpoints', 'alarms', 'translation', 'document-actions', 'spotlight-callbacks', 'native-workspace', 'device-bridge-header', 'research-loop', 'apple-places', 'weather-attribution'].indexOf(failure),
+    14 + ['inference-admission', 'agent-calendar', 'gemma-tools', 'agent-loop', 'device-tools', 'device-tool-host', 'debug-diagnostics', 'debug-projections', 'thought-tree', 'device-tool-loop', 'tool-transactions', 'private-service', 'shared-inbox', 'task-checkpoints', 'alarms', 'translation', 'document-actions', 'spotlight-callbacks', 'native-workspace', 'device-bridge-header', 'research-loop', 'apple-places', 'weather-attribution'].indexOf(failure),
   );
 });
 
@@ -223,4 +226,13 @@ test('a Spotlight callback isolation regression blocks subsequent native compila
     '../scripts/check-spotlight-callbacks.sh',
   ]);
   expect(scripts).not.toContain('../scripts/check-native-workspace.sh');
+});
+
+
+test('a diagnostics source-wiring failure stops before host compilation or any native harness', () => {
+  expect(() => runHook('ios', 'debug-wiring')).toThrow();
+  const scripts = readFileSync(scriptLogPath, 'utf8').trim().split('\n');
+  expect(scripts.at(-1)).toBe('../scripts/test-debug-diagnostics-wiring.py');
+  expect(scripts).not.toContain('../scripts/preflight-ios.sh');
+  expect(scripts).not.toContain('../scripts/check-debug-diagnostics.sh');
 });
